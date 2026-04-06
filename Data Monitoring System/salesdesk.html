@@ -1,64 +1,62 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <meta charset="UTF-8">
-    <title>Sales Desk</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dynamic Sales System</title>
     <link rel="stylesheet" href="salesdesk.css">
-    
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
 
 <div class="container">
-    <h2>Sales Desk</h2>
+    <h1>Department Management System</h1>
 
-    <!-- FORM -->
-    <div class="form">
-        <input type="date" id="date">
-        <input type="text" placeholder="DR#" id="dr">
-        <input type="text" placeholder="PO#" id="po">
-        <input type="text" placeholder="Client" id="client">
-        <input type="text" placeholder="Item" id="item">
-        <input type="number" placeholder="QTY" id="qty">
-        <input type="text" placeholder="UOM" id="uom">
-        <input type="text" placeholder="Remarks" id="remarks">
+    <div class="admin-grid">
+        <div class="admin-card">
+            <h3>1. Create New Category</h3>
+            <input type="text" id="newCategoryName" placeholder="e.g., Rejected Items">
+            <button onclick="createNewCategory()">Create Category</button>
+        </div>
 
-        <button onclick="addData()">Add Record</button>
+        <div class="admin-card">
+            <h3>2. Add Column to <span id="activeCategoryName">...</span></h3>
+            <div class="row">
+                <input type="text" id="newColumnName" placeholder="Column Name">
+                <select id="newColumnType">
+                    <option value="text">Text</option>
+                    <option value="number">Number</option>
+                    <option value="date">Date</option>
+                </select>
+                <button onclick="addColumnToActive()">Add Column</button>
+            </div>
+        </div>
     </div>
 
-    <div class="controls">
-        <input type="text" id="search" placeholder="Search..." oninput="searchData()">
+    <hr>
 
-        <select onchange="sortData(this.value)">
-            <option value="">Sort By</option>
-            <option value="date">Date</option>
-            <option value="client">Client</option>
-            <option value="item">Item</option>
-        </select>
-
-        <button onclick="exportToExcel()">Export to Excel</button>
+    <div class="main-controls">
+        <div class="selector">
+            <label>Current Category:</label>
+            <select id="categoryDropdown" onchange="switchCategory(this.value)"></select>
+        </div>
+        <input type="text" id="search" placeholder="Search records..." oninput="searchData()">
     </div>
 
-    <!-- TABLE -->
-    <table>
-        <thead>
-            <tr>
-                <th>Date</th>
-                <th>DR#</th>
-                <th>PO#</th>
-                <th>Client</th>
-                <th>Item</th>
-                <th>QTY</th>
-                <th>UOM</th>
-                <th>Remarks</th>
-                <th>Action</th>
-            </tr>
-        </thead>
-        <tbody id="tableData"></tbody>
-    </table>
+    <div class="form-section">
+        <h3>Entry Form</h3>
+        <div id="dynamicForm" class="grid-form">
+            </div>
+    </div>
+
+    <div class="table-section">
+        <table id="mainTable">
+            <thead id="tableHeaders"></thead>
+            <tbody id="tableData"></tbody>
+        </table>
+    </div>
 </div>
-<script type="module" src="home.js"></script>
+
 <script type="module" src="salesdesk.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </body>
 </html>
