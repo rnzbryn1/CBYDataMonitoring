@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Data Monitoring System</title>
+    <link rel="stylesheet" href="home.css">
+</head>
+<body>
+
+<!-- TOP NAVBAR -->
+<div class="navbar">
+    <div class="logo-container">
+        <img src="images/cbylogo.png" alt="Logo" class="logo-img">
+    </div>
+
+    <ul class="menu">
+        <li class="active" onclick="loadPage(this, 'home.html')">Dashboard</li>
+        <li onclick="loadPage(this, 'salesdesk.html')">Sales Desk</li>
+        <li onclick="loadPage(this, 'qa.html')">Quality Assurance</li>
+        <li onclick="loadPage(this, 'pcd.html')">PCD</li>
+        <li onclick="loadPage(this, 'dst.html')">DST</li>
+        <li onclick="loadPage(this, 'engineering.html')">Engineering</li>
+        <li onclick="loadPage(this, 'delivery.html')">Delivery</li>
+        <li onclick="loadPage(this, 'salesorder.html')">Sales Order</li>
+    </ul>
+</div>
+
+<!-- MAIN CONTENT -->
+<div class="main-content">
+    <iframe id="contentFrame" src="dashboard.html"></iframe>
+</div>
+
+<script src="home.js"></script>
+</body>
+</html>

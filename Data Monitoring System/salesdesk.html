@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Sales Desk</title>
+    <link rel="stylesheet" href="salesdesk.css">
+    
+</head>
+<body>
+
+<div class="container">
+    <h2>Sales Desk</h2>
+
+    <!-- FORM -->
+    <div class="form">
+        <input type="date" id="date">
+        <input type="text" placeholder="DR#" id="dr">
+        <input type="text" placeholder="PO#" id="po">
+        <input type="text" placeholder="Client" id="client">
+        <input type="text" placeholder="Item" id="item">
+        <input type="number" placeholder="QTY" id="qty">
+        <input type="text" placeholder="UOM" id="uom">
+        <input type="text" placeholder="Remarks" id="remarks">
+
+        <button onclick="addData()">Add Record</button>
+    </div>
+
+    <div class="controls">
+        <input type="text" id="search" placeholder="Search..." oninput="searchData()">
+
+        <select onchange="sortData(this.value)">
+            <option value="">Sort By</option>
+            <option value="date">Date</option>
+            <option value="client">Client</option>
+            <option value="item">Item</option>
+        </select>
+
+        <button onclick="exportToExcel()">Export to Excel</button>
+    </div>
+
+    <!-- TABLE -->
+    <table>
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>DR#</th>
+                <th>PO#</th>
+                <th>Client</th>
+                <th>Item</th>
+                <th>QTY</th>
+                <th>UOM</th>
+                <th>Remarks</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody id="tableData"></tbody>
+    </table>
+</div>
+
+<script src="salesdesk.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</body>
+</html>
