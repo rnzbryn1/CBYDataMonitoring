@@ -1,35 +1,28 @@
-function setActive(element) {
-    document.querySelectorAll(".menu li").forEach(li => {
-        li.classList.remove("active");
-    });
-    element.classList.add("active");
+import { SUPABASE_CONFIG } from './config.js';
+
+const { createClient } = supabase;
+const supabaseClient = createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
+
+// --- PROTECT THE PAGE ---
+async function checkUser() {
+    const { data: { user } } = await supabaseClient.auth.getUser();
+    
+    if (!user) {
+        // If no user is found, kick back to login
+        window.location.href = 'login.html'; 
+    }
 }
+checkUser();
 
-// SAMPLE DATA
-const data = [
-    {id: 1, client: "ABC Corp", status: "Pending", dept: "Sales Desk"},
-    {id: 2, client: "XYZ Ltd", status: "Completed", dept: "Engineering"},
-    {id: 3, client: "Juan Dela Cruz", status: "On Delivery", dept: "Delivery"},
-    {id: 4, client: "Tech Solutions", status: "Pending", dept: "QA"},
-];
+// --- LOGOUT ---
+// Attached to window so it can be called from HTML onclick
+window.logout = async function() {
+    await supabaseClient.auth.signOut();
+    window.location.href = 'login.html';
+};
 
-const table = document.getElementById("tableData");
-
-data.forEach(item => {
-    const row = `
-        <tr>
-            <td>${item.id}</td>
-            <td>${item.client}</td>
-            <td>${item.status}</td>
-            <td>${item.dept}</td>
-        </tr>
-    `;
-    table.innerHTML += row;
-});
-
-
-//-------
-function loadPage(element, page) {
+// --- NAVIGATION ---
+window.loadPage = function(element, page) {
     document.getElementById("contentFrame").src = page;
 
     document.querySelectorAll(".menu li").forEach(li => {
@@ -37,4 +30,4 @@ function loadPage(element, page) {
     });
 
     element.classList.add("active");
-}
+};

@@ -1,126 +1,79 @@
-let salesData = JSON.parse(localStorage.getItem("salesData")) || [];
-let filteredData = [...salesData];
-let editIndex = null;
+import { SUPABASE_CONFIG } from './config.js';
+const { createClient } = supabase;
+const supabaseClient = createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
 
-window.onload = function () {
-    renderTable(filteredData);
+// This is our "Fast Cache"
+let localSalesData = []; 
+
+window.onload = async function () {
+    await initialFetch();
+    setupRealtime();
 };
 
-// ADD / UPDATE
-function addData() {
-    const record = {
-        date: date.value,
-        dr: dr.value,
-        po: po.value,
-        client: client.value,
-        item: item.value,
-        qty: qty.value,
-        uom: uom.value,
-        remarks: remarks.value
-    };
+// 1. FETCH ONCE (The only heavy lift)
+async function initialFetch() {
+    const { data, error } = await supabaseClient
+        .from('sales_records')
+        .select('*')
+        .order('date', { ascending: false });
 
-    if (editIndex !== null) {
-        salesData[editIndex] = record;
-        editIndex = null;
-    } else {
-        salesData.push(record);
+    if (!error) {
+        localSalesData = data;
+        renderTable(localSalesData);
     }
-
-    saveAndRender();
-    clearForm();
 }
 
-// SAVE + REFRESH
-function saveAndRender() {
-    localStorage.setItem("salesData", JSON.stringify(salesData));
-    filteredData = [...salesData];
-    renderTable(filteredData);
+// 2. REALTIME (The "Magic" - Updates only what changed)
+function setupRealtime() {
+    supabaseClient
+        .channel('sales-changes')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'sales_records' }, (payload) => {
+            if (payload.eventType === 'INSERT') {
+                localSalesData.unshift(payload.new); // Add to top of list
+            } else if (payload.eventType === 'DELETE') {
+                localSalesData = localSalesData.filter(item => item.id !== payload.old.id);
+            } else if (payload.eventType === 'UPDATE') {
+                const index = localSalesData.findIndex(item => item.id === payload.new.id);
+                if (index !== -1) localSalesData[index] = payload.new;
+            }
+            // Re-render from local memory (Instant)
+            renderTable(localSalesData);
+        })
+        .subscribe();
 }
 
-// RENDER
+// 3. UPDATED RENDER FUNCTION
 function renderTable(data) {
-    const table = document.getElementById("tableData");
-    table.innerHTML = "";
+    const tableBody = document.getElementById("tableData");
+    
+    // Create the rows as a single string to avoid multiple DOM updates
+    const rows = data.map(d => `
+        <tr>
+            <td>${d.date || ''}</td>
+            <td>${d.dr_number || ''}</td>
+            <td>${d.po_number || ''}</td>
+            <td>${d.client || ''}</td>
+            <td>${d.item_description || ''}</td>
+            <td>${d.qty || ''}</td>
+            <td>${d.uom || ''}</td>
+            <td class="source-tag">${d.source_type || 'Sales'}</td>
+            <td>
+                <button class="edit" onclick="editData('${d.id}')">Edit</button>
+                <button class="delete" onclick="deleteData('${d.id}')">Delete</button>
+            </td>
+        </tr>
+    `).join('');
 
-    data.forEach((d, index) => {
-        table.innerHTML += `
-            <tr>
-                <td>${d.date}</td>
-                <td>${d.dr}</td>
-                <td>${d.po}</td>
-                <td>${d.client}</td>
-                <td>${d.item}</td>
-                <td>${d.qty}</td>
-                <td>${d.uom}</td>
-                <td>${d.remarks}</td>
-                <td>
-                    <button class="edit "onclick="editData(${index})">Edit</button>
-                    <button class="delete" onclick="deleteData(${index})">Delete</button>
-                </td>
-            </tr>
-        `;
-    });
+    tableBody.innerHTML = rows;
 }
 
-// EDIT
-function editData(index) {
-    const d = salesData[index];
-
-    date.value = d.date;
-    dr.value = d.dr;
-    po.value = d.po;
-    client.value = d.client;
-    item.value = d.item;
-    qty.value = d.qty;
-    uom.value = d.uom;
-    remarks.value = d.remarks;
-
-    editIndex = index;
-}
-
-// DELETE
-function deleteData(index) {
-    salesData.splice(index, 1);
-    saveAndRender();
-}
-
-// SEARCH
-function searchData() {
-    const value = document.getElementById("search").value.toLowerCase();
-
-    filteredData = salesData.filter(d =>
-        Object.values(d).some(val =>
-            String(val).toLowerCase().includes(value)
-        )
+// 4. SEARCH (Now works instantly on local memory)
+window.searchData = function() {
+    const term = document.getElementById("search").value.toLowerCase();
+    const filtered = localSalesData.filter(d => 
+        d.client?.toLowerCase().includes(term) || 
+        d.dr_number?.toLowerCase().includes(term) ||
+        d.item_description?.toLowerCase().includes(term)
     );
-
-    renderTable(filteredData);
-}
-
-// SORT
-function sortData(field) {
-    if (!field) return;
-
-    filteredData.sort((a, b) => {
-        if (field === "date") {
-            return new Date(a.date) - new Date(b.date);
-        }
-        return a[field].localeCompare(b[field]);
-    });
-
-    renderTable(filteredData);
-}
-
-// EXPORT TO EXCEL
-function exportToExcel() {
-    const ws = XLSX.utils.json_to_sheet(salesData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "SalesDesk");
-
-    XLSX.writeFile(wb, "SalesDesk.xlsx");
-}
-
-// CLEAR FORM
-function clearForm() {
-    document.querySelectorAll(".form input").forEach(i => i.value = "");
-}
+    renderTable(filtered);
+};
