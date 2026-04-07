@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sales Order Desk</title>
+
+<link rel="stylesheet" href="dst.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+
+<body>
+<div class="container">
+    <header class="header">
+        <h1>DST</h1>
+        <button class="add-cat-btn" onclick="openModal()">+ New Category</button>
+    </header>
+
+    <h3>Select Category</h3>
+    <div class="category-nav-wrapper">
+        <div id="categoryCards" class="category-scroll-container"></div>
+    </div>
+
+    <div id="moduleWorkspace" style="display:none;">
+        <section class="card">
+            <h3>Entry Form</h3>
+            <div id="dynamicForm" class="grid-form"></div>
+        </section>
+
+        <section class="controls">
+            <div class="action-bar">
+                <input type="text" id="search" placeholder="Search..." oninput="searchData()">
+                <button onclick="sortByDate()">Sort by Date</button>
+                <button onclick="exportToExcel()">Export Excel</button>
+                <button class="add-cat-btn" onclick="openColumnModal()">+Add Column</button>
+            </div>
+        </section>
+
+        <section class="card">
+            <div class="table-wrapper">
+                <table>
+                    <thead id="tableHeaders"></thead>
+                    <tbody id="tableData"></tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+</div>
+
+<!-- CATEGORY MODAL -->
+<div id="categoryModal" class="modal">
+    <div class="modal-content">
+        <span class="close-btn" onclick="closeModal()">&times;</span>
+        <h3>New Sales Category</h3>
+        <input type="text" id="newCategoryName" placeholder="e.g. Vehicle Database, DTF">
+        <div class="modal-actions">
+            <button onclick="closeModal()">Cancel</button>
+            <button onclick="createCategory()">Create</button>
+        </div>
+    </div>
+</div>
+
+<!-- COLUMN MODAL -->
+<div id="columnModal" class="modal">
+    <div class="modal-content">
+        <span class="close-btn" onclick="closeColumnModal()">&times;</span>
+        <h3>Add Field</h3>
+
+        <input type="text" id="newColumnName" placeholder="Field name">
+
+        <select id="newColumnType">
+            <option value="text">Text</option>
+            <option value="number">Number</option>
+            <option value="date">Date</option>
+        </select>
+
+        <div class="modal-actions">
+            <button onclick="closeColumnModal()">Cancel</button>
+            <button onclick="addColumn()">Add</button>
+        </div>
+    </div>
+</div>
+
+<script type="module" src="dst.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+</body>
+</html>

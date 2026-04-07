@@ -97,8 +97,9 @@ window.addColumnToActive = async function() {
         
         // NEW: Close the modal automatically after success
         closeColumnModal(); 
-        
+          
         await switchCategory(currentTemplate.name); 
+        showToast("Column added!", "success");
     } else {
         alert("Error adding column: " + error.message);
     }
@@ -145,44 +146,13 @@ window.createNewCategory = async function() {
 
     if (!error) {
         closeModal();
+        showToast("Category created!", "success");
         await refreshCategories(); // Refresh the list without reloading the page
     } else {
         alert("Error: " + error.message);
     }
 };
 
-window.addColumnToActive = async function() {
-    const colNameInput = document.getElementById('newColumnName');
-    const colName = colNameInput.value.trim();
-    const colType = document.getElementById('newColumnType').value;
-    
-    if (!colName) return alert("Please enter a column name.");
-
-    // OPTIMIZATION: Visual feedback during save
-    const btn = event.target;
-    const originalText = btn.innerText;
-    btn.innerText = "Adding...";
-    btn.disabled = true;
-
-    const newOrder = currentTemplate.doc_columns.length + 1;
-    const { error } = await supabaseClient.from('doc_columns').insert([{
-        template_id: currentTemplate.id,
-        column_name: colName,
-        column_type: colType,
-        display_order: newOrder
-    }]);
-
-    btn.innerText = originalText;
-    btn.disabled = false;
-
-    if (!error) {
-        delete categoryCache[currentTemplate.name]; // Clear cache to force refetch
-        colNameInput.value = "";
-        await switchCategory(currentTemplate.name); // Reload current view
-    } else {
-        alert("Error adding column: " + error.message);
-    }
-};
 /**
  * SWITCH CATEGORY: The core logic for the SAP-style UI.
  * Handles card highlighting, workspace visibility, and data fetching.
@@ -292,8 +262,8 @@ function renderTable(entries) {
 
     body.innerHTML = entries.map(e => {
         const cells = currentTemplate.doc_columns.map(c => `<td>${e.content[c.column_name] || '-'}</td>`).join('');
-        return `<tr>${cells}<td>
-        <button onclick="editEntry('${e.id}')">Edit</button>
+        return `<tr>${cells}<td class="action-buttons">
+        <button class="edit-btn" onclick="editEntry('${e.id}')">Edit</button>
         <button class="del-btn" onclick="deleteEntry('${e.id}')">Delete</button>
         </td></tr>`;
     }).join('');
@@ -304,43 +274,49 @@ function renderTable(entries) {
 // ==========================================
 window.saveData = async function() {
     const content = {};
-    let hasData = false;
-
-    // OPTIMIZATION: Check if the user actually typed anything
     currentTemplate.doc_columns.forEach(c => {
-        const val = document.getElementById(`input_${c.column_name}`).value.trim();
+        const val = document.getElementById(`input_${c.column_name}`).value;
         content[c.column_name] = val;
-        if (val) hasData = true;
     });
 
-    if (!hasData) return alert("Please fill in at least one field.");
+    // ✅ EDIT MODE
+    if (editingId) {
+        const { data, error } = await supabaseClient
+            .from('doc_entries')
+            .update({ content })
+            .eq('id', editingId)
+            .select();
 
-    // OPTIMIZATION: Loading state for save button
-    const btn = document.querySelector('.save-btn');
-    if (btn) {
-        btn.innerText = "Saving...";
-        btn.disabled = true;
-    }
+        if (!error) {
+            // update local state
+            const index = localEntries.findIndex(e => e.id === editingId);
+            if (index !== -1) {
+                localEntries[index] = data[0];
+            }
 
-    const { data, error } = await supabaseClient.from('doc_entries').insert([{
-        template_id: currentTemplate.id,
-        content: content
-    }]).select();
+            categoryCache[currentTemplate.name].entries = localEntries;
+            renderTable(localEntries);
 
-    if (btn) {
-        btn.innerText = "Save Entry";
-        btn.disabled = false;
-    }
+            editingId = null;
+            document.querySelector(".save-btn").innerText = "Save Entry";
+            
+            showToast(editingId ? "Entry updated!" : "Entry added!", "success");
+        }
 
-    if (!error && data) {
-        localEntries.unshift(data[0]); // Add to top of local array
-        categoryCache[currentTemplate.name].entries = localEntries; // Update cache
-        renderTable(localEntries); // Render fast
-        
-        // Clear inputs
-        currentTemplate.doc_columns.forEach(c => document.getElementById(`input_${c.column_name}`).value = "");
     } else {
-        alert("Error saving data: " + (error?.message || "Unknown error"));
+        // ✅ NORMAL INSERT
+        const { data, error } = await supabaseClient.from('doc_entries').insert([{
+            template_id: currentTemplate.id,
+            content: content
+        }]).select();
+
+        if (!error) {
+            localEntries.unshift(data[0]);
+            categoryCache[currentTemplate.name].entries = localEntries;
+            renderTable(localEntries);
+
+            showToast("Entry added!", "success"); 
+        }
     }
 
     // clear inputs
@@ -357,9 +333,33 @@ window.deleteEntry = async function(id) {
         localEntries = localEntries.filter(e => e.id !== id);
         categoryCache[currentTemplate.name].entries = localEntries;
         renderTable(localEntries);
+
+        showToast("Entry deleted!", "success");
     } else {
-        alert("Error deleting record.");
+        showToast("Error deleting record", "error");
+        //alert("Error deleting record.");
     }
+};
+
+window.editEntry = function(id) {
+    const entry = localEntries.find(e => e.id === id);
+    if (!entry) return;
+
+    // ilagay sa form lahat ng values
+    currentTemplate.doc_columns.forEach(c => {
+        const input = document.getElementById(`input_${c.column_name}`);
+        if (input) {
+            input.value = entry.content[c.column_name] || "";
+        }
+    });
+
+    editingId = id;
+
+    // optional: scroll to form
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    // change button text
+    document.querySelector(".save-btn").innerText = "Update Entry";
 };
 
 window.searchData = function() {
@@ -393,18 +393,41 @@ window.sortByDate = function () {
 };
 
 // ADDED: Missing Export function to support your HTML button
-window.exportToExcel = function() {
-    if (!localEntries || localEntries.length === 0) {
-        return alert("No data to export for this category.");
+window.exportToExcel = function () {
+    if (!currentTemplate || localEntries.length === 0) {
+        alert("No data to export.");
+        return;
     }
-    
-    // Flatten JSONB content for Excel
-    const exportData = localEntries.map(e => e.content);
-    
-    const ws = XLSX.utils.json_to_sheet(exportData);
+
+    // hanapin date column
+    const dateColumn = currentTemplate.doc_columns.find(c => c.column_type === 'date');
+
+    let sortedData = [...localEntries];
+
+    if (dateColumn) {
+        const colName = dateColumn.column_name;
+
+        sortedData.sort((a, b) => {
+            const dateA = new Date(a.content[colName] || 0);
+            const dateB = new Date(b.content[colName] || 0);
+            return dateA - dateB; // always ascending sa export
+        });
+    }
+
+    // convert to flat JSON
+    const formatted = sortedData.map(e => {
+        let obj = {};
+        currentTemplate.doc_columns.forEach(c => {
+            obj[c.column_name] = e.content[c.column_name] || '';
+        });
+        return obj;
+    });
+
+    // create worksheet
+    const ws = XLSX.utils.json_to_sheet(formatted);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, currentTemplate.name);
-    
-    // Generate file
-    XLSX.writeFile(wb, `${currentTemplate.name}_Records.xlsx`);
+    XLSX.utils.book_append_sheet(wb, ws, "Data");
+
+    // download
+    XLSX.writeFile(wb, `${currentTemplate.name}.xlsx`);
 };
