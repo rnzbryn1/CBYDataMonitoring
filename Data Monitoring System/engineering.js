@@ -20,17 +20,40 @@ if (!db) {
             {
                 name: "Inventory", 
                 columns: [
-                    { name: "BY", type: "text" },
-                    { name: "FACILITY / EQUIPMENTS", type: "text" },
-                    { name: "CAPACITY / SPECIFICATION", type: "text" },
-                    { name: "CATEGORY", type: "text" },
+                    { name: "B.Y", type: "text" },
+                    { name: "Facility/ Equipments", type: "text" },
+                    { name: "Capacity/ Specifications", type: "text" },
+                    { name: "Category", type: "text" },
                     { name: "QTY", type: "text" },
                     { name: "UOM", type: "text" },
-                    { name: "LOCATION", type: "text" },
-                    { name: "DATE PURCHASED", type: "date" },
-                    { name: "OWNER", type: "text" },
-                    { name: "STATUS", type: "text" },
-                    { name: "REMARKS", type: "text" }
+                    { name: "Location", type: "text" },
+                    { name: "Date Purchased", type: "date" },
+                    { name: "Owner", type: "text" },
+                    { name: "Status", type: "text" },
+                    { name: "Remarks", type: "text" }
+                ],
+                entries: []
+            },
+            {
+                name: "Inventory 2", 
+                columns: [
+                    { name: "B.Y", type: "text" },
+                    { name: "Machine / Equipment Name", type: "text" },
+                    { name: "UOM", type: "text" },
+                    { name: "QTY", type: "text" },
+                    { name: "Asset Type", type: "text" },
+                    { name: "Category", type: "text" },
+                    { name: "Sub Category", type: "text" },
+                    { name: "Brand", type: "date" },
+                    { name: "Model", type: "text" },
+                    { name: "Serial", type: "text" },
+                    { name: "Specification/ Capacity", type: "text" },
+                    { name: "Location", type: "text" },
+                    { name: "Department", type: "text" },
+                    { name: "Date Purchased", type: "date" },
+                    { name: "Asset Condition", type: "text" },
+                    { name: "Operational Status", type: "text" },
+                    { name: "Remarks", type: "text" }
                 ],
                 entries: []
             }

@@ -12,9 +12,45 @@ const USE_SUPABASE = false;
 // ================================
 const LS_KEY = "pcd_app"; 
 
-let db = JSON.parse(localStorage.getItem(LS_KEY)) || {
-    categories: []
-};
+let db = JSON.parse(localStorage.getItem(LS_KEY));
+
+if (!db) {
+    db = {
+        categories: [
+            {
+                name: "Supplier", 
+                columns: [
+                    { name: "Category", type: "text" },
+                    { name: "Item Description", type: "text" },
+                    { name: "Supplier Name", type: "text" },
+                    { name: "QTY", type: "text" },
+                    { name: "Total Amount", type: "text" },
+                    { name: "Average Cost", type: "text" }
+                ],
+                entries: []
+            },
+            {
+                name: "Materials", 
+                columns: [
+                    { name: "Code", type: "text" },
+                    { name: "Category", type: "text" },
+                    { name: "Metial Description", type: "text" },
+                    { name: "Quantity", type: "text" },
+                    { name: "Total Amount", type: "text" },
+                    { name: "Actual - Ave. Cost", type: "text" },
+                    { name: "Target - Buying", type: "text" },
+                    { name: "Variance - Cost Difference", type: "text" },
+                    { name: "Amount - Savings", type: "text" },
+                    { name: "Y 2022 - Buying", type: "text" },
+                    { name: "Variance - Cost Difference", type: "text" },
+                    { name: "Amount - Savings", type: "text" }
+                ],
+                entries: []
+            }
+        ]
+    };
+    localStorage.setItem(LS_KEY, JSON.stringify(db));
+}
 
 let currentCategory = null;
 let editingId = null;

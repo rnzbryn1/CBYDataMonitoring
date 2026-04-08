@@ -11,9 +11,71 @@ const USE_SUPABASE = false;
 // ================================
 const LS_KEY = "dst_app"; 
 
-let db = JSON.parse(localStorage.getItem(LS_KEY)) || {
-    categories: []
-};
+let db = JSON.parse(localStorage.getItem(LS_KEY));
+
+if (!db) {
+    db = {
+        categories: [
+            {
+                name: "Sample Delivery", 
+                columns: [
+                    { name: "Date", type: "date" },
+                    { name: "Company", type: "text" },
+                    { name: "Product Description", type: "text" },
+                    { name: "Address", type: "text" },
+                    { name: "DR No.", type: "date" },
+                    { name: "Plate Number", type: "text" },
+                    { name: "Driver", type: "text" },
+                    { name: "Remarks", type: "text" },
+                    { name: "Delivery Fee", type: "text" },
+                    { name: "Remarks", type: "text" }
+                ],
+                entries: []
+            },
+            {
+                name: "Vehicle Database", 
+                columns: [
+                    { name: "Plate No.", type: "text" },
+                    { name: "Make", type: "text" },
+                    { name: "Series", type: "text" },
+                    { name: "Body Type & Dimension", type: "text" },
+                    { name: "Fuel", type: "date" },
+                    { name: "Model/Year", type: "text" },
+                    { name: "Engine Number", type: "text" },
+                    { name: "Chasis Number", type: "text" },
+                    { name: "Gross WT", type: "text" },
+                    { name: "Net WT", type: "text" },
+                    { name: "Class", type: "text" },
+                    { name: "Temperature", type: "text" }
+                ],
+                entries: []
+            },
+             {
+                name: "DTF", 
+                columns: [
+                    { name: "Ref No.", type: "text" },
+                    { name: "Name", type: "text" },
+                    { name: "Effectivity Date", type: "date" },
+                    { name: "# of pages", type: "text" },
+                    { name: "Attachments/Company", type: "text" },
+                    { name: "Remarks/OT HRS", type: "text" },
+                    { name: "Issuing Dept.", type: "text" },
+                    { name: "Prepared By", type: "text" },
+                    { name: "Receiving Dept.", type: "text" },
+                    { name: "DTF No.", type: "text" },
+                    { name: "Plate Number", type: "text" },
+                    { name: "OT Rate/HR", type: "text" },
+                    { name: "Total Amount", type: "text" },
+                    { name: "Activity", type: "text" },
+                    { name: "Remarks", type: "text" },
+                    { name: "No. of Trips", type: "text" }
+                ],
+                entries: []
+            }
+        ]
+    };
+    localStorage.setItem(LS_KEY, JSON.stringify(db));
+}
 
 let currentCategory = null;
 let editingId = null;

@@ -12,9 +12,38 @@ const USE_SUPABASE = false;
 // ================================
 const LS_KEY = "sales_app"; // 👉 changed only
 
-let db = JSON.parse(localStorage.getItem(LS_KEY)) || {
-    categories: []
-};
+let db = JSON.parse(localStorage.getItem(LS_KEY));
+
+if (!db) {
+    db = {
+        categories: [
+            {
+                name: "Encoding", 
+                columns: [
+                    { name: "Issued Date", type: "date" },
+                    { name: "Client", type: "text" },
+                    { name: "Item Description", type: "text" },
+                    { name: "PO Number", type: "text" },
+                    { name: "Date Needed", type: "date" },
+                    { name: "QTY (KG)", type: "text" },
+                    { name: "Remarks", type: "text" },
+                    { name: "UOM", type: "text" },
+                    { name: "Packing Size", type: "text" },
+                    { name: "SOS #", type: "text" },
+                    { name: "Price/KG", type: "text" },
+                    { name: "Agent", type: "text" },
+                    { name: "Actual Produced", type: "text" },
+                    { name: "Actual QTY Delivered/ Pick up", type: "text" },
+                    { name: "Delivery Date", type: "date" },
+                    { name: "Planner Performance - HIT/MISS", type: "text" },
+                    { name: "Status", type: "text" }
+                ],
+                entries: []
+            }
+        ]
+    };
+    localStorage.setItem(LS_KEY, JSON.stringify(db));
+}
 
 let currentCategory = null;
 let editingId = null;

@@ -12,9 +12,83 @@ const USE_SUPABASE = false;
 // ================================
 const LS_KEY = "qualityassurance_app";
 
-let db = JSON.parse(localStorage.getItem(LS_KEY)) || {
-    categories: []
-};
+let db = JSON.parse(localStorage.getItem(LS_KEY));
+
+if (!db) {
+    db = {
+        categories: [
+            {
+                name: "NQDS", 
+                columns: [
+                    { name: "NQDS Number", type: "text" },
+                    { name: "Violators", type: "text" },
+                    { name: "Item Name", type: "text" },
+                    { name: "Delivery Date", type: "date" },
+                    { name: "Violation", type: "text" },
+                    { name: "Date Issued", type: "date" },
+                    { name: "Investigated By", type: "text" },
+                    { name: "Date Received", type: "text" },
+                    { name: "7 days", type: "text" },
+                    { name: "Date Accomplished", type: "date" },
+                    { name: "QA Verified (Y/N)?", type: "text" },
+                    { name: "Status", type: "text" },
+                    { name: "Remarks", type: "text" },
+                ],
+                entries: []
+            },
+            {
+                name: "Incoming Database", 
+                columns: [
+                    { name: "B.Y", type: "text" },
+                    { name: "Month", type: "text" },
+                    { name: "Delivery Date", type: "date" },
+                    { name: "Supplier", type: "text" },
+                    { name: "Weighing List", type: "text" },
+                    { name: "ER #", type: "text" },
+                    { name: "Dispo #", type: "text" },
+                    { name: "Item", type: "text" },
+                    { name: "Production Date", type: "date" },
+                    { name: "Expiration Date", type: "date" },
+                    { name: "Batch Code", type: "text" },
+                    { name: "Incoming QTY", type: "text" },
+                    { name: "UOM", type: "text" },
+                    { name: "Sampling Plan", type: "text" },
+                    { name: "Sample QTY", type: "text" },
+                    { name: "UOM", type: "text" },
+                    { name: "Disposition", type: "text" },
+                    { name: "AFD #", type: "text" },
+                    { name: "Deviation", type: "text" },
+                    { name: "Week", type: "text" },
+                ],
+                entries: []
+            },
+            {
+                name: "Disposition Database", 
+                columns: [
+                    { name: "Count", type: "text" },
+                    { name: "Year", type: "text" },
+                    { name: "Month", type: "text" },
+                    { name: "Issuance Date", type: "date" },
+                    { name: "Production Date", type: "date" },
+                    { name: "Supplier/Client", type: "text" },
+                    { name: "Item", type: "text" },
+                    { name: "Remarks", type: "text" },
+                    { name: "Quantity", type: "text" },
+                    { name: "UOM", type: "text" },
+                    { name: "Cost", type: "text" },
+                    { name: "AFD", type: "text" },
+                    { name: "AFD No.", type: "text" },
+                    { name: "Dispo Number", type: "text" },
+                    { name: "Disposition", type: "text" },
+                    { name: "Department", type: "text" },
+                    { name: "Week No.", type: "text" }
+                ],
+                entries: []
+            }
+        ]
+    };
+    localStorage.setItem(LS_KEY, JSON.stringify(db));
+}
 
 let currentCategory = null;
 let editingId = null;

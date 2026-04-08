@@ -22,9 +22,34 @@ const LS_KEY = "delivery_app";
 // ================================
 // STATE
 // ================================
-let db = JSON.parse(localStorage.getItem(LS_KEY)) || {
-    categories: []
-};
+let db = JSON.parse(localStorage.getItem(LS_KEY));
+
+if (!db) {
+    db = {
+        categories: [
+            {
+                name: "Encoding", 
+                columns: [
+                    { name: "Delivery Date", type: "date" },
+                    { name: "Client", type: "text" },
+                    { name: "Item Code", type: "text" },
+                    { name: "Item Description", type: "text" },
+                    { name: "Production Date", type: "date" },
+                    { name: "Batch/Code", type: "text" },
+                    { name: "QTY - Case", type: "text" },
+                    { name: "QTY - Bag/Packs", type: "text" },
+                    { name: "QTY - Net Weight", type: "text" },
+                    { name: "Total Delivery", type: "text" },
+                    { name: "UOM", type: "text" },
+                    { name: "DF/RF#", type: "text" }
+                ],
+                entries: []
+            }
+        ]
+    };
+
+    localStorage.setItem(LS_KEY, JSON.stringify(db));
+}
 
 let currentCategory = null;
 let dateSortAsc = true;
