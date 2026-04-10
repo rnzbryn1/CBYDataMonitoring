@@ -147,6 +147,7 @@ export const AppCore = {
         </tr>`;
 
         this.renderTable(this.state.localEntries);
+        this.setupTableEditing();
     },
 
     renderTable: function(entries) {
@@ -155,8 +156,8 @@ export const AppCore = {
 
         body.innerHTML = entries.length
             ? entries.map(e => `
-                <tr>
-                    ${this.state.currentTemplate.doc_columns.map(c => `<td>${e.content[c.column_name] || '-'}</td>`).join('')}
+                <tr data-entry-id="${e.id}">
+                    ${this.state.currentTemplate.doc_columns.map(c => `<td contenteditable="true" data-col-name="${c.column_name}">${e.content[c.column_name] || ''}</td>`).join('')}
                     <td class="action-buttons">
                         <button class="edit-btn" onclick="editEntry('${e.id}')">Edit</button>
                         <button class="del-btn" onclick="deleteEntry('${e.id}')">Delete</button>
@@ -164,6 +165,125 @@ export const AppCore = {
                 </tr>
             `).join('')
             : '<tr><td colspan="100%" style="text-align:center;padding:40px;color:#94a3b8;">No records found.</td></tr>';
+    },
+
+    setupTableEditing: function() {
+        if (this.tableEventsInitialized) return;
+        const body = document.getElementById('tableData');
+        if (!body) return;
+
+        body.addEventListener('focusin', (e) => {
+            const td = e.target;
+            if (td.tagName !== 'TD' || !td.isContentEditable) return;
+            td.classList.add('cell-focused');
+        });
+
+        body.addEventListener('focusout', (e) => {
+            const td = e.target;
+            if (td.tagName !== 'TD' || !td.isContentEditable) return;
+            td.classList.remove('cell-focused');
+            this.onTableCellBlur(td);
+        });
+
+        body.addEventListener('keydown', (e) => this.onTableCellKeyDown(e));
+        body.addEventListener('paste', (e) => this.onTableCellPaste(e));
+
+        this.tableEventsInitialized = true;
+    },
+
+    parseTabular: function(text) {
+        return text.replace(/\r/g, '').split('\n').filter(line => line !== '').map(line => line.split('\t'));
+    },
+
+    getTableCellInfo: function(td) {
+        if (!td || td.tagName !== 'TD') return null;
+        const row = td.closest('tr');
+        const entryId = row?.dataset.entryId;
+        const colName = td.dataset.colName;
+        return entryId && colName ? { entryId, colName } : null;
+    },
+
+    onTableCellBlur: function(td) {
+        const info = this.getTableCellInfo(td);
+        if (!info) return;
+        const entry = this.state.localEntries.find(e => e.id === info.entryId);
+        if (!entry) return;
+
+        const newValue = td.textContent.trim();
+        const currentValue = entry.content[info.colName] || '';
+        if (newValue === currentValue) return;
+
+        entry.content[info.colName] = newValue;
+        this.saveEntryField(entry.id, entry.content);
+    },
+
+    onTableCellKeyDown: function(e) {
+        const td = e.target;
+        if (td.tagName !== 'TD' || !td.isContentEditable) return;
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            td.blur();
+        }
+    },
+
+    onTableCellPaste: function(e) {
+        const td = e.target;
+        if (td.tagName !== 'TD' || !td.isContentEditable) return;
+
+        const text = e.clipboardData?.getData('text/plain') || '';
+        if (!text) return;
+        e.preventDefault();
+
+        const pasted = this.parseTabular(text);
+        if (!pasted.length) return;
+
+        const tbody = td.closest('tbody');
+        const rows = Array.from(tbody.rows);
+        const startRowIndex = rows.indexOf(td.closest('tr'));
+        const columns = this.state.currentTemplate.doc_columns.map(c => c.column_name);
+        const startColIndex = columns.indexOf(td.dataset.colName);
+        const changedEntries = new Map();
+
+        pasted.forEach((rowValues, rowOffset) => {
+            const targetRow = rows[startRowIndex + rowOffset];
+            if (!targetRow) return;
+            const entryId = targetRow.dataset.entryId;
+            const entry = this.state.localEntries.find(e => e.id === entryId);
+            if (!entry) return;
+
+            rowValues.forEach((cellValue, colOffset) => {
+                const colName = columns[startColIndex + colOffset];
+                if (!colName) return;
+                const cell = targetRow.querySelector(`td[data-col-name="${colName}"]`);
+                if (!cell) return;
+
+                const normalized = cellValue.trim();
+                if ((entry.content[colName] || '') === normalized) return;
+
+                entry.content[colName] = normalized;
+                cell.textContent = normalized;
+                changedEntries.set(entryId, entry);
+            });
+        });
+
+        if (!changedEntries.size) return;
+        changedEntries.forEach((entry) => this.saveEntryField(entry.id, entry.content));
+    },
+
+    saveEntryField: async function(entryId, content) {
+        try {
+            const { error } = await supabaseClient
+                .from('doc_entries')
+                .update({ content })
+                .eq('id', entryId);
+            if (error) throw error;
+
+            if (this.state.cache[this.state.currentTemplate.name]) {
+                this.state.cache[this.state.currentTemplate.name].entries = this.state.localEntries;
+            }
+        } catch (err) {
+            this.showToast('Save failed: ' + err.message, 'error');
+        }
     },
 
     // ============================================================
@@ -446,46 +566,85 @@ export const AppCore = {
         reader.readAsArrayBuffer(file);
     },
 
+    getImportRawRows: function(ws) {
+        const rawRows = XLSX.utils.sheet_to_json(ws, { defval: '', header: 1 });
+        return rawRows.filter(row => row.some(cell => String(cell).trim() !== ''));
+    },
+
+    detectHeaderRow: function(rawRows, cols) {
+        if (!rawRows.length) return false;
+        const firstRow = rawRows[0].map(cell => String(cell).trim());
+        const matchCount = firstRow.filter(value => cols.includes(value)).length;
+        const threshold = Math.max(2, Math.ceil(cols.length / 2));
+        return matchCount >= threshold;
+    },
+
+    mapImportRows: function(rawRows, cols) {
+        const hasHeader = this.detectHeaderRow(rawRows, cols);
+        if (hasHeader) {
+            const headers = rawRows[0].map(cell => String(cell).trim());
+            return rawRows.slice(1)
+                .filter(row => row.some(cell => String(cell).trim() !== ''))
+                .map(row => Object.fromEntries(
+                    cols.map(col => {
+                        const index = headers.indexOf(col);
+                        return [col, index !== -1 ? String(row[index] || '').trim() : ''];
+                    })
+                ));
+        }
+
+        return rawRows
+            .filter(row => row.some(cell => String(cell).trim() !== ''))
+            .map(row => Object.fromEntries(
+                cols.map((col, index) => [col, String(row[index] || '').trim()])
+            ));
+    },
+
     previewSheet: function() {
         const sheetName = document.getElementById('importSheet').value;
         const ws        = this.state._importWorkbook.Sheets[sheetName];
-        const rows      = XLSX.utils.sheet_to_json(ws, { defval: '' });
+        const rawRows   = this.getImportRawRows(ws);
 
         const preview    = document.getElementById('importPreview');
         const confirmBtn = document.getElementById('importConfirmBtn');
+        const cols       = this.state.currentTemplate.doc_columns.map(c => c.column_name);
+        const hasHeader  = this.detectHeaderRow(rawRows, cols);
+        const previewRows = this.mapImportRows(rawRows, cols);
 
-        if (!rows.length) {
+        if (!previewRows.length) {
             preview.innerHTML = '<span style="color:#ef4444;">No data found in this sheet.</span>';
             confirmBtn.disabled = true;
             return;
         }
 
-        const cols      = this.state.currentTemplate.doc_columns.map(c => c.column_name);
-        const excelCols = Object.keys(rows[0]);
-        const matched   = cols.filter(c => excelCols.includes(c));
-        const unmatched = cols.filter(c => !excelCols.includes(c));
+        const headerNote = hasHeader
+            ? 'Detected a header row and mapped columns by header labels.'
+            : 'No header row detected; importing rows by column order.';
 
         preview.innerHTML = `
             <div style="font-size:12px;line-height:1.8;padding:10px 12px;background:#f8fafc;border-radius:7px;border:1px solid #e2e8f0;">
-                <div><strong>${rows.length} rows</strong> found in sheet</div>
-                <div>Matched: <span style="color:#16a34a;font-weight:600;">${matched.join(', ') || 'none'}</span></div>
-                ${unmatched.length ? `<div>Will be blank: <span style="color:#b45309;">${unmatched.join(', ')}</span></div>` : ''}
+                <div><strong>${previewRows.length} rows</strong> will be imported</div>
+                <div>${headerNote}</div>
+                <div>Columns saved: <span style="color:#16a34a;font-weight:600;">${cols.join(', ')}</span></div>
             </div>
         `;
-        confirmBtn.disabled = matched.length === 0;
+        confirmBtn.disabled = false;
     },
 
     confirmImport: async function() {
         const sheetName = document.getElementById('importSheet').value;
         const ws        = this.state._importWorkbook.Sheets[sheetName];
-        const rows      = XLSX.utils.sheet_to_json(ws, { defval: '' });
+        const rawRows   = this.getImportRawRows(ws);
         const cols      = this.state.currentTemplate.doc_columns.map(c => c.column_name);
+        const rows      = this.mapImportRows(rawRows, cols);
+
+        if (!rows.length) {
+            return this.showToast('No data rows to import.', 'error');
+        }
 
         const entries = rows.map(row => ({
             template_id: this.state.currentTemplate.id,
-            content: Object.fromEntries(
-                cols.map(c => [c, row[c] !== undefined ? String(row[c]) : ''])
-            )
+            content: Object.fromEntries(cols.map(c => [c, row[c] !== undefined ? String(row[c]) : '']))
         }));
 
         const confirmBtn     = document.getElementById('importConfirmBtn');

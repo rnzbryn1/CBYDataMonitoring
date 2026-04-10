@@ -331,6 +331,25 @@ tbody td {
     vertical-align: middle;
 }
 
+tbody td[contenteditable="true"] {
+    min-width: 130px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    cursor: text;
+    border: 1px solid transparent;
+    transition: background 0.15s, border-color 0.15s;
+}
+
+tbody td[contenteditable="true"]:focus {
+    outline: none;
+    border-color: #93c5fd;
+    background: #eff6ff;
+}
+
+tbody td.cell-focused {
+    background: #eff6ff;
+}
+
 /* No data row */
 tbody td[colspan] {
     text-align: center;
