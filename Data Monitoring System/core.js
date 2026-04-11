@@ -5,32 +5,34 @@ const supabaseClient = createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey
 
 export const AppCore = {
     state: {
-        moduleName: '',
-        currentTemplate: null,
-        allTemplates: [],
-        localEntries: [],
-        dateSortAsc: true,
-        editingId: null,
-        cache: {},
-        isLoading: false,
-        _importWorkbook: null,
-        _importColumnsWorkbook: null,
-        _columnsToImport: []
+        moduleName:             '',
+        currentTemplate:        null,
+        allTemplates:           [],
+        localEntries:           [],
+        dateSortAsc:            true,
+        editingId:              null,
+        cache:                  {},
+        isLoading:              false,
+        _importWorkbook:        null,
+        _importExcelCols:       [],   // detected Excel column names
+        tableEventsInitialized: false
     },
 
     // ============================================================
     // INIT
     // ============================================================
-    init: async function(moduleName) {
+    init: async function (moduleName) {
         this.state.moduleName = moduleName;
         this.syncWithWindow();
         await this.refreshCategories();
     },
 
-    syncWithWindow: function() {
+    syncWithWindow: function () {
         window.switchCategory    = (name)     => this.switchCategory(name);
         window.saveData          = ()          => this.saveData();
         window.editEntry         = (id)        => this.editEntry(id);
+        window.closeEditModal    = ()          => this.closeEditModal();
+        window.saveEditEntry     = ()          => this.saveEditEntry();
         window.deleteEntry       = (id)        => this.deleteEntry(id);
         window.searchData        = ()          => this.searchData();
         window.sortByDate        = ()          => this.sortByDate();
@@ -38,7 +40,7 @@ export const AppCore = {
 
         window.openModal         = ()          => document.getElementById('categoryModal').style.display = 'block';
         window.closeModal        = ()          => document.getElementById('categoryModal').style.display = 'none';
-        window.openColumnModal   = ()          => this.openColumnModal();
+        window.openColumnModal   = ()          => document.getElementById('columnModal').style.display = 'block';
         window.closeColumnModal  = ()          => document.getElementById('columnModal').style.display = 'none';
 
         window.createNewCategory = ()          => this.createNewCategory();
@@ -47,15 +49,11 @@ export const AppCore = {
         window.deleteCategory    = (id, name)  => this.deleteCategory(id, name);
         window.toggleMenu        = (event, id) => this.toggleMenu(event, `menu-${id}`);
 
-        window.openImportModal   = ()          => document.getElementById('importModal').style.display = 'block';
+        window.openImportModal   = ()          => this.openImportModal();
         window.closeImportModal  = ()          => this.closeImportModal();
         window.loadSheets        = ()          => this.loadSheets();
+        window.previewSheet      = ()          => this.previewSheet();
         window.confirmImport     = ()          => this.confirmImport();
-
-        window.openImportColumnsModal = ()     => this.openImportColumnsModal();
-        window.closeImportColumnsModal = ()    => this.closeImportColumnsModal();
-        window.loadColumnsSheets = ()          => this.loadColumnsSheets();
-        window.confirmImportColumns = ()       => this.confirmImportColumns();
 
         window.addEventListener('click', () => {
             document.querySelectorAll('.dropdown').forEach(d => d.style.display = 'none');
@@ -65,7 +63,7 @@ export const AppCore = {
     // ============================================================
     // TOAST
     // ============================================================
-    showToast: function(message, type = 'success') {
+    showToast: function (message, type = 'success') {
         const toast = document.createElement('div');
         toast.className = `toast toast-${type} show`;
         toast.innerText = message;
@@ -79,13 +77,13 @@ export const AppCore = {
     // ============================================================
     // CATEGORY SWITCHING
     // ============================================================
-    switchCategory: async function(name) {
+    switchCategory: async function (name) {
         if (this.state.isLoading) return;
 
         this.updateActiveUI(name);
         const workspace = document.getElementById('moduleWorkspace');
-        workspace.style.display      = 'block';
-        workspace.style.opacity      = '0.4';
+        workspace.style.display       = 'block';
+        workspace.style.opacity       = '0.4';
         workspace.style.pointerEvents = 'none';
         this.state.isLoading = true;
 
@@ -96,12 +94,16 @@ export const AppCore = {
                     this.state.localEntries    = this.state.cache[name].entries;
                 } else {
                     const templateId = this.state.allTemplates.find(t => t.name === name)?.id;
+                    if (!templateId) throw new Error('Template not found');
 
                     const [tRes, eRes] = await Promise.all([
                         supabaseClient.from('doc_templates').select('*, doc_columns(*)').eq('id', templateId).single(),
-supabaseClient.from('doc_entries').select('*').eq('template_id', templateId).order('id', { ascending: true })                    ]);
+                        // FIX #5: always order by created_at ascending for consistent order
+                        supabaseClient.from('doc_entries').select('*').eq('template_id', templateId).order('created_at', { ascending: true })
+                    ]);
 
                     if (tRes.error) throw tRes.error;
+                    if (eRes.error) throw eRes.error;
 
                     const template = tRes.data;
                     template.doc_columns.sort((a, b) => a.display_order - b.display_order);
@@ -123,11 +125,10 @@ supabaseClient.from('doc_entries').select('*').eq('template_id', templateId).ord
         });
     },
 
-    updateActiveUI: function(name) {
+    updateActiveUI: function (name) {
         document.querySelectorAll('.category-card').forEach(c => c.classList.remove('active'));
         const activeCard = document.getElementById(`card-${name}`);
         if (activeCard) activeCard.classList.add('active');
-
         const label = document.getElementById('activeCategoryName');
         if (label) label.innerText = name;
     },
@@ -135,20 +136,31 @@ supabaseClient.from('doc_entries').select('*').eq('template_id', templateId).ord
     // ============================================================
     // RENDER
     // ============================================================
-    renderAll: function() {
+    renderAll: function () {
         const form = document.getElementById('dynamicForm');
         if (!form) return;
 
+        // FIX #2: use correct input type per column_type
         form.innerHTML = this.state.currentTemplate.doc_columns.map(c => `
             <div class="input-box">
                 <label>${c.column_name}</label>
-                <input type="${c.column_type}" id="input_${c.column_name}" placeholder="Enter ${c.column_name}">
+                <input type="${c.column_type === 'date' ? 'date' : c.column_type === 'number' ? 'number' : 'text'}"
+                    id="input_${c.column_name}"
+                    placeholder="Enter ${c.column_name}"
+                    step="${c.column_type === 'number' ? 'any' : ''}">
             </div>
         `).join('') + `<button onclick="saveData()" class="save-btn" id="mainSaveBtn">Save Record</button>`;
 
         const headers = document.getElementById('tableHeaders');
         headers.innerHTML = `<tr>
-            ${this.state.currentTemplate.doc_columns.map(c => `<th>${c.column_name}</th>`).join('')}
+            ${this.state.currentTemplate.doc_columns.map(c => `
+                <th>
+                    <div class="th-inner">
+                        <span>${c.column_name}</span>
+                        <button class="del-col-btn" title="Delete column" onclick="deleteColumn('${c.id}', '${c.column_name}')">✕</button>
+                    </div>
+                </th>
+            `).join('')}
             <th>Actions</th>
         </tr>`;
 
@@ -156,28 +168,108 @@ supabaseClient.from('doc_entries').select('*').eq('template_id', templateId).ord
         this.setupTableEditing();
     },
 
-    renderTable: function(entries) {
+    renderTable: function (entries) {
         const body = document.getElementById('tableData');
         if (!body) return;
 
-        body.innerHTML = entries.length
-            ? entries.map(e => `
-                <tr data-entry-id="${e.id}">
-                    ${this.state.currentTemplate.doc_columns.map(c => `<td contenteditable="true" data-col-name="${c.column_name}">${e.content[c.column_name] || ''}</td>`).join('')}
-                    <td class="action-buttons">
-                        <button class="edit-btn" onclick="editEntry('${e.id}')">Edit</button>
-                        <button class="del-btn" onclick="deleteEntry('${e.id}')">Delete</button>
-                    </td>
-                </tr>
-            `).join('')
-            : '<tr><td colspan="100%" style="text-align:center;padding:40px;color:#94a3b8;">No records found.</td></tr>';
+        if (!entries.length) {
+            body.innerHTML = `<tr><td colspan="100%" class="no-data">No records found.</td></tr>`;
+            return;
+        }
+
+        body.innerHTML = entries.map(e => `
+            <tr data-entry-id="${e.id}">
+                ${this.state.currentTemplate.doc_columns.map(c => {
+                    const val = e.content ? (e.content[c.column_name] ?? '') : '';
+                    return `<td contenteditable="true" data-col-name="${c.column_name}">${val}</td>`;
+                }).join('')}
+                <td class="action-buttons">
+                    <button class="edit-btn" onclick="editEntry('${e.id}')">Edit</button>
+                    <button class="del-btn"  onclick="deleteEntry('${e.id}')">Delete</button>
+                </td>
+            </tr>
+        `).join('');
     },
 
-    setupTableEditing: function() {
-        if (this.tableEventsInitialized) return;
+    // ============================================================
+    // INLINE TABLE EDITING + MULTI-CELL SELECTION
+    // ============================================================
+    setupTableEditing: function () {
+        if (this.state.tableEventsInitialized) return;
         const body = document.getElementById('tableData');
         if (!body) return;
 
+        // ---- selection state ----
+        let isSelecting   = false;
+        let selStartTd    = null;
+        let selEndTd      = null;
+
+        const getAllDataCells = () =>
+            Array.from(body.querySelectorAll('td[data-col-name]'));
+
+        const getCellPos = (td) => {
+            const row = td.closest('tr');
+            const rows = Array.from(body.rows);
+            const ri = rows.indexOf(row);
+            const cells = Array.from(row.querySelectorAll('td[data-col-name]'));
+            const ci = cells.indexOf(td);
+            return { ri, ci };
+        };
+
+        const clearSelection = () => {
+            body.querySelectorAll('td.cell-selected').forEach(c => c.classList.remove('cell-selected'));
+            selStartTd = null;
+            selEndTd   = null;
+        };
+
+        const applySelection = (startTd, endTd) => {
+            body.querySelectorAll('td.cell-selected').forEach(c => c.classList.remove('cell-selected'));
+            const s = getCellPos(startTd);
+            const e = getCellPos(endTd);
+            const minR = Math.min(s.ri, e.ri), maxR = Math.max(s.ri, e.ri);
+            const minC = Math.min(s.ci, e.ci), maxC = Math.max(s.ci, e.ci);
+            const rows = Array.from(body.rows);
+            for (let r = minR; r <= maxR; r++) {
+                if (!rows[r]) continue;
+                const cells = Array.from(rows[r].querySelectorAll('td[data-col-name]'));
+                for (let c = minC; c <= maxC; c++) {
+                    if (cells[c]) cells[c].classList.add('cell-selected');
+                }
+            }
+        };
+
+        // mousedown — start selection or focus single cell
+        body.addEventListener('mousedown', (e) => {
+            const td = e.target.closest('td[data-col-name]');
+            if (!td) { clearSelection(); return; }
+
+            if (e.shiftKey && selStartTd) {
+                // Shift+click extends selection
+                selEndTd = td;
+                applySelection(selStartTd, selEndTd);
+                e.preventDefault();
+                return;
+            }
+
+            clearSelection();
+            isSelecting = true;
+            selStartTd  = td;
+            selEndTd    = td;
+            td.classList.add('cell-selected');
+        });
+
+        // mouseover — drag to extend selection
+        body.addEventListener('mouseover', (e) => {
+            if (!isSelecting || !selStartTd) return;
+            const td = e.target.closest('td[data-col-name]');
+            if (!td) return;
+            selEndTd = td;
+            applySelection(selStartTd, selEndTd);
+        });
+
+        document.addEventListener('mouseup', () => { isSelecting = false; });
+
+        // focusin — single cell edit focus
         body.addEventListener('focusin', (e) => {
             const td = e.target;
             if (td.tagName !== 'TD' || !td.isContentEditable) return;
@@ -191,81 +283,107 @@ supabaseClient.from('doc_entries').select('*').eq('template_id', templateId).ord
             this.onTableCellBlur(td);
         });
 
-        body.addEventListener('keydown', (e) => this.onTableCellKeyDown(e));
+        // keydown — Ctrl+C copies selection, Enter blurs cell
+        body.addEventListener('keydown', (e) => {
+            // Ctrl+C or Cmd+C — copy selected cells
+            if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+                const selected = body.querySelectorAll('td.cell-selected');
+                if (!selected.length) return; // let browser handle normal copy
+
+                e.preventDefault();
+                // Group selected cells by row for TSV output
+                const rowMap = new Map();
+                selected.forEach(td => {
+                    const row = td.closest('tr');
+                    const rows = Array.from(body.rows);
+                    const ri = rows.indexOf(row);
+                    if (!rowMap.has(ri)) rowMap.set(ri, []);
+                    rowMap.get(ri).push(td.textContent);
+                });
+                const tsv = Array.from(rowMap.keys()).sort((a,b) => a-b)
+                    .map(ri => rowMap.get(ri).join('\t')).join('\n');
+                navigator.clipboard.writeText(tsv).catch(() => {});
+                this.showToast(`Copied ${selected.length} cell(s)`);
+                return;
+            }
+
+            this.onTableCellKeyDown(e);
+        });
+
         body.addEventListener('paste', (e) => this.onTableCellPaste(e));
 
-        this.tableEventsInitialized = true;
+        // Click outside table clears selection
+        document.addEventListener('click', (e) => {
+            if (!body.contains(e.target)) clearSelection();
+        });
+
+        this.state.tableEventsInitialized = true;
     },
 
-    parseTabular: function(text) {
-        return text.replace(/\r/g, '').split('\n').filter(line => line !== '').map(line => line.split('\t'));
+    parseTabular: function (text) {
+        return text.replace(/\r/g, '').split('\n').filter(l => l !== '').map(l => l.split('\t'));
     },
 
-    getTableCellInfo: function(td) {
+    getTableCellInfo: function (td) {
         if (!td || td.tagName !== 'TD') return null;
-        const row = td.closest('tr');
+        const row     = td.closest('tr');
         const entryId = row?.dataset.entryId;
         const colName = td.dataset.colName;
         return entryId && colName ? { entryId, colName } : null;
     },
 
-    onTableCellBlur: function(td) {
+    onTableCellBlur: function (td) {
         const info = this.getTableCellInfo(td);
         if (!info) return;
         const entry = this.state.localEntries.find(e => e.id === info.entryId);
         if (!entry) return;
-
-        const newValue = td.textContent.trim();
-        const currentValue = entry.content[info.colName] || '';
+        const newValue     = td.textContent.trim();
+        const currentValue = String(entry.content[info.colName] ?? '');
         if (newValue === currentValue) return;
-
         entry.content[info.colName] = newValue;
         this.saveEntryField(entry.id, entry.content);
     },
 
-    onTableCellKeyDown: function(e) {
+    onTableCellKeyDown: function (e) {
         const td = e.target;
         if (td.tagName !== 'TD' || !td.isContentEditable) return;
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            td.blur();
-        }
+        if (e.key === 'Enter') { e.preventDefault(); td.blur(); }
     },
 
-    onTableCellPaste: function(e) {
-        const td = e.target;
-        if (td.tagName !== 'TD' || !td.isContentEditable) return;
-
+    onTableCellPaste: function (e) {
         const text = e.clipboardData?.getData('text/plain') || '';
         if (!text) return;
+
+        // Use focused cell or the first selected cell as paste anchor
+        const td = e.target?.closest?.('td[data-col-name]')
+            || document.querySelector('#tableData td.cell-selected');
+        if (!td) return;
+
         e.preventDefault();
 
         const pasted = this.parseTabular(text);
         if (!pasted.length) return;
 
-        const tbody = td.closest('tbody');
-        const rows = Array.from(tbody.rows);
-        const startRowIndex = rows.indexOf(td.closest('tr'));
-        const columns = this.state.currentTemplate.doc_columns.map(c => c.column_name);
-        const startColIndex = columns.indexOf(td.dataset.colName);
+        const tbody          = document.getElementById('tableData');
+        const rows           = Array.from(tbody.rows);
+        const startRowIndex  = rows.indexOf(td.closest('tr'));
+        const columns        = this.state.currentTemplate.doc_columns.map(c => c.column_name);
+        const startColIndex  = columns.indexOf(td.dataset.colName);
         const changedEntries = new Map();
 
         pasted.forEach((rowValues, rowOffset) => {
             const targetRow = rows[startRowIndex + rowOffset];
             if (!targetRow) return;
             const entryId = targetRow.dataset.entryId;
-            const entry = this.state.localEntries.find(e => e.id === entryId);
+            const entry   = this.state.localEntries.find(e => e.id === entryId);
             if (!entry) return;
-
             rowValues.forEach((cellValue, colOffset) => {
                 const colName = columns[startColIndex + colOffset];
                 if (!colName) return;
                 const cell = targetRow.querySelector(`td[data-col-name="${colName}"]`);
                 if (!cell) return;
-
                 const normalized = cellValue.trim();
-                if ((entry.content[colName] || '') === normalized) return;
-
+                if (String(entry.content[colName] ?? '') === normalized) return;
                 entry.content[colName] = normalized;
                 cell.textContent = normalized;
                 changedEntries.set(entryId, entry);
@@ -276,14 +394,11 @@ supabaseClient.from('doc_entries').select('*').eq('template_id', templateId).ord
         changedEntries.forEach((entry) => this.saveEntryField(entry.id, entry.content));
     },
 
-    saveEntryField: async function(entryId, content) {
+    saveEntryField: async function (entryId, content) {
         try {
             const { error } = await supabaseClient
-                .from('doc_entries')
-                .update({ content })
-                .eq('id', entryId);
+                .from('doc_entries').update({ content }).eq('id', entryId);
             if (error) throw error;
-
             if (this.state.cache[this.state.currentTemplate.name]) {
                 this.state.cache[this.state.currentTemplate.name].entries = this.state.localEntries;
             }
@@ -293,23 +408,93 @@ supabaseClient.from('doc_entries').select('*').eq('template_id', templateId).ord
     },
 
     // ============================================================
+    // EDIT ENTRY — POPUP MODAL
+    // ============================================================
+    editEntry: function (id) {
+        const entry = this.state.localEntries.find(e => e.id === id);
+        if (!entry) return;
+        this.state.editingId = id;
+
+        const editForm = document.getElementById('editForm');
+        // FIX #2: use correct input types in edit modal too
+        editForm.innerHTML = this.state.currentTemplate.doc_columns.map(c => {
+            const inputType = c.column_type === 'date' ? 'date' : c.column_type === 'number' ? 'number' : 'text';
+            const rawVal    = String(entry.content[c.column_name] ?? '');
+            // For date inputs, value must be YYYY-MM-DD
+            const val = (inputType === 'date' && rawVal && !/^\d{4}-\d{2}-\d{2}$/.test(rawVal))
+                ? this.anyDateToISO(rawVal) || rawVal
+                : rawVal;
+            return `
+            <div class="input-box">
+                <label>${c.column_name}</label>
+                <input type="${inputType}"
+                    id="edit_input_${c.column_name}"
+                    value="${val.replace(/"/g, '&quot;')}"
+                    step="${inputType === 'number' ? 'any' : ''}"
+                    placeholder="Enter ${c.column_name}">
+            </div>`;
+        }).join('');
+
+        document.getElementById('editModal').style.display = 'block';
+    },
+
+    closeEditModal: function () {
+        document.getElementById('editModal').style.display = 'none';
+        this.state.editingId = null;
+    },
+
+    saveEditEntry: async function () {
+        if (!this.state.editingId) return;
+        const content = {};
+        this.state.currentTemplate.doc_columns.forEach(c => {
+            const el = document.getElementById(`edit_input_${c.column_name}`);
+            content[c.column_name] = el ? el.value : '';
+        });
+
+        const saveBtn     = document.getElementById('editSaveBtn');
+        saveBtn.disabled  = true;
+        saveBtn.innerText = 'Saving...';
+
+        try {
+            const { data, error } = await supabaseClient
+                .from('doc_entries').update({ content }).eq('id', this.state.editingId).select();
+            if (error) throw error;
+
+            const idx = this.state.localEntries.findIndex(e => e.id === this.state.editingId);
+            if (idx !== -1) this.state.localEntries[idx] = data[0];
+
+            if (this.state.cache[this.state.currentTemplate.name]) {
+                this.state.cache[this.state.currentTemplate.name].entries = this.state.localEntries;
+            }
+
+            this.renderTable(this.state.localEntries);
+            this.closeEditModal();
+            this.showToast('Record updated!');
+        } catch (err) {
+            this.showToast('Update failed: ' + err.message, 'error');
+        } finally {
+            saveBtn.disabled  = false;
+            saveBtn.innerText = 'Save Changes';
+        }
+    },
+
+    // ============================================================
     // CATEGORIES
     // ============================================================
-    refreshCategories: async function() {
+    refreshCategories: async function () {
         const { data, error } = await supabaseClient
-            .from('doc_templates')
-            .select('*')
-            .eq('module', this.state.moduleName);
-        if (error) return;
+            .from('doc_templates').select('*').eq('module', this.state.moduleName);
+        if (error) { this.showToast('Failed to load categories.', 'error'); return; }
         this.state.allTemplates = data || [];
         this.renderCategoryCards();
     },
 
-    renderCategoryCards: function() {
+    renderCategoryCards: function () {
         const container = document.getElementById('categoryCards');
         if (!container) return;
         container.innerHTML = this.state.allTemplates.map(t => {
-            const color = `hsla(${Math.abs(t.name.split('').reduce((a, b) => (((a << 5) - a) + b.charCodeAt(0)) | 0, 0)) % 360}, 70%, 85%, 1)`;
+            const hue   = Math.abs(t.name.split('').reduce((a, b) => (((a << 5) - a) + b.charCodeAt(0)) | 0, 0)) % 360;
+            const color = `hsla(${hue}, 60%, 82%, 1)`;
             return `
             <div class="category-card" id="card-${t.name}" style="background-color:${color};" onclick="switchCategory('${t.name}')">
                 <div class="card-menu" onclick="event.stopPropagation()">
@@ -324,17 +509,13 @@ supabaseClient.from('doc_entries').select('*').eq('template_id', templateId).ord
         }).join('');
     },
 
-    createNewCategory: async function() {
+    createNewCategory: async function () {
         const name = document.getElementById('newCategoryName').value.trim();
         if (!name) return this.showToast('Category name is required.', 'error');
-
         try {
             const { data, error } = await supabaseClient
-                .from('doc_templates')
-                .insert([{ name, module: this.state.moduleName }])
-                .select();
+                .from('doc_templates').insert([{ name, module: this.state.moduleName }]).select();
             if (error) throw error;
-
             this.state.allTemplates.push(data[0]);
             this.renderCategoryCards();
             this.showToast('Category created!');
@@ -345,20 +526,17 @@ supabaseClient.from('doc_entries').select('*').eq('template_id', templateId).ord
         }
     },
 
-    deleteCategory: async function(id, name) {
+    deleteCategory: async function (id, name) {
         if (!confirm(`Delete "${name}"? All data will be lost.`)) return;
         try {
             const { error } = await supabaseClient.from('doc_templates').delete().eq('id', id);
             if (error) throw error;
-
             this.state.allTemplates = this.state.allTemplates.filter(t => t.id !== id);
             delete this.state.cache[name];
-
             if (this.state.currentTemplate?.id === id) {
                 this.state.currentTemplate = null;
                 document.getElementById('moduleWorkspace').style.display = 'none';
             }
-
             this.renderCategoryCards();
             this.showToast('Category deleted.');
         } catch (err) {
@@ -369,30 +547,22 @@ supabaseClient.from('doc_entries').select('*').eq('template_id', templateId).ord
     // ============================================================
     // COLUMNS
     // ============================================================
-    addColumnToActive: async function() {
+    addColumnToActive: async function () {
         const name = document.getElementById('newColumnName').value.trim();
         const type = document.getElementById('newColumnType').value;
-
         if (!name) return this.showToast('Column name is required.', 'error');
         if (!this.state.currentTemplate) return this.showToast('No category selected.', 'error');
-
         const order = this.state.currentTemplate.doc_columns.length;
-
         try {
             const { data, error } = await supabaseClient
                 .from('doc_columns')
-                .insert([{
-                    template_id:   this.state.currentTemplate.id,
-                    column_name:   name,
-                    column_type:   type,
-                    display_order: order
-                }])
+                .insert([{ template_id: this.state.currentTemplate.id, column_name: name, column_type: type, display_order: order }])
                 .select();
             if (error) throw error;
-
             this.state.currentTemplate.doc_columns.push(data[0]);
-            delete this.state.cache[this.state.currentTemplate.name];
-
+            if (this.state.cache[this.state.currentTemplate.name]) {
+                this.state.cache[this.state.currentTemplate.name].template = this.state.currentTemplate;
+            }
             this.renderAll();
             this.showToast('Column added!');
             document.getElementById('newColumnName').value = '';
@@ -402,15 +572,16 @@ supabaseClient.from('doc_entries').select('*').eq('template_id', templateId).ord
         }
     },
 
-    deleteColumn: async function(id, name) {
+    deleteColumn: async function (id, name) {
         if (!confirm(`Delete column "${name}"? This will affect all records.`)) return;
         try {
             const { error } = await supabaseClient.from('doc_columns').delete().eq('id', id);
             if (error) throw error;
-
-            this.state.currentTemplate.doc_columns = this.state.currentTemplate.doc_columns.filter(c => c.id !== id);
-            delete this.state.cache[this.state.currentTemplate.name];
-
+            this.state.currentTemplate.doc_columns =
+                this.state.currentTemplate.doc_columns.filter(c => c.id !== id);
+            if (this.state.cache[this.state.currentTemplate.name]) {
+                this.state.cache[this.state.currentTemplate.name].template = this.state.currentTemplate;
+            }
             this.renderAll();
             this.showToast('Column deleted.');
         } catch (err) {
@@ -419,42 +590,33 @@ supabaseClient.from('doc_entries').select('*').eq('template_id', templateId).ord
     },
 
     // ============================================================
-    // ENTRIES — SAVE / EDIT / DELETE
+    // ENTRIES — SAVE / DELETE
     // ============================================================
-    saveData: async function() {
+    saveData: async function () {
         const content = {};
         this.state.currentTemplate.doc_columns.forEach(c => {
-            content[c.column_name] = document.getElementById(`input_${c.column_name}`).value;
+            const el = document.getElementById(`input_${c.column_name}`);
+            content[c.column_name] = el ? el.value : '';
         });
 
         const btn = document.getElementById('mainSaveBtn');
         btn.disabled = true;
 
         try {
-            let res;
-            if (this.state.editingId) {
-                res = await supabaseClient
-                    .from('doc_entries')
-                    .update({ content })
-                    .eq('id', this.state.editingId)
-                    .select();
-                const idx = this.state.localEntries.findIndex(e => e.id === this.state.editingId);
-                this.state.localEntries[idx] = res.data[0];
-            } else {
-                res = await supabaseClient
-                    .from('doc_entries')
-                    .insert([{ template_id: this.state.currentTemplate.id, content }])
-                    .select();
-                this.state.localEntries.push(res.data[0]);
-                this.state.localEntries.sort((a, b) => a.id - b.id);
-            }
+            const { data, error } = await supabaseClient
+                .from('doc_entries')
+                .insert([{ template_id: this.state.currentTemplate.id, content }])
+                .select();
+            if (error) throw error;
 
-            this.state.cache[this.state.currentTemplate.name].entries = this.state.localEntries;
-            this.state.editingId = null;
-            btn.innerText = 'Save Record';
+            this.state.localEntries.push(data[0]);
+            if (this.state.cache[this.state.currentTemplate.name]) {
+                this.state.cache[this.state.currentTemplate.name].entries = this.state.localEntries;
+            }
             this.renderTable(this.state.localEntries);
             this.state.currentTemplate.doc_columns.forEach(c => {
-                document.getElementById(`input_${c.column_name}`).value = '';
+                const el = document.getElementById(`input_${c.column_name}`);
+                if (el) el.value = '';
             });
             this.showToast('Saved successfully!');
         } catch (err) {
@@ -464,31 +626,15 @@ supabaseClient.from('doc_entries').select('*').eq('template_id', templateId).ord
         }
     },
 
-    editEntry: function(id) {
-        const entry = this.state.localEntries.find(e => e.id === id);
-        if (!entry) return;
-
-        this.state.currentTemplate.doc_columns.forEach(c => {
-            const input = document.getElementById(`input_${c.column_name}`);
-            if (input) input.value = entry.content[c.column_name] || '';
-        });
-
-        this.state.editingId = id;
-        const btn = document.getElementById('mainSaveBtn');
-        if (btn) btn.innerText = 'Update Record';
-
-        document.getElementById('dynamicForm')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    },
-
-    deleteEntry: async function(id) {
+    deleteEntry: async function (id) {
         if (!confirm('Are you sure you want to delete this record?')) return;
         try {
             const { error } = await supabaseClient.from('doc_entries').delete().eq('id', id);
             if (error) throw error;
-
             this.state.localEntries = this.state.localEntries.filter(e => e.id !== id);
-            this.state.cache[this.state.currentTemplate.name].entries = this.state.localEntries;
-
+            if (this.state.cache[this.state.currentTemplate.name]) {
+                this.state.cache[this.state.currentTemplate.name].entries = this.state.localEntries;
+            }
             this.renderTable(this.state.localEntries);
             this.showToast('Record deleted.');
         } catch (err) {
@@ -499,24 +645,22 @@ supabaseClient.from('doc_entries').select('*').eq('template_id', templateId).ord
     // ============================================================
     // SEARCH & SORT
     // ============================================================
-    searchData: function() {
-        const term = document.getElementById('search').value.toLowerCase();
+    searchData: function () {
+        const term     = document.getElementById('search').value.toLowerCase();
         const filtered = this.state.localEntries.filter(e =>
             JSON.stringify(e.content).toLowerCase().includes(term)
         );
         this.renderTable(filtered);
     },
 
-    sortByDate: function() {
+    sortByDate: function () {
         const dateCol = this.state.currentTemplate.doc_columns.find(c => c.column_type === 'date');
         if (!dateCol) return this.showToast('No date column found.', 'error');
-
         this.state.localEntries.sort((a, b) => {
             const d1 = new Date(a.content[dateCol.column_name] || 0);
             const d2 = new Date(b.content[dateCol.column_name] || 0);
             return this.state.dateSortAsc ? d1 - d2 : d2 - d1;
         });
-
         this.state.dateSortAsc = !this.state.dateSortAsc;
         this.renderTable(this.state.localEntries);
     },
@@ -524,8 +668,9 @@ supabaseClient.from('doc_entries').select('*').eq('template_id', templateId).ord
     // ============================================================
     // EXPORT
     // ============================================================
-    exportToExcel: function() {
-        if (!this.state.currentTemplate) return;
+    exportToExcel: function () {
+        if (!this.state.currentTemplate) return this.showToast('No category selected.', 'error');
+        if (!this.state.localEntries.length) return this.showToast('No data to export.', 'error');
         const formatted = this.state.localEntries.map(e => e.content);
         const ws = XLSX.utils.json_to_sheet(formatted);
         const wb = XLSX.utils.book_new();
@@ -534,449 +679,327 @@ supabaseClient.from('doc_entries').select('*').eq('template_id', templateId).ord
     },
 
     // ============================================================
+    // DATE PARSING UTILITIES  (FIX #1)
+    // Handles: serial, YYYY-MM-DD, DD-Mon-YY, DD-Mon-YYYY,
+    //          MM/DD/YYYY, DD/MM/YYYY, Month DD YYYY, etc.
+    // ============================================================
+    MONTH_MAP: {
+        jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',
+        jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'
+    },
+
+    excelSerialToISO: function (serial) {
+        const num = parseInt(serial, 10);
+        if (isNaN(num) || num < 1) return null;
+        const date = new Date(Date.UTC(1899, 11, 30) + num * 86400000);
+        return this._dateToISO(date);
+    },
+
+    _dateToISO: function (date) {
+        const yyyy = date.getUTCFullYear();
+        const mm   = String(date.getUTCMonth() + 1).padStart(2, '0');
+        const dd   = String(date.getUTCDate()).padStart(2, '0');
+        return `${yyyy}-${mm}-${dd}`;
+    },
+
+    isExcelSerial: function (value) {
+        const num = Number(value);
+        return Number.isInteger(num) && num > 1 && num < 100000;
+    },
+
+    // FIX #1: Parse any common date string into YYYY-MM-DD
+    anyDateToISO: function (raw) {
+        if (!raw) return '';
+        const s = String(raw).trim();
+        if (!s) return '';
+
+        // Already ISO: 2024-10-15
+        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+
+        // Excel serial number
+        if (this.isExcelSerial(s)) return this.excelSerialToISO(s);
+
+        // DD-Mon-YY or DD-Mon-YYYY  e.g. 15-Oct-24, 15-Oct-2024
+        const dMonY = s.match(/^(\d{1,2})[-\/\s]([A-Za-z]{3,})[-\/\s](\d{2,4})$/);
+        if (dMonY) {
+            const dd   = dMonY[1].padStart(2, '0');
+            const mon  = this.MONTH_MAP[dMonY[2].toLowerCase().substring(0, 3)];
+            let   year = dMonY[3];
+            if (year.length === 2) year = parseInt(year) < 50 ? '20' + year : '19' + year;
+            if (mon) return `${year}-${mon}-${dd}`;
+        }
+
+        // Mon-DD-YYYY or Mon DD YYYY  e.g. Oct-15-2024, October 15 2024
+        const monDY = s.match(/^([A-Za-z]{3,})[-\/\s](\d{1,2})[-\/\s](\d{2,4})$/);
+        if (monDY) {
+            const mon  = this.MONTH_MAP[monDY[1].toLowerCase().substring(0, 3)];
+            const dd   = monDY[2].padStart(2, '0');
+            let   year = monDY[3];
+            if (year.length === 2) year = parseInt(year) < 50 ? '20' + year : '19' + year;
+            if (mon) return `${year}-${mon}-${dd}`;
+        }
+
+        // MM/DD/YYYY or DD/MM/YYYY — try MM/DD/YYYY first (US), fallback
+        const slashParts = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+        if (slashParts) {
+            let [, p1, p2, year] = slashParts;
+            if (year.length === 2) year = parseInt(year) < 50 ? '20' + year : '19' + year;
+            const mm = p1.padStart(2, '0');
+            const dd = p2.padStart(2, '0');
+            return `${year}-${mm}-${dd}`;
+        }
+
+        // Try native Date parse as last resort
+        const d = new Date(s);
+        if (!isNaN(d.getTime())) return this._dateToISO(d);
+
+        return s; // return as-is if nothing matched
+    },
+
+    // ============================================================
     // IMPORT FROM EXCEL
     // ============================================================
-    openImportModal: function() {
+    _el: function (id) { return document.getElementById(id); },
+
+    openImportModal: function () {
         if (!this.state.currentTemplate)
             return this.showToast('Select a category first.', 'error');
         document.getElementById('importModal').style.display = 'block';
     },
 
-    closeImportModal: function() {
-        document.getElementById('importModal').style.display = 'none';
-        document.getElementById('importFile').value = '';
-        document.getElementById('importSheet').innerHTML = '<option>— load a file first —</option>';
-        document.getElementById('importSheet').disabled = true;
-        document.getElementById('importConfirmBtn').disabled = true;
-        document.getElementById('importPreview').innerHTML = '';
-        this.state._importWorkbook = null;
-    },
-    loadSheets: function() {
-        const file = document.getElementById('importFile').files[0];
-        if (!file) return;
-
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            const workbook = XLSX.read(e.target.result, { type: 'array' });
-            this.state._importWorkbook = workbook;
-
-            const sheetSelect = document.getElementById('importSheet');
-            sheetSelect.innerHTML = workbook.SheetNames.map(
-                name => `<option value="${name}">${name}</option>`
-            ).join('');
-            sheetSelect.disabled = false;
-            sheetSelect.onchange = () => this.previewSheet();
-
-            this.previewSheet();
-        };
-        reader.readAsArrayBuffer(file);
-    },
-
-    // ============================================================
-// IMPORT FROM EXCEL - FIXED
-// ============================================================
-getImportRawRows: function(ws) {
-    // Get all rows as 2D array
-    const rawRows = XLSX.utils.sheet_to_json(ws, { defval: '', header: 1 });
-    // Filter out completely empty rows AND rows that are just formulas with no values
-    return rawRows.filter(row => {
-        // Check if row has any actual content (not just empty strings)
-        return row.some(cell => {
-            const str = String(cell).trim();
-            return str !== '' && !str.startsWith('=');
-        });
-    });
-},
-
-detectHeaderRow: function(rawRows, cols) {
-    if (!rawRows.length) return false;
-    
-    // Look at first few rows to find the actual header
-    for (let i = 0; i < Math.min(5, rawRows.length); i++) {
-        const row = rawRows[i].map(cell => String(cell).trim().toUpperCase());
-        const matchCount = cols.filter(col => row.includes(col.toUpperCase())).length;
-        const threshold = Math.max(2, Math.ceil(cols.length / 2));
-        if (matchCount >= threshold) {
-            return i; // Return the index of the header row
-        }
-    }
-    return -1; // No header found
-},
-
-mapImportRows: function(rawRows, cols) {
-    const headerIndex = this.detectHeaderRow(rawRows, cols);
-    
-    let dataStartIndex;
-    let headers;
-    
-    if (headerIndex >= 0) {
-        // Use the detected header row
-        headers = rawRows[headerIndex].map(cell => String(cell).trim());
-        dataStartIndex = headerIndex + 1;
-    } else {
-        // No header found - use column order
-        headers = cols;
-        dataStartIndex = 0;
-    }
-    
-    // Map rows starting from dataStartIndex
-    const mappedRows = [];
-    for (let i = dataStartIndex; i < rawRows.length; i++) {
-        const row = rawRows[i];
-        // Skip empty rows
-        if (!row.some(cell => String(cell).trim() !== '')) continue;
-        
-        const mappedRow = {};
-        cols.forEach(col => {
-            if (headerIndex >= 0) {
-                // Find by header name (case-insensitive)
-                const colIndex = headers.findIndex(h => 
-                    h.toUpperCase() === col.toUpperCase()
-                );
-                if (colIndex >= 0 && colIndex < row.length) {
-                    const value = String(row[colIndex] || '').trim();
-                    // Skip formula results that are empty
-                    mappedRow[col] = value;
-                } else {
-                    mappedRow[col] = '';
-                }
-            } else {
-                // Map by position
-                const colPosition = cols.indexOf(col);
-                if (colPosition < row.length) {
-                    const value = String(row[colPosition] || '').trim();
-                    mappedRow[col] = value;
-                } else {
-                    mappedRow[col] = '';
-                }
-            }
-        });
-        
-        // Only add if at least one column has a value
-        if (Object.values(mappedRow).some(v => v !== '')) {
-            mappedRows.push(mappedRow);
-        }
-    }
-    
-    return mappedRows;
-},
-
-previewSheet: function() {
-    const sheetName = document.getElementById('importSheet').value;
-    const ws = this.state._importWorkbook.Sheets[sheetName];
-    const rawRows = this.getImportRawRows(ws);
-
-    const preview = document.getElementById('importPreview');
-    const confirmBtn = document.getElementById('importConfirmBtn');
-    const cols = this.state.currentTemplate.doc_columns.map(c => c.column_name);
-    
-    const previewRows = this.mapImportRows(rawRows, cols);
-
-    if (!previewRows.length) {
-        preview.innerHTML = '<span style="color:#ef4444;">No data rows found in this sheet. Make sure the sheet contains data matching your columns.</span>';
-        confirmBtn.disabled = true;
-        return;
-    }
-
-    const headerIndex = this.detectHeaderRow(rawRows, cols);
-    const headerNote = headerIndex >= 0
-        ? `Found header row at position ${headerIndex + 1}. Mapping by column names.`
-        : 'No header row found. Importing rows by column order.';
-
-    // Show sample of first 3 rows in preview
-    const sampleRows = previewRows.slice(0, 3).map(row => 
-        Object.entries(row).map(([k, v]) => `${k}: ${v || '(empty)'}`).join(', ')
-    ).join('<br>');
-
-    preview.innerHTML = `
-        <div style="font-size:12px;line-height:1.8;padding:10px 12px;background:#f8fafc;border-radius:7px;border:1px solid #e2e8f0;">
-            <div><strong>${previewRows.length} rows</strong> will be imported</div>
-            <div>${headerNote}</div>
-            <div>Columns: <span style="color:#16a34a;font-weight:600;">${cols.join(', ')}</span></div>
-            <div style="margin-top:8px;padding-top:8px;border-top:1px solid #e2e8f0;">
-                <strong>Sample data:</strong><br>
-                <span style="font-family:monospace;font-size:11px;">${sampleRows}</span>
-            </div>
-        </div>
-    `;
-    confirmBtn.disabled = false;
-},
-
-confirmImport: async function() {
-    const sheetName = document.getElementById('importSheet').value;
-    const ws = this.state._importWorkbook.Sheets[sheetName];
-    const rawRows = this.getImportRawRows(ws);
-    const cols = this.state.currentTemplate.doc_columns.map(c => c.column_name);
-    const rows = this.mapImportRows(rawRows, cols);
-
-    if (!rows.length) {
-        return this.showToast('No data rows to import.', 'error');
-    }
-
-    const entries = rows.map(row => ({
-        template_id: this.state.currentTemplate.id,
-        content: Object.fromEntries(cols.map(c => [c, row[c] || '']))
-    }));
-
-    const confirmBtn = document.getElementById('importConfirmBtn');
-    confirmBtn.disabled = true;
-    confirmBtn.innerText = 'Importing...';
-
-    try {
-        const batchSize = 100;
-        for (let i = 0; i < entries.length; i += batchSize) {
-            const batch = entries.slice(i, i + batchSize);
-            const { error } = await supabaseClient.from('doc_entries').insert(batch);
-            if (error) throw error;
-        }
-
-        // Refresh the entries
-                const { data, error } = await supabaseClient
-            .from('doc_entries')
-            .select('*')
-            .eq('template_id', this.state.currentTemplate.id)
-            .order('id', { ascending: true });
-
-        if (error) throw error;
-
-        this.state.cache[this.state.currentTemplate.name] = {
-        template: this.state.currentTemplate,
-        entries: this.state.localEntries
-        };
-        if (this.state.cache[this.state.currentTemplate.name]) {
-            this.state.cache[this.state.currentTemplate.name].entries = this.state.localEntries;
-        }
-
-        this.renderTable(this.state.localEntries);
-        this.closeImportModal();
-        this.showToast(`${entries.length} rows imported successfully!`);
-
-    } catch (err) {
-        this.showToast('Import failed: ' + err.message, 'error');
-    } finally {
-        confirmBtn.disabled = false;
-        confirmBtn.innerText = 'Import';
-    }
-},
-
-    // ============================================================
-    // IMPORT COLUMNS FROM EXCEL
-    // ============================================================
-    addImportColumnsButton: function() {
-        const columnModal = document.getElementById('columnModal');
-        if (!columnModal) return;
-        const actions = columnModal.querySelector('.modal-actions');
-        if (!actions || actions.querySelector('.import-columns-btn')) return;
-
-        const btn = document.createElement('button');
-        btn.className = 'import-columns-btn';
-        btn.onclick = () => this.openImportColumnsModal();
-        btn.innerText = 'Import Columns';
-        const addBtn = actions.querySelector('button[onclick*="addColumnToActive"]');
-        if (addBtn) {
-            actions.insertBefore(btn, addBtn);
-        } else {
-            actions.appendChild(btn);
-        }
-    },
-
-    openImportColumnsModal: function() {
-        if (!this.state.currentTemplate) return this.showToast('Select a category first.', 'error');
-
-        let modal = document.getElementById('importColumnsModal');
-        if (!modal) {
-            modal = document.createElement('div');
-            modal.id = 'importColumnsModal';
-            modal.className = 'modal';
-            modal.innerHTML = `
-                <div class="modal-content">
-                    <span class="close-btn" onclick="closeImportColumnsModal()">&times;</span>
-                    <h3>Import Columns from Excel</h3>
-
-                    <label class="modal-label">Choose File</label>
-                    <input type="file" id="importColumnsFile" accept=".xlsx,.xls" onchange="loadColumnsSheets()">
-
-                    <label class="modal-label">Select Sheet</label>
-                    <select id="importColumnsSheet" disabled>
-                        <option>— load a file first —</option>
-                    </select>
-
-                    <div id="importColumnsPreview"></div>
-
-                    <div class="modal-actions">
-                        <button onclick="closeImportColumnsModal()">Cancel</button>
-                        <button id="importColumnsConfirmBtn" onclick="confirmImportColumns()" disabled>Import</button>
-                    </div>
-                </div>
-            `;
-            document.body.appendChild(modal);
-        }
-        modal.style.display = 'block';
-    },
-
-    closeImportColumnsModal: function() {
-        const modal = document.getElementById('importColumnsModal');
+    closeImportModal: function () {
+        const modal = this._el('importModal');
         if (modal) modal.style.display = 'none';
-        const fileInput = document.getElementById('importColumnsFile');
-        if (fileInput) fileInput.value = '';
-        const sheetSelect = document.getElementById('importColumnsSheet');
-        if (sheetSelect) {
-            sheetSelect.innerHTML = '<option>— load a file first —</option>';
-            sheetSelect.disabled = true;
-        }
-        const confirmBtn = document.getElementById('importColumnsConfirmBtn');
-        if (confirmBtn) {
-            confirmBtn.disabled = true;
-            confirmBtn.innerText = 'Import';
-        }
-        const preview = document.getElementById('importColumnsPreview');
-        if (preview) preview.innerHTML = '';
-        this.state._importColumnsWorkbook = null;
-        this.state._columnsToImport = [];
+
+        const safe = (id, prop, val) => { const el = this._el(id); if (el) el[prop] = val; };
+        safe('importFile',        'value',     '');
+        safe('importHeaderRow',   'value',     '1');
+        safe('importSheet',       'innerHTML', '<option>— load a file first —</option>');
+        safe('importSheet',       'disabled',  true);
+        safe('importConfirmBtn',  'disabled',  true);
+        safe('importPreview',     'innerHTML', '');
+        safe('importExcelHeaders','innerHTML', '');
+        safe('importColMapping',  'innerHTML', '');
+
+        this.state._importWorkbook  = null;
+        this.state._importExcelCols = [];
     },
 
-    loadColumnsSheets: function() {
-        const fileInput = document.getElementById('importColumnsFile');
-        const file = fileInput ? fileInput.files[0] : null;
+    loadSheets: function () {
+        const file = this._el('importFile')?.files[0];
         if (!file) return;
-
         const reader = new FileReader();
         reader.onload = (e) => {
-            const workbook = XLSX.read(e.target.result, { type: 'array' });
-            this.state._importColumnsWorkbook = workbook;
+            try {
+                const workbook = XLSX.read(e.target.result, { type: 'array', cellDates: false });
+                this.state._importWorkbook = workbook;
 
-            const sheetSelect = document.getElementById('importColumnsSheet');
-            if (sheetSelect) {
+                const sheetSelect = this._el('importSheet');
                 sheetSelect.innerHTML = workbook.SheetNames.map(
                     name => `<option value="${name}">${name}</option>`
                 ).join('');
                 sheetSelect.disabled = false;
-                sheetSelect.onchange = () => this.previewColumnsSheet();
+                sheetSelect.onchange = () => this.previewSheet();
+                this.previewSheet();
+            } catch (err) {
+                this.showToast('Could not read file: ' + err.message, 'error');
             }
-
-            this.previewColumnsSheet();
         };
         reader.readAsArrayBuffer(file);
     },
 
-    previewColumnsSheet: function() {
-        const sheetSelect = document.getElementById('importColumnsSheet');
-        const sheetName = sheetSelect ? sheetSelect.value : '';
-        if (!sheetName || !this.state._importColumnsWorkbook) return;
+    previewSheet: function () {
+        if (!this.state._importWorkbook) return;
 
-        const ws = this.state._importColumnsWorkbook.Sheets[sheetName];
-        const rawRows = XLSX.utils.sheet_to_json(ws, { defval: '', header: 1 });
+        const sheetSelect = this._el('importSheet');
+        const headerInput = this._el('importHeaderRow');
+        const preview     = this._el('importPreview');
+        const confirmBtn  = this._el('importConfirmBtn');
+        const excelHdrs   = this._el('importExcelHeaders');
+        const colMapping  = this._el('importColMapping');
 
-        const preview = document.getElementById('importColumnsPreview');
-        const confirmBtn = document.getElementById('importColumnsConfirmBtn');
+        if (!sheetSelect || !preview || !confirmBtn) return;
 
-        if (!preview || !confirmBtn) return;
+        const sheetName = sheetSelect.value;
+        const headerRow = Math.max(1, parseInt(headerInput?.value || '1') || 1);
+        const ws        = this.state._importWorkbook.Sheets[sheetName];
 
-        if (rawRows.length < 2) {
-            preview.innerHTML = '<span style="color:#ef4444;">No data found. Need at least header and one row.</span>';
+        let rows = [];
+        try {
+            rows = XLSX.utils.sheet_to_json(ws, { defval: '', range: headerRow - 1 });
+        } catch (err) {
+            preview.innerHTML   = `<span style="color:#ef4444;">Error reading sheet: ${err.message}</span>`;
             confirmBtn.disabled = true;
             return;
         }
 
-        const headers = rawRows[0].map(h => String(h).trim().toLowerCase());
-        const nameIndex = headers.findIndex(h => h.includes('name') && h.includes('column'));
-        const altNameIndex = headers.indexOf('name');
-        const finalNameIndex = nameIndex !== -1 ? nameIndex : altNameIndex;
-        const typeIndex = headers.indexOf('type');
-        const orderIndex = headers.findIndex(h => h.includes('order'));
-
-        if (finalNameIndex === -1) {
-            preview.innerHTML = '<span style="color:#ef4444;">Header must include a column with "name" (preferably "column name").</span>';
+        if (!rows.length) {
+            preview.innerHTML   = '<span style="color:#ef4444;">No data found. Try a different header row number.</span>';
+            if (excelHdrs) excelHdrs.innerHTML = '';
+            if (colMapping) colMapping.innerHTML = '';
             confirmBtn.disabled = true;
             return;
         }
 
-        const columnsToAdd = [];
-        for (let i = 1; i < rawRows.length; i++) {
-            const row = rawRows[i];
-            const name = String(row[finalNameIndex] || '').trim();
-            if (!name) continue;
-            const type = String(row[typeIndex] || 'text').trim().toLowerCase();
-            const validTypes = ['text', 'number', 'date'];
-            const columnType = validTypes.includes(type) ? type : 'text';
-            const order = parseInt(row[orderIndex] || 0) || 0;
-            columnsToAdd.push({ column_name: name, column_type: columnType, display_order: order });
+        const excelCols = Object.keys(rows[0]);
+        this.state._importExcelCols = excelCols;
+
+        // Show detected Excel columns
+        if (excelHdrs) {
+            excelHdrs.innerHTML = `
+                <p class="import-section-label">Detected Excel columns (row ${headerRow})</p>
+                <div class="import-excel-cols">${excelCols.join(' &middot; ')}</div>
+            `;
         }
 
-        if (!columnsToAdd.length) {
-            preview.innerHTML = '<span style="color:#ef4444;">No valid columns to add.</span>';
-            confirmBtn.disabled = true;
-            return;
+        // FIX #4: Manual column mapping UI
+        // Build a dropdown per DB column so user can pick which Excel column maps to it
+        if (colMapping) {
+            const dbCols = this.state.currentTemplate.doc_columns;
+            const optionsHtml = `<option value="">(skip)</option>` +
+                excelCols.map(c => `<option value="${c.replace(/"/g, '&quot;')}">${c}</option>`).join('');
+
+            colMapping.innerHTML = `
+                <p class="import-section-label" style="margin-top:12px;">Map columns</p>
+                <div class="col-mapping-grid">
+                    ${dbCols.map(c => {
+                        // Auto-select exact match (case-insensitive)
+                        const autoMatch = excelCols.find(
+                            ec => ec.trim().toLowerCase() === c.column_name.trim().toLowerCase()
+                        ) || '';
+                        return `
+                        <div class="col-mapping-row">
+                            <span class="col-mapping-label" title="${c.column_type}">${c.column_name}
+                                <small class="col-type-badge">${c.column_type}</small>
+                            </span>
+                            <select class="col-mapping-select" data-db-col="${c.column_name}" data-col-type="${c.column_type}">
+                                ${optionsHtml}
+                            </select>
+                        </div>`;
+                    }).join('')}
+                </div>
+            `;
+
+            // Set auto-matched selections
+            dbCols.forEach(c => {
+                const autoMatch = excelCols.find(
+                    ec => ec.trim().toLowerCase() === c.column_name.trim().toLowerCase()
+                );
+                if (autoMatch) {
+                    const sel = colMapping.querySelector(`select[data-db-col="${c.column_name}"]`);
+                    if (sel) sel.value = autoMatch;
+                }
+            });
         }
 
-        // Sort by provided order, then assign sequential orders
-        columnsToAdd.sort((a, b) => a.display_order - b.display_order);
-        const currentMaxOrder = Math.max(...this.state.currentTemplate.doc_columns.map(c => c.display_order), -1);
-        columnsToAdd.forEach((col, idx) => {
-            col.display_order = currentMaxOrder + 1 + idx;
-        });
-
-        this.state._columnsToImport = columnsToAdd;
-
-        const sample = columnsToAdd.slice(0, 5).map(c => `${c.column_name} (${c.column_type})`).join(', ');
         preview.innerHTML = `
-            <div style="font-size:12px;line-height:1.8;padding:10px 12px;background:#f8fafc;border-radius:7px;border:1px solid #e2e8f0;">
-                <div><strong>${columnsToAdd.length} columns</strong> will be added</div>
-                <div>Sample: ${sample}${columnsToAdd.length > 5 ? '...' : ''}</div>
+            <div class="import-preview-box">
+                <div><strong>${rows.length.toLocaleString()} data rows</strong> found in sheet</div>
+                <div style="font-size:11px;color:#64748b;margin-top:4px;">
+                    Select which Excel column maps to each of your DB columns above.
+                    Columns set to "(skip)" will not be stored — those fields will simply be absent.
+                </div>
             </div>
         `;
+
         confirmBtn.disabled = false;
     },
 
-    confirmImportColumns: async function() {
-        if (!this.state._columnsToImport || !this.state._columnsToImport.length) return;
+    // FIX #1: Convert a value based on the column type
+    convertValue: function (raw, colType) {
+        const s = String(raw ?? '').trim();
+        if (!s) return '';
 
-        const confirmBtn = document.getElementById('importColumnsConfirmBtn');
-        if (confirmBtn) {
-            confirmBtn.disabled = true;
-            confirmBtn.innerText = 'Importing...';
+        if (colType === 'date') {
+            return this.anyDateToISO(s);
         }
 
+        if (colType === 'number') {
+            // Strip commas from numbers like "1,440"
+            const cleaned = s.replace(/,/g, '');
+            return isNaN(Number(cleaned)) ? s : cleaned;
+        }
+
+        return s;
+    },
+
+    // FIX #3 + #5: confirmImport now uses mapping UI and re-fetches ordered data
+    confirmImport: async function () {
+        if (!this.state._importWorkbook) return this.showToast('No file loaded.', 'error');
+        if (!this.state.currentTemplate)  return this.showToast('No category selected.', 'error');
+
+        const sheetName = this._el('importSheet')?.value;
+        const headerRow = Math.max(1, parseInt(this._el('importHeaderRow')?.value || '1') || 1);
+        const ws        = this.state._importWorkbook.Sheets[sheetName];
+        const rows      = XLSX.utils.sheet_to_json(ws, { defval: '', range: headerRow - 1 });
+
+        if (!rows.length) return this.showToast('No data rows to import.', 'error');
+
+        // Read the manual column mapping from UI
+        const mappingSelects = document.querySelectorAll('.col-mapping-select');
+        const mapping = {}; // dbColName -> excelColName
+        mappingSelects.forEach(sel => {
+            const dbCol  = sel.dataset.dbCol;
+            const excelCol = sel.value;
+            if (dbCol && excelCol) mapping[dbCol] = excelCol;
+        });
+
+        const dbCols = this.state.currentTemplate.doc_columns;
+
+        const entries = rows.map(row => {
+            const content = {};
+            dbCols.forEach(c => {
+                const excelColName = mapping[c.column_name] || '';
+                // If skipped, omit the key entirely — do not store blank
+                if (!excelColName) return;
+                const rawVal = row[excelColName] ?? '';
+                content[c.column_name] = this.convertValue(rawVal, c.column_type);
+            });
+            return { template_id: this.state.currentTemplate.id, content };
+        });
+
+        const confirmBtn     = this._el('importConfirmBtn');
+        if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.innerText = 'Importing...'; }
+
         try {
-            const inserts = this.state._columnsToImport.map(col => ({
-                template_id: this.state.currentTemplate.id,
-                column_name: col.column_name,
-                column_type: col.column_type,
-                display_order: col.display_order
-            }));
+            const batchSize = 100;
+            for (let i = 0; i < entries.length; i += batchSize) {
+                const { error } = await supabaseClient
+                    .from('doc_entries').insert(entries.slice(i, i + batchSize));
+                if (error) throw error;
+            }
 
-            const { data, error } = await supabaseClient
-                .from('doc_columns')
-                .insert(inserts)
-                .select();
-            if (error) throw error;
+            // FIX #3 + #5: re-fetch fresh data in correct order, then render immediately
+            const { data: freshData, error: fetchErr } = await supabaseClient
+                .from('doc_entries')
+                .select('*')
+                .eq('template_id', this.state.currentTemplate.id)
+                .order('created_at', { ascending: true });
+            if (fetchErr) throw fetchErr;
 
-            this.state.currentTemplate.doc_columns.push(...data);
-            this.state.currentTemplate.doc_columns.sort((a, b) => a.display_order - b.display_order);
-            delete this.state.cache[this.state.currentTemplate.name];
+            this.state.localEntries = freshData || [];
+            // Rebuild cache so it's not stale
+            this.state.cache[this.state.currentTemplate.name] = {
+                template: this.state.currentTemplate,
+                entries:  this.state.localEntries
+            };
 
-            this.renderAll();
-            this.closeImportColumnsModal();
-            this.showToast(`${data.length} columns added!`);
+            // FIX #3: render the table BEFORE closing modal so user sees data immediately
+            this.renderTable(this.state.localEntries);
+            this.closeImportModal();
+            this.showToast(`${entries.length} rows imported successfully!`);
+
         } catch (err) {
             this.showToast('Import failed: ' + err.message, 'error');
         } finally {
-            if (confirmBtn) {
-                confirmBtn.disabled = false;
-                confirmBtn.innerText = 'Import';
-            }
+            if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.innerText = 'Import'; }
         }
-    },
-
-    openColumnModal: function() {
-        document.getElementById('columnModal').style.display = 'block';
-        this.addImportColumnsButton();
     },
 
     // ============================================================
     // DROPDOWN TOGGLE
     // ============================================================
-    toggleMenu: function(event, menuId) {
+    toggleMenu: function (event, menuId) {
         event.stopPropagation();
         const menu   = document.getElementById(menuId);
         if (!menu) return;
