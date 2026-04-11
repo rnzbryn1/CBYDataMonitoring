@@ -25,7 +25,7 @@ export const AppCore = {
         this.state.moduleName = moduleName;
         this.syncWithWindow();
         await this.refreshCategories();
-    },
+    },    
 
     syncWithWindow: function () {
         window.switchCategory    = (name)     => this.switchCategory(name);
@@ -54,10 +54,24 @@ export const AppCore = {
         window.loadSheets        = ()          => this.loadSheets();
         window.previewSheet      = ()          => this.previewSheet();
         window.confirmImport     = ()          => this.confirmImport();
+        window.deleteSelected    = ()          => this.deleteSelected();
 
         window.addEventListener('click', () => {
             document.querySelectorAll('.dropdown').forEach(d => d.style.display = 'none');
         });
+
+        // CONTEXT MENU ACTIONS
+        // document.getElementById('ctxEdit').onclick = () => {
+        //     if (this.state.currentRowId) {
+        //         this.editEntry(this.state.currentRowId);
+        //     }
+        // };
+
+        document.getElementById('ctxDelete').onclick = () => {
+            if (this.state.currentRowId) {
+                this.deleteEntry(this.state.currentRowId);
+            }
+        };     
     },
 
     // ============================================================
@@ -144,7 +158,7 @@ export const AppCore = {
         form.innerHTML = this.state.currentTemplate.doc_columns.map(c => `
             <div class="input-box">
                 <label>${c.column_name}</label>
-                <input type="${c.column_type === 'date' ? 'date' : c.column_type === 'number' ? 'number' : 'text'}"
+                <input type="text"
                     id="input_${c.column_name}"
                     placeholder="Enter ${c.column_name}"
                     step="${c.column_type === 'number' ? 'any' : ''}">
@@ -153,6 +167,7 @@ export const AppCore = {
 
         const headers = document.getElementById('tableHeaders');
         headers.innerHTML = `<tr>
+            <th><input type="checkbox" id="selectAll"></th>
             ${this.state.currentTemplate.doc_columns.map(c => `
                 <th>
                     <div class="th-inner">
@@ -161,7 +176,6 @@ export const AppCore = {
                     </div>
                 </th>
             `).join('')}
-            <th>Actions</th>
         </tr>`;
 
         this.renderTable(this.state.localEntries);
@@ -179,14 +193,11 @@ export const AppCore = {
 
         body.innerHTML = entries.map(e => `
             <tr data-entry-id="${e.id}">
+                <td><input type="checkbox" class="rowCheckbox" data-id="${e.id}"></td>
                 ${this.state.currentTemplate.doc_columns.map(c => {
                     const val = e.content ? (e.content[c.column_name] ?? '') : '';
                     return `<td contenteditable="true" data-col-name="${c.column_name}">${val}</td>`;
                 }).join('')}
-                <td class="action-buttons">
-                    <button class="edit-btn" onclick="editEntry('${e.id}')">Edit</button>
-                    <button class="del-btn"  onclick="deleteEntry('${e.id}')">Delete</button>
-                </td>
             </tr>
         `).join('');
     },
@@ -318,6 +329,49 @@ export const AppCore = {
         });
 
         this.state.tableEventsInitialized = true;
+
+        //Select All Funtion para sa mga cells to ya
+        document.addEventListener('change', (e) => {
+            if (e.target.id === 'selectAll') {
+                document.querySelectorAll('.rowCheckbox')
+                    .forEach(cb => cb.checked = e.target.checked);
+            }
+        });
+        
+        //Right Click Logic
+        this.state.currentRowId = null;
+        const menu = document.getElementById('contextMenu');
+        
+        body.addEventListener('contextmenu', (e) => {
+            const td = e.target.closest('td[data-col-name]');
+            if (!td) return;
+
+            e.preventDefault();
+
+            const row = td.closest('tr');
+
+            // CLEAR previous row highlight
+            body.querySelectorAll('tr.row-selected')
+                .forEach(r => r.classList.remove('row-selected'));
+
+            // HIGHLIGHT buong row
+            row.classList.add('row-selected');
+
+            this.state.currentRowId = row.dataset.entryId;
+
+            // Show menu
+            menu.style.display = 'block';
+            menu.style.top = e.pageY + 'px';
+            menu.style.left = e.pageX + 'px';
+        });
+
+        // Hide menu on click
+        document.addEventListener('click', () => {
+            menu.style.display = 'none';
+
+            document.querySelectorAll('tr.row-selected')
+                .forEach(r => r.classList.remove('row-selected'));
+        });
     },
 
     parseTabular: function (text) {
@@ -418,7 +472,7 @@ export const AppCore = {
         const editForm = document.getElementById('editForm');
         // FIX #2: use correct input types in edit modal too
         editForm.innerHTML = this.state.currentTemplate.doc_columns.map(c => {
-            const inputType = c.column_type === 'date' ? 'date' : c.column_type === 'number' ? 'number' : 'text';
+            const inputType = 'text';
             const rawVal    = String(entry.content[c.column_name] ?? '');
             // For date inputs, value must be YYYY-MM-DD
             const val = (inputType === 'date' && rawVal && !/^\d{4}-\d{2}-\d{2}$/.test(rawVal))
@@ -549,7 +603,7 @@ export const AppCore = {
     // ============================================================
     addColumnToActive: async function () {
         const name = document.getElementById('newColumnName').value.trim();
-        const type = document.getElementById('newColumnType').value;
+        const type = 'text';
         if (!name) return this.showToast('Column name is required.', 'error');
         if (!this.state.currentTemplate) return this.showToast('No category selected.', 'error');
         const order = this.state.currentTemplate.doc_columns.length;
@@ -1006,5 +1060,33 @@ export const AppCore = {
         const isOpen = menu.style.display === 'block';
         document.querySelectorAll('.dropdown').forEach(d => d.style.display = 'none');
         if (!isOpen) menu.style.display = 'block';
+    },
+
+    // ============================================================
+    //Delete Selection lang sa mga checkbox ituuu
+    // ============================================================
+    deleteSelected: async function () {
+    const checked = Array.from(document.querySelectorAll('.rowCheckbox:checked'))
+        .map(cb => cb.dataset.id);
+
+    if (!checked.length) return this.showToast('No selected rows.', 'error');
+
+    if (!confirm(`Delete ${checked.length} records?`)) return;
+
+    try {
+        const { error } = await supabaseClient
+            .from('doc_entries')
+            .delete()
+            .in('id', checked);
+
+        if (error) throw error;
+
+        this.state.localEntries = this.state.localEntries.filter(e => !checked.includes(e.id));
+
+        this.renderTable(this.state.localEntries);
+        this.showToast('Deleted selected records.');
+    } catch (err) {
+        this.showToast('Delete failed: ' + err.message, 'error');
+    }
     }
 };

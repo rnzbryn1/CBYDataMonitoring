@@ -37,6 +37,7 @@
         <section class="controls">
             <div class="action-bar">
                 <input type="text" id="search" placeholder="Search records..." oninput="searchData()">
+                <button onclick="deleteSelected()">Delete Selected</button>
                 <button onclick="sortByDate()">Sort by Date</button>
                 <button onclick="exportToExcel()">Export Excel</button>
                 <button onclick="openImportModal()">Import Excel</button>
@@ -78,11 +79,7 @@
         <span class="close-btn" onclick="closeColumnModal()">&times;</span>
         <h3>Add Column</h3>
         <input type="text" id="newColumnName" placeholder="Column name">
-        <select id="newColumnType">
-            <option value="text">Text</option>
-            <option value="number">Number</option>
-            <option value="date">Date</option>
-        </select>
+        
         <div class="modal-actions">
             <button onclick="closeColumnModal()">Cancel</button>
             <button onclick="addColumnToActive()">Add</button>
@@ -105,12 +102,16 @@
         </select>
 
         <div id="importPreview" style="margin-top:12px;"></div>
-
+        
         <div class="modal-actions" style="margin-top:16px;">
             <button onclick="closeImportModal()">Cancel</button>
             <button id="importConfirmBtn" onclick="confirmImport()" disabled>Import</button>
         </div>
     </div>
+</div>
+
+<div id="contextMenu" class="context-menu">
+    <button id="ctxDelete">Delete Row</button>
 </div>
 
 <script type="module" src="salesdesk.js"></script>

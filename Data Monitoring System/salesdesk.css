@@ -564,6 +564,68 @@ tbody td[colspan] {
     letter-spacing: 0.05em;
 }
 
+
+/* --- Para doon to sa right click ng edit and delete button --- */
+.context-menu {
+    position: absolute;
+    display: none;
+    min-width: 160px;
+    background: #ffffff;
+    border-radius: 10px;
+    box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+    padding: 6px 0;
+    z-index: 9999;
+    animation: fadeInMenu 0.15s ease;
+    border: 1px solid #eee;
+}
+
+.context-menu button {
+    width: 100%;
+    padding: 10px 14px;
+    border: none;
+    background: transparent;
+    text-align: left;
+    font-size: 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    transition: background 0.2s ease, padding-left 0.2s ease;
+}
+
+.context-menu button:hover {
+    background: #f5f7fb;
+    padding-left: 18px;
+}
+
+.context-menu button:active {
+    background: #eaeef5;
+}
+
+.context-menu button.delete {
+    color: #ef4444;
+}
+
+.context-menu button.delete:hover {
+    background: #fee2e2;
+}
+
+@keyframes fadeInMenu {
+    from {
+        opacity: 0;
+        transform: scale(0.95) translateY(-5px);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+tr.row-selected td {
+    background: #e0f2fe !important;
+}
+/* -------------------- */
+
 /* --- SCROLLBAR --- */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
