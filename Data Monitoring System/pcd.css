@@ -15,7 +15,8 @@ body {
 
 /* --- LAYOUT --- */
 .container {
-    max-width: 1400px;
+    width: 100%;
+    max-width: 100%;
     margin: 0 auto;
     padding: 24px 32px;
 }
@@ -287,6 +288,7 @@ h3 {
    TABLE — OPTION A (Notion / Linear style)
    ============================================ */
 .table-wrapper {
+    width: 100%;
     overflow-x: auto;
     border-radius: 10px;
     border: 1px solid #e2e8f0;
@@ -294,8 +296,17 @@ h3 {
 
 table {
     width: 100%;
+    min-width: 100%;
+    table-layout: auto;
     border-collapse: collapse;
     font-size: 13px;
+}
+
+thead th,
+tbody td {
+    min-width: 160px;
+    padding: 14px 16px;
+    white-space: normal;
 }
 
 /* Header */
@@ -329,25 +340,6 @@ tbody td {
     padding: 11px 14px;
     color: #1e293b;
     vertical-align: middle;
-}
-
-tbody td[contenteditable="true"] {
-    min-width: 130px;
-    white-space: pre-wrap;
-    word-break: break-word;
-    cursor: text;
-    border: 1px solid transparent;
-    transition: background 0.15s, border-color 0.15s;
-}
-
-tbody td[contenteditable="true"]:focus {
-    outline: none;
-    border-color: #93c5fd;
-    background: #eff6ff;
-}
-
-tbody td.cell-focused {
-    background: #eff6ff;
 }
 
 /* No data row */
@@ -447,11 +439,14 @@ tbody td[colspan] {
     z-index: 1000;
     align-items: center;
     justify-content: center;
+    overflow-y: auto;
 }
 
 .modal[style*="block"] { display: flex !important; }
 
 .modal-content {
+    display: flex;
+    flex-direction: column;
     background: #fff;
     border-radius: 12px;
     padding: 24px;
@@ -459,6 +454,8 @@ tbody td[colspan] {
     max-width: 380px;
     position: relative;
     box-shadow: 0 20px 40px rgba(0,0,0,0.15);
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
 }
 
 .modal-content h3 {
@@ -496,6 +493,10 @@ tbody td[colspan] {
     justify-content: flex-end;
     gap: 8px;
     margin-top: 4px;
+    position: sticky;
+    bottom: 0;
+    background: #fff;
+    padding-top: 12px;
 }
 
 .modal-actions button {
@@ -582,6 +583,69 @@ tbody td[colspan] {
     text-transform: uppercase;
     letter-spacing: 0.05em;
 }
+
+
+/* --- Para doon to sa right click ng edit and delete button --- */
+.context-menu {
+    position: absolute;
+    display: none;
+    min-width: 160px;
+    background: #ffffff;
+    border-radius: 10px;
+    box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+    padding: 6px 0;
+    z-index: 9999;
+    animation: fadeInMenu 0.15s ease;
+    border: 1px solid #eee;
+}
+
+.context-menu button {
+    width: 100%;
+    padding: 10px 14px;
+    border: none;
+    background: transparent;
+    text-align: left;
+    font-size: 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    transition: background 0.2s ease, padding-left 0.2s ease;
+}
+
+.context-menu button:hover {
+    background: #f5f7fb;
+    padding-left: 18px;
+}
+
+.context-menu button:active {
+    background: #eaeef5;
+}
+
+.context-menu button.delete {
+    color: #ef4444;
+}
+
+.context-menu button.delete:hover {
+    background: #fee2e2;
+}
+
+@keyframes fadeInMenu {
+    from {
+        opacity: 0;
+        transform: scale(0.95) translateY(-5px);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+tr.row-selected td {
+    background: #e0f2fe !important;
+}
+
+/* -------------------- */
 
 /* --- SCROLLBAR --- */
 ::-webkit-scrollbar { width: 6px; height: 6px; }

@@ -37,6 +37,7 @@
         <section class="controls">
             <div class="action-bar">
                 <input type="text" id="search" placeholder="Search records..." oninput="searchData()">
+                <button onclick="deleteSelected()">Delete Selected</button>
                 <button onclick="sortByDate()">Sort by Date</button>
                 <button onclick="exportToExcel()">Export Excel</button>
                 <button onclick="openImportModal()">Import Excel</button>
@@ -141,6 +142,11 @@
             <button id="importConfirmBtn" onclick="confirmImport()" disabled>Import</button>
         </div>
     </div>
+</div>
+
+<div id="contextMenu" class="context-menu">
+    <button id="ctxEdit">Edit Row</button>
+    <button id="ctxDelete" class="delete">Delete Row</button>
 </div>
 
 <script type="module" src="salesdesk.js"></script>

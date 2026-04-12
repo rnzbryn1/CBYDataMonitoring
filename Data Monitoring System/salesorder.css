@@ -288,14 +288,16 @@ tbody td.cell-selected {
     display: none; position: fixed; inset: 0;
     background: rgba(15,23,42,0.45);
     z-index: 1000; align-items: center; justify-content: center; padding: 16px;
+    overflow-y: auto;
 }
 .modal[style*="block"] { display: flex !important; }
 
 .modal-content {
+    display: flex; flex-direction: column;
     background: #fff; border-radius: 12px; padding: 24px;
     width: 100%; max-width: 400px; position: relative;
     box-shadow: 0 20px 60px rgba(0,0,0,0.18);
-    max-height: 90vh; overflow-y: auto;
+    max-height: calc(100vh - 32px); overflow-y: auto;
 }
 
 .edit-modal-content   { max-width: 700px; }
@@ -343,7 +345,10 @@ tbody td.cell-selected {
 }
 
 /* --- MODAL ACTIONS --- */
-.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.modal-actions {
+    display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px;
+    position: sticky; bottom: 0; background: #fff; padding: 12px 0 0;
+}
 
 .modal-actions button {
     height: 36px; padding: 0 16px; border-radius: 7px;

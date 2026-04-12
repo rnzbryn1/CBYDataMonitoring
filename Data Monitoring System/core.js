@@ -60,18 +60,128 @@ export const AppCore = {
             document.querySelectorAll('.dropdown').forEach(d => d.style.display = 'none');
         });
 
-        // CONTEXT MENU ACTIONS
-        // document.getElementById('ctxEdit').onclick = () => {
-        //     if (this.state.currentRowId) {
-        //         this.editEntry(this.state.currentRowId);
-        //     }
-        // };
+        this.ensureContextMenu();
 
-        document.getElementById('ctxDelete').onclick = () => {
+        // CONTEXT MENU ACTIONS
+        document.getElementById('ctxEdit')?.addEventListener('click', () => {
+            if (this.state.currentRowId) {
+                this.editEntry(this.state.currentRowId);
+            }
+        });
+
+        document.getElementById('ctxDelete')?.addEventListener('click', () => {
             if (this.state.currentRowId) {
                 this.deleteEntry(this.state.currentRowId);
             }
-        };     
+        });     
+    },
+
+    ensureContextMenu: function () {
+        this.injectContextMenuStyles();
+        if (document.getElementById('contextMenu')) return;
+
+        const menu = document.createElement('div');
+        menu.id = 'contextMenu';
+        menu.className = 'context-menu';
+
+        const editBtn = document.createElement('button');
+        editBtn.id = 'ctxEdit';
+        editBtn.type = 'button';
+        editBtn.textContent = 'Edit Row';
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.id = 'ctxDelete';
+        deleteBtn.type = 'button';
+        deleteBtn.textContent = 'Delete Row';
+        deleteBtn.className = 'delete';
+
+        menu.appendChild(editBtn);
+        menu.appendChild(deleteBtn);
+        document.body.appendChild(menu);
+        this.injectContextMenuStyles();
+    },
+
+    injectContextMenuStyles: function () {
+        if (document.getElementById('appcore-context-menu-styles')) return;
+
+        const style = document.createElement('style');
+        style.id = 'appcore-context-menu-styles';
+        style.textContent = `
+            .context-menu {
+                position: absolute;
+                display: none;
+                min-width: 160px;
+                background: #ffffff;
+                border-radius: 10px;
+                box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+                padding: 6px 0;
+                z-index: 9999;
+                animation: fadeInMenu 0.15s ease;
+                border: 1px solid #eee;
+            }
+
+            .context-menu button {
+                width: 100%;
+                padding: 10px 14px;
+                border: none;
+                background: transparent;
+                text-align: left;
+                font-size: 14px;
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                transition: background 0.2s ease, padding-left 0.2s ease;
+            }
+
+            .context-menu button:hover {
+                background: #f5f7fb;
+                padding-left: 18px;
+            }
+
+            .context-menu button:active {
+                background: #eaeef5;
+            }
+
+            .context-menu button.delete {
+                color: #ef4444;
+            }
+
+            .context-menu button.delete:hover {
+                background: #fee2e2;
+            }
+
+            tbody td.cell-focused,
+            tbody td[contenteditable="true"]:focus {
+                background: #eff6ff;
+                box-shadow: inset 0 0 0 1.5px #2563eb;
+                border-radius: 4px;
+            }
+
+            tbody td.cell-selected {
+                background: #dbeafe !important;
+                box-shadow: inset 0 0 0 1px #3b82f6;
+                border-radius: 2px;
+                user-select: none;
+            }
+
+            @keyframes fadeInMenu {
+                from {
+                    opacity: 0;
+                    transform: scale(0.95) translateY(-5px);
+                }
+                to {
+                    opacity: 1;
+                    transform: scale(1) translateY(0);
+                }
+            }
+
+            tr.row-selected td {
+                background: #e0f2fe !important;
+            }
+        `;
+
+        document.head.appendChild(style);
     },
 
     // ============================================================
@@ -101,41 +211,43 @@ export const AppCore = {
         workspace.style.pointerEvents = 'none';
         this.state.isLoading = true;
 
-        requestAnimationFrame(async () => {
-            try {
-                if (this.state.cache[name]) {
-                    this.state.currentTemplate = this.state.cache[name].template;
-                    this.state.localEntries    = this.state.cache[name].entries;
-                } else {
-                    const templateId = this.state.allTemplates.find(t => t.name === name)?.id;
-                    if (!templateId) throw new Error('Template not found');
+        await new Promise(resolve => {
+            requestAnimationFrame(async () => {
+                try {
+                    if (this.state.cache[name]) {
+                        this.state.currentTemplate = this.state.cache[name].template;
+                        this.state.localEntries    = this.state.cache[name].entries;
+                    } else {
+                        const templateId = this.state.allTemplates.find(t => t.name === name)?.id;
+                        if (!templateId) throw new Error('Template not found');
 
-                    const [tRes, eRes] = await Promise.all([
-                        supabaseClient.from('doc_templates').select('*, doc_columns(*)').eq('id', templateId).single(),
-                        // FIX #5: always order by created_at ascending for consistent order
-                        supabaseClient.from('doc_entries').select('*').eq('template_id', templateId).order('created_at', { ascending: true })
-                    ]);
+                        const [tRes, eRes] = await Promise.all([
+                            supabaseClient.from('doc_templates').select('*, doc_columns(*)').eq('id', templateId).single(),
+                            supabaseClient.from('doc_entries').select('*').eq('template_id', templateId)
+                        ]);
 
-                    if (tRes.error) throw tRes.error;
-                    if (eRes.error) throw eRes.error;
+                        if (tRes.error) throw tRes.error;
+                        if (eRes.error) throw eRes.error;
 
-                    const template = tRes.data;
-                    template.doc_columns.sort((a, b) => a.display_order - b.display_order);
+                        const template = tRes.data;
+                        template.doc_columns.sort((a, b) => a.display_order - b.display_order);
 
-                    this.state.currentTemplate = template;
-                    this.state.localEntries    = eRes.data || [];
-                    this.state.cache[name]     = { template, entries: this.state.localEntries };
+                        this.state.currentTemplate = template;
+                        this.state.localEntries    = eRes.data || [];
+                        this.state.cache[name]     = { template, entries: this.state.localEntries };
+                    }
+
+                    this.renderAll();
+
+                } catch (err) {
+                    this.showToast('Switch failed: ' + err.message, 'error');
+                } finally {
+                    workspace.style.opacity       = '1';
+                    workspace.style.pointerEvents = 'auto';
+                    this.state.isLoading          = false;
+                    resolve();
                 }
-
-                this.renderAll();
-
-            } catch (err) {
-                this.showToast('Switch failed: ' + err.message, 'error');
-            } finally {
-                workspace.style.opacity       = '1';
-                workspace.style.pointerEvents = 'auto';
-                this.state.isLoading          = false;
-            }
+            });
         });
     },
 
@@ -195,11 +307,25 @@ export const AppCore = {
             <tr data-entry-id="${e.id}">
                 <td><input type="checkbox" class="rowCheckbox" data-id="${e.id}"></td>
                 ${this.state.currentTemplate.doc_columns.map(c => {
-                    const val = e.content ? (e.content[c.column_name] ?? '') : '';
+                    const rawVal = e.content ? (e.content[c.column_name] ?? '') : '';
+                    const val = this.formatDisplayValue(rawVal, c.column_type);
                     return `<td contenteditable="true" data-col-name="${c.column_name}">${val}</td>`;
                 }).join('')}
             </tr>
         `).join('');
+    },
+
+    formatDisplayValue: function (raw, colType) {
+        if (colType === 'date') {
+            if (raw instanceof Date && !isNaN(raw.getTime())) {
+                return this.formatDateDisplay(raw);
+            }
+            return String(raw ?? '');
+        }
+        if (raw instanceof Date && !isNaN(raw.getTime())) {
+            return raw.toString();
+        }
+        return String(raw ?? '');
     },
 
     // ============================================================
@@ -214,9 +340,6 @@ export const AppCore = {
         let isSelecting   = false;
         let selStartTd    = null;
         let selEndTd      = null;
-
-        const getAllDataCells = () =>
-            Array.from(body.querySelectorAll('td[data-col-name]'));
 
         const getCellPos = (td) => {
             const row = td.closest('tr');
@@ -628,19 +751,71 @@ export const AppCore = {
 
     deleteColumn: async function (id, name) {
         if (!confirm(`Delete column "${name}"? This will affect all records.`)) return;
+        const column = this.state.currentTemplate?.doc_columns.find(c => c.id === id);
+        if (!column) return this.showToast('Column not found.', 'error');
+        const columnName = column.column_name;
+
         try {
             const { error } = await supabaseClient.from('doc_columns').delete().eq('id', id);
             if (error) throw error;
-            this.state.currentTemplate.doc_columns =
-                this.state.currentTemplate.doc_columns.filter(c => c.id !== id);
-            if (this.state.cache[this.state.currentTemplate.name]) {
-                this.state.cache[this.state.currentTemplate.name].template = this.state.currentTemplate;
+
+            const { data: entries, error: fetchErr } = await supabaseClient
+                .from('doc_entries')
+                .select('id, content')
+                .eq('template_id', this.state.currentTemplate.id);
+            if (fetchErr) throw fetchErr;
+
+            if (entries && entries.length) {
+                const updates = entries
+                    .filter(entry => entry.content && Object.prototype.hasOwnProperty.call(entry.content, columnName))
+                    .map(entry => {
+                        const updatedContent = { ...entry.content };
+                        delete updatedContent[columnName];
+                        return supabaseClient
+                            .from('doc_entries')
+                            .update({ content: updatedContent })
+                            .eq('id', entry.id);
+                    });
+
+                if (updates.length) {
+                    const results = await Promise.all(updates);
+                    const failed = results.find(r => r.error);
+                    if (failed) throw failed.error;
+                }
             }
-            this.renderAll();
+
+            if (this.state.cache[this.state.currentTemplate.name]) {
+                delete this.state.cache[this.state.currentTemplate.name];
+            }
+
+            await this.reloadCurrentTemplate();
             this.showToast('Column deleted.');
         } catch (err) {
             this.showToast('Failed: ' + err.message, 'error');
         }
+    },
+
+    reloadCurrentTemplate: async function () {
+        const templateId = this.state.currentTemplate?.id;
+        if (!templateId) return;
+
+        const [tRes, eRes] = await Promise.all([
+            supabaseClient.from('doc_templates').select('*, doc_columns(*)').eq('id', templateId).single(),
+            supabaseClient.from('doc_entries').select('*').eq('template_id', templateId)
+        ]);
+
+        if (tRes.error) throw tRes.error;
+        if (eRes.error) throw eRes.error;
+
+        const template = tRes.data;
+        template.doc_columns.sort((a, b) => a.display_order - b.display_order);
+
+        this.state.currentTemplate = template;
+        this.state.localEntries    = eRes.data || [];
+        this.state.cache[template.name] = { template, entries: this.state.localEntries };
+
+        this.updateActiveUI(template.name);
+        this.renderAll();
     },
 
     // ============================================================
@@ -756,6 +931,14 @@ export const AppCore = {
         return `${yyyy}-${mm}-${dd}`;
     },
 
+    formatDateDisplay: function (date) {
+        if (!(date instanceof Date) || isNaN(date.getTime())) return '';
+        const day   = date.getUTCDate();
+        const mon   = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][date.getUTCMonth()];
+        const year  = String(date.getUTCFullYear()).slice(-2);
+        return `${day}-${mon}-${year}`;
+    },
+
     isExcelSerial: function (value) {
         const num = Number(value);
         return Number.isInteger(num) && num > 1 && num < 100000;
@@ -763,7 +946,10 @@ export const AppCore = {
 
     // FIX #1: Parse any common date string into YYYY-MM-DD
     anyDateToISO: function (raw) {
-        if (!raw) return '';
+        if (!raw && raw !== 0) return '';
+        if (raw instanceof Date && !isNaN(raw.getTime())) return this._dateToISO(raw);
+        if (typeof raw === 'number') return this.excelSerialToISO(raw) || '';
+
         const s = String(raw).trim();
         if (!s) return '';
 
@@ -845,7 +1031,7 @@ export const AppCore = {
         const reader = new FileReader();
         reader.onload = (e) => {
             try {
-                const workbook = XLSX.read(e.target.result, { type: 'array', cellDates: false });
+                const workbook = XLSX.read(e.target.result, { type: 'array', cellDates: true });
                 this.state._importWorkbook = workbook;
 
                 const sheetSelect = this._el('importSheet');
@@ -880,7 +1066,7 @@ export const AppCore = {
 
         let rows = [];
         try {
-            rows = XLSX.utils.sheet_to_json(ws, { defval: '', range: headerRow - 1 });
+            rows = XLSX.utils.sheet_to_json(ws, { defval: '', range: headerRow - 1, raw: false });
         } catch (err) {
             preview.innerHTML   = `<span style="color:#ef4444;">Error reading sheet: ${err.message}</span>`;
             confirmBtn.disabled = true;
@@ -961,12 +1147,21 @@ export const AppCore = {
 
     // FIX #1: Convert a value based on the column type
     convertValue: function (raw, colType) {
+        if (colType === 'date') {
+            if (raw instanceof Date && !isNaN(raw.getTime())) {
+                return this.formatDateDisplay(raw);
+            }
+            if (typeof raw === 'number') {
+                const date = new Date(Date.UTC(1899, 11, 30) + raw * 86400000);
+                return this.formatDateDisplay(date);
+            }
+            const s = String(raw ?? '').trim();
+            return s;
+        }
+
         const s = String(raw ?? '').trim();
         if (!s) return '';
 
-        if (colType === 'date') {
-            return this.anyDateToISO(s);
-        }
 
         if (colType === 'number') {
             // Strip commas from numbers like "1,440"
@@ -985,7 +1180,7 @@ export const AppCore = {
         const sheetName = this._el('importSheet')?.value;
         const headerRow = Math.max(1, parseInt(this._el('importHeaderRow')?.value || '1') || 1);
         const ws        = this.state._importWorkbook.Sheets[sheetName];
-        const rows      = XLSX.utils.sheet_to_json(ws, { defval: '', range: headerRow - 1 });
+        const rows      = XLSX.utils.sheet_to_json(ws, { defval: '', range: headerRow - 1, raw: false });
 
         if (!rows.length) return this.showToast('No data rows to import.', 'error');
 
@@ -1027,8 +1222,7 @@ export const AppCore = {
             const { data: freshData, error: fetchErr } = await supabaseClient
                 .from('doc_entries')
                 .select('*')
-                .eq('template_id', this.state.currentTemplate.id)
-                .order('created_at', { ascending: true });
+                .eq('template_id', this.state.currentTemplate.id);
             if (fetchErr) throw fetchErr;
 
             this.state.localEntries = freshData || [];
