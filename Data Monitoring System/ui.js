@@ -17,14 +17,21 @@ export const UI = {
     renderCategoryCards(templates, activeName) {
         const container = document.getElementById('categoryCards');
         if (!container) return;
+
         container.innerHTML = templates.map(t => `
-            <div class="category-card ${t.name === activeName ? 'active' : ''}" id="card-${t.id}" onclick="switchCategory('${t.name}')">
+            <div class="category-card ${t.name === activeName ? 'active' : ''}" 
+                id="card-${t.id}" 
+                onclick="switchCategory('${t.name}')">
+
                 <div class="card-menu" onclick="event.stopPropagation();">
                     <button class="menu-btn" onclick="toggleMenu(event, '${t.id}')">⋮</button>
+
                     <div id="menu-${t.id}" class="dropdown">
+                        <button onclick="renameCategory('${t.id}', '${t.name}')">✏️ Rename</button>
                         <button class="delete-menu-item" onclick="deleteCategory('${t.id}', '${t.name}')">🗑️ Delete</button>
                     </div>
                 </div>
+
                 <div class="card-icon">${t.name.substring(0, 2).toUpperCase()}</div>
                 <span class="card-label">${t.name}</span>
             </div>
@@ -45,15 +52,27 @@ export const UI = {
     renderTable(columns, entries) {
         const head = document.getElementById('tableHeaders');
         const body = document.getElementById('tableData');
-        head.innerHTML = `<tr>${columns.map(c => `<th>${c.column_name}</th>`).join('')}<th>Actions</th></tr>`;
+
+        head.innerHTML = `
+            <tr>
+                ${columns.map(c => `
+                    <th ondblclick="renameColumn('${c.id}', '${c.column_name}')">
+                        ${c.column_name}
+                    </th>
+                `).join('')}
+                <th>Actions</th>
+            </tr>
+        `;
+
         body.innerHTML = entries.length ? entries.map(e => `
             <tr>
                 ${columns.map(c => `<td>${e.content[c.column_name] || '-'}</td>`).join('')}
                 <td class="action-buttons">
-                    <button class="edit-btn" onclick="editEntry('${e.id}')">Edit</button>
-                    <button class="del-btn" onclick="deleteEntry('${e.id}')">Del</button>
+                    <button onclick="editEntry('${e.id}')">Edit</button>
+                    <button onclick="deleteEntry('${e.id}')">Del</button>
                 </td>
             </tr>
-        `).join('') : '<tr><td colspan="100%" style="text-align:center; padding:20px;">No records.</td></tr>';
+        `).join('')
+        : '<tr><td colspan="100%" style="text-align:center;">No records.</td></tr>';
     }
 };

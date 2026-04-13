@@ -27,15 +27,14 @@
 
     <!-- WORKSPACE -->
     <div id="moduleWorkspace" style="display:none;">
-
         <!-- ENTRY FORM -->
         <section class="card">
-            <h3>Entry Form</h3>
+            <h3 id="entryFormTitle">Entry Form</h3>
             <div id="dynamicForm" class="grid-form"></div>
         </section>
 
         <!-- ACTION BAR -->
-        <section class="controls">
+        <section class="controls sticky-form">
             <div class="action-bar">
                 <input type="text" id="search" placeholder="Search records..." oninput="searchData()">
                 <button onclick="deleteSelected()">Delete Selected</button>

@@ -647,6 +647,57 @@ tr.row-selected td {
 
 /* -------------------- */
 
+/* -------------------- */
+/* ------Sticky Form naman to para doon sa table head at action bar------- */
+/* -------------------- */
+.sticky-form {
+    position: sticky;
+    top: 10px; /* distance from top */
+    z-index: 100;
+    background: #fff;
+    padding: 15px;
+    border-radius: 12px;
+}
+
+/* Optional: para hindi matakpan ng shadow */
+.sticky-form {
+    box-shadow: 0 8px 20px rgba(0,0,0,0.08);
+}
+
+.controls {
+    position: sticky;
+    top: 1px; /* adjust depende sa form height */
+    z-index: 90;
+    background: #fff;
+}
+
+.table-wrapper {
+    max-height: 490px; /* or kahit anong height gusto mo */
+    overflow: auto;
+}
+
+table {
+    border-collapse: collapse;
+    width: 100%;
+}
+
+thead th {
+    position: sticky;
+    top: 0;
+    background: #ffffff; /* IMPORTANT para di transparent */
+    z-index: 5;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+/* Para sa pag-drag ng column to */
+th.dragging {
+    opacity: 0.5;
+    transform: scale(1.05);
+}
+
+th {
+    cursor: grab;
+}
 /* --- SCROLLBAR --- */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }

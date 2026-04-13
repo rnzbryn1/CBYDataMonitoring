@@ -50,6 +50,8 @@ export const AppCore = {
         window.addColumnToActive = ()          => this.addColumnToActive();
         window.deleteColumn      = (id, name)  => this.deleteColumn(id, name);
         window.deleteCategory    = (id, name)  => this.deleteCategory(id, name);
+        window.renameCategory = (id, name) => this.renameCategory(id, name);
+        window.renameColumn   = (id, name) => this.renameColumn(id, name);
         window.toggleMenu        = (event, id) => this.toggleMenu(event, `menu-${id}`);
 
         window.openImportModal   = ()          => this.openImportModal();
@@ -216,10 +218,10 @@ export const AppCore = {
 
         await new Promise(resolve => {
             requestAnimationFrame(async () => {
-                try {
+                try {                    
                     if (this.state.cache[name]) {
                         this.state.currentTemplate = this.state.cache[name].template;
-                        this.state.localEntries    = this.state.cache[name].entries;
+                        this.state.localEntries    = this.state.cache[name].entries;                     
                     } else {
                         const templateId = this.state.allTemplates.find(t => t.name === name)?.id;
                         if (!templateId) throw new Error('Template not found');
@@ -269,6 +271,12 @@ export const AppCore = {
         const form = document.getElementById('dynamicForm');
         if (!form) return;
 
+        //Instant load to ya para sa name ng entry form
+        const title = document.getElementById('entryFormTitle');
+        if (title && this.state.currentTemplate) {
+            title.innerText = `${this.state.currentTemplate.name} Entry Form`;
+        }      
+
         // FIX #2: use correct input type per column_type
         form.innerHTML = this.state.currentTemplate.doc_columns.map(c => `
             <div class="input-box">
@@ -284,10 +292,11 @@ export const AppCore = {
         headers.innerHTML = `<tr>
             <th><input type="checkbox" id="selectAll"></th>
             ${this.state.currentTemplate.doc_columns.map(c => `
-                <th>
+                <th data-col-id="${c.id}" data-col-name="${c.column_name}">
                     <div class="th-inner">
-                        <span>${c.column_name}</span>
-                        <button class="del-col-btn" title="Delete column" onclick="deleteColumn('${c.id}', '${c.column_name}')">✕</button>
+                        <span class="th-text">${c.column_name}</span>
+                        <button class="del-col-btn" title="Delete column"
+                            onclick="deleteColumn('${c.id}', '${c.column_name}')">✕</button>
                     </div>
                 </th>
             `).join('')}
@@ -295,6 +304,7 @@ export const AppCore = {
 
         this.renderTable(this.state.localEntries);
         this.setupTableEditing();
+        this.enableColumnDrag();
     },
 
     renderTable: function (entries) {
@@ -498,6 +508,25 @@ export const AppCore = {
             document.querySelectorAll('tr.row-selected')
                 .forEach(r => r.classList.remove('row-selected'));
         });
+
+        //Renaming Column
+        const headerRow = document.getElementById('tableHeaders');
+
+            if (headerRow && !this.state.headerRenameInitialized) {
+                headerRow.addEventListener('dblclick', async (e) => {
+                    const th = e.target.closest('th[data-col-id]');
+                    if (!th) return;
+
+                    const colId   = th.dataset.colId;
+                    const oldName = th.dataset.colName;
+
+                    await this.renameColumn(colId, oldName);
+                });
+
+                this.state.headerRenameInitialized = true;
+            }
+
+            this.state.tableEventsInitialized = true;     
     },
 
     parseTabular: function (text) {
@@ -681,6 +710,7 @@ export const AppCore = {
                 <div class="card-menu" onclick="event.stopPropagation()">
                     <button class="menu-btn" onclick="toggleMenu(event, '${t.id}')">⋮</button>
                     <div class="dropdown" id="menu-${t.id}">
+                        <button onclick="renameCategory('${t.id}', '${t.name}')">✏️ Rename</button>
                         <button onclick="deleteCategory('${t.id}', '${t.name}')">🗑️ Delete</button>
                     </div>
                 </div>
@@ -910,12 +940,28 @@ export const AppCore = {
     // EXPORT
     // ============================================================
     exportToExcel: function () {
-        if (!this.state.currentTemplate) return this.showToast('No category selected.', 'error');
-        if (!this.state.localEntries.length) return this.showToast('No data to export.', 'error');
-        const formatted = this.state.localEntries.map(e => e.content);
+        if (!this.state.currentTemplate) 
+            return this.showToast('No category selected.', 'error');
+
+        if (!this.state.localEntries.length) 
+            return this.showToast('No data to export.', 'error');
+
+        const cols = this.state.currentTemplate.doc_columns;
+
+        // Build ordered data
+        const formatted = this.state.localEntries.map(entry => {
+            const row = {};
+            cols.forEach(col => {
+                row[col.column_name] = entry.content[col.column_name] ?? '';
+            });
+            return row;
+        });
+
         const ws = XLSX.utils.json_to_sheet(formatted);
+
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, this.state.currentTemplate.name);
+
         XLSX.writeFile(wb, `${this.state.currentTemplate.name}.xlsx`);
     },
 
@@ -1272,28 +1318,171 @@ export const AppCore = {
     //Delete Selection lang sa mga checkbox ituuu
     // ============================================================
     deleteSelected: async function () {
-    const checked = Array.from(document.querySelectorAll('.rowCheckbox:checked'))
-    .map(cb => cb.dataset.id)
-    .filter(id => id && id !== 'undefined' && id !== 'null');
+        const checked = Array.from(document.querySelectorAll('.rowCheckbox:checked'))
+            .map(cb => cb.dataset.id)
+            .filter(id => id);
 
-    if (!checked.length) return this.showToast('No selected rows.', 'error');
+        if (!checked.length) return this.showToast('No selected rows.', 'error');
 
-    if (!confirm(`Delete ${checked.length} records?`)) return;
+        if (!confirm(`Delete ${checked.length} records?`)) return;
 
-    try {
-        const { error } = await supabaseClient
-            .from('doc_entries')
-            .delete()
-            .in('id', checked);
+        const chunkSize = 100;
 
-        if (error) throw error;
+        try {
+            for (let i = 0; i < checked.length; i += chunkSize) {
+                const chunk = checked.slice(i, i + chunkSize);
 
-        this.state.localEntries = this.state.localEntries.filter(e => !checked.includes(e.id));
+                const { error } = await supabaseClient
+                    .from('doc_entries')
+                    .delete()
+                    .in('id', chunk);
 
-        this.renderTable(this.state.localEntries);
-        this.showToast('Deleted selected records.');
-    } catch (err) {
-        this.showToast('Delete failed: ' + err.message, 'error');
-    }
-    }
+                if (error) throw error;
+            }
+
+            // update UI
+            this.state.localEntries = this.state.localEntries.filter(e => !checked.includes(e.id));
+            this.renderTable(this.state.localEntries);
+
+            this.showToast('Deleted selected records.');
+        } catch (err) {
+            this.showToast('Delete failed: ' + err.message, 'error');
+        }
+    },
+
+    renameCategory: async function (id, oldName) {
+        const newName = prompt('Enter new category name:', oldName);
+        if (!newName || newName.trim() === oldName) return;
+
+        try {
+            const { error } = await supabaseClient
+                .from('doc_templates')
+                .update({ name: newName.trim() })
+                .eq('id', id);
+
+            if (error) throw error;
+
+            // update local state
+            const cat = this.state.allTemplates.find(t => t.id === id);
+            if (cat) cat.name = newName.trim();
+
+            this.renderCategoryCards();
+            this.showToast('Category renamed!');
+        } catch (err) {
+            this.showToast('Rename failed: ' + err.message, 'error');
+        }
+    },    
+
+    renameColumn: async function (id, oldName) {
+        const newName = prompt('Enter new column name:', oldName);
+        if (!newName || newName.trim() === oldName) return;
+
+        try {
+            const { error } = await supabaseClient
+                .from('doc_columns')
+                .update({ column_name: newName.trim() })
+                .eq('id', id);
+
+            if (error) throw error;
+
+            // update local column
+            const col = this.state.currentTemplate.doc_columns.find(c => c.id === id);
+            if (!col) return;
+
+            const oldKey = col.column_name;
+            const newKey = newName.trim();
+            col.column_name = newKey;
+
+            // update entries
+            this.state.localEntries.forEach(entry => {
+                if (entry.content && entry.content[oldKey] !== undefined) {
+                    entry.content[newKey] = entry.content[oldKey];
+                    delete entry.content[oldKey];
+                }
+            });
+
+            // save all entries
+            await Promise.all(
+                this.state.localEntries.map(e =>
+                    supabaseClient
+                        .from('doc_entries')
+                        .update({ content: e.content })
+                        .eq('id', e.id)
+                )
+            );
+
+            this.renderAll();
+            this.showToast('Column renamed!');
+        } catch (err) {
+            this.showToast('Rename failed: ' + err.message, 'error');
+        }
+    },
+
+    //Column Drag
+    enableColumnDrag: function () {
+        const headerRow = document.querySelector('#tableHeaders tr');
+        if (!headerRow) return;
+
+        let dragStartIndex = null;
+
+        const getIndex = (th) => {
+            return Array.from(th.parentNode.children).indexOf(th);
+        };
+
+        headerRow.querySelectorAll('th').forEach((th, index) => {
+            if (index === 0) return; // skip checkbox column
+
+            th.setAttribute('draggable', true);
+
+            th.addEventListener('dragstart', (e) => {
+                dragStartIndex = getIndex(th);
+                th.classList.add('dragging');
+            });
+
+            th.addEventListener('dragover', (e) => {
+                e.preventDefault();
+            });
+
+            th.addEventListener('drop', (e) => {
+                e.preventDefault();
+
+                const dragEndIndex = getIndex(th);
+                if (dragStartIndex === dragEndIndex) return;
+
+                this.moveColumn(dragStartIndex, dragEndIndex);
+            });
+
+            th.addEventListener('dragend', () => {
+                th.classList.remove('dragging');
+            });
+        });
+    },   
+
+    moveColumn: function (from, to) {
+        const cols = this.state.currentTemplate.doc_columns;
+
+        // adjust index (skip checkbox column)
+        from -= 1;
+        to   -= 1;
+
+        const moved = cols.splice(from, 1)[0];
+        cols.splice(to, 0, moved);
+
+        // update display_order
+        cols.forEach((c, i) => {
+            c.display_order = i;
+        });
+
+        // save to supabase
+        Promise.all(cols.map(c =>
+            supabaseClient
+                .from('doc_columns')
+                .update({ display_order: c.display_order })
+                .eq('id', c.id)
+        ));
+
+        // re-render
+        this.renderAll();
+    },
+
 };
