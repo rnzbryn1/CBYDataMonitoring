@@ -1261,7 +1261,8 @@ export const AppCore = {
     // ============================================================
     deleteSelected: async function () {
     const checked = Array.from(document.querySelectorAll('.rowCheckbox:checked'))
-        .map(cb => cb.dataset.id);
+    .map(cb => cb.dataset.id)
+    .filter(id => id && id !== 'undefined' && id !== 'null');
 
     if (!checked.length) return this.showToast('No selected rows.', 'error');
 
