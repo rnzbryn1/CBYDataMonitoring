@@ -2,7 +2,7 @@ import { SUPABASE_CONFIG } from './config.js';
 
 const { createClient } = supabase;
 const supabaseClient = createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
-
+ 
 export const AppCore = {
     state: {
         moduleName:             '',
