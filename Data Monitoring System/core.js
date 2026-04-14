@@ -79,6 +79,11 @@ export const AppCore = {
                 this.deleteEntry(this.state.currentRowId);
             }
         });     
+
+        document.getElementById('ctxCompute')?.addEventListener('click', () => {
+            console.log('Compute clicked'); 
+            this.openComputeModal();
+        });
     },
 
     ensureContextMenu: function () {
@@ -100,6 +105,12 @@ export const AppCore = {
         deleteBtn.textContent = 'Delete Row';
         deleteBtn.className = 'delete';
 
+        const computeBtn = document.createElement('button');
+        computeBtn.id = 'ctxCompute';   
+        computeBtn.type = 'button';
+        computeBtn.textContent = 'Compute';
+
+        menu.appendChild(computeBtn);
         menu.appendChild(editBtn);
         menu.appendChild(deleteBtn);
         document.body.appendChild(menu);
@@ -484,6 +495,10 @@ export const AppCore = {
 
             e.preventDefault();
 
+            // this part is for getting cell or column especially for computation
+            this.state.currentCell = td;
+            this.state.currentColName = td.dataset.colName;
+
             const row = td.closest('tr');
 
             // CLEAR previous row highlight
@@ -505,8 +520,13 @@ export const AppCore = {
         document.addEventListener('click', () => {
             menu.style.display = 'none';
 
+
             document.querySelectorAll('tr.row-selected')
                 .forEach(r => r.classList.remove('row-selected'));
+        });
+
+        menu.addEventListener('click', (e) => {
+            e.stopPropagation();
         });
 
         //Renaming Column
@@ -1485,4 +1505,121 @@ export const AppCore = {
         this.renderAll();
     },
 
+    //-----------------------------------------------------------------------------------------
+    //-------------Para sa Computation ng mga cells, pwede selected or apply to all column-----
+    //-----------------------------------------------------------------------------------------
+    openComputeModal: function () {
+        const modal = document.createElement('div');
+        modal.className = 'compute-modal';
+
+        const cols = this.state.currentTemplate.doc_columns;
+
+        modal.innerHTML = `
+            <div class="compute-box">
+                <h3>Compute Formula</h3>
+
+                <label>Formula</label>
+                <input id="computeFormula" placeholder="=Num 1 + Num 2">
+
+                <label>Apply Mode</label>
+                <select id="computeMode">
+                    <option value="cell">Selected Cell</option>
+                    <option value="column">Whole Column</option>
+                </select>
+
+                <div class="compute-columns">
+                    ${cols.map(c => `
+                        <button type="button" class="col-btn">${c.column_name}</button>
+                    `).join('')}
+                </div>
+
+                <div class="compute-actions">
+                    <button id="runCompute">Apply</button>
+                    <button id="closeCompute">Cancel</button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        // click column → insert sa formula
+        modal.querySelectorAll('.col-btn').forEach(btn => {
+            btn.onclick = () => {
+                const input = modal.querySelector('#computeFormula');
+                input.value += ` ${btn.textContent}`;
+            };
+        });
+
+        modal.querySelector('#closeCompute').onclick = () => modal.remove();
+
+        modal.querySelector('#runCompute').onclick = () => {
+            const formula = modal.querySelector('#computeFormula').value;
+            const mode = modal.querySelector('#computeMode').value;
+
+            this.applyFormula(formula, mode);
+            modal.remove();
+        };
+    },
+
+    applyFormula: function (formula, mode) {
+        if (!formula.startsWith('=')) {
+            return this.showToast('Formula must start with "="', 'error');
+        }
+
+        const expr = formula.slice(1); // remove '='
+        const columns = this.state.currentTemplate.doc_columns.map(c => c.column_name);
+
+        const computeRow = (entry) => {
+            let evalExpr = expr;
+
+            columns.forEach(col => {
+                const raw = entry.content[col] ?? '0';
+
+                // extract number kahit text
+                const num = parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
+
+                const safeCol = col.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const regex = new RegExp(`\\b${safeCol}\\b`, 'g');
+
+                evalExpr = evalExpr.replace(regex, num);
+            });
+
+            try {
+                return eval(evalExpr);
+            } catch {
+                return 'ERR';
+            }
+        };
+
+        if (mode === 'cell') {
+            const td = this.state.currentCell;
+            const row = td.closest('tr');
+            const entryId = row.dataset.entryId;
+
+            const entry = this.state.localEntries.find(e => e.id === entryId);
+            if (!entry) return;
+
+            const result = computeRow(entry);
+
+            td.textContent = result;
+            entry.content[this.state.currentColName] = result;
+
+            this.saveEntryField(entry.id, entry.content);
+        }
+
+        if (mode === 'column') {
+            this.state.localEntries.forEach(entry => {
+                const result = computeRow(entry);
+                entry.content[this.state.currentColName] = result;
+            });
+
+            this.renderTable(this.state.localEntries);
+
+            this.state.localEntries.forEach(e => {
+                this.saveEntryField(e.id, e.content);
+            });
+        }
+
+        this.showToast('Computed!');
+    },
 };
