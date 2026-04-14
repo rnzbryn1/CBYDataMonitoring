@@ -1,16 +1,21 @@
-import { SUPABASE_CONFIG } from './config.js';
+// Import SupabaseService for database operations
+import { SupabaseService } from './supabase-service.js';
 
-const { createClient } = supabase;
-const supabaseClient = createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
- 
+// Note: Supabase client is initialized in supabase-service.js
+// This prevents "Multiple GoTrueClient instances" warning
+
 export const AppCore = {
     state: {
         moduleName:             '',
+        departmentId:           1,              // NEW - required for new schema
+        currentTemplateId:      null,           // NEW - keep ID reference
         currentTemplate:        null,
         allTemplates:           [],
+        allColumns:             [],             // NEW - reusable encoding_columns
         localEntries:           [],
-        dateSortAsc:            true,
         editingId:              null,
+        editingValues:          {},             // NEW - current entry values being edited
+        dateSortAsc:            true,
         cache:                  {},
         isLoading:              false,
         _importWorkbook:        null,
@@ -21,14 +26,50 @@ export const AppCore = {
     // ============================================================
     // INIT
     // ============================================================
-    init: async function (moduleName) {
+    initModule: async function (moduleName, departmentId = 1) {
         this.state.moduleName = moduleName;
+        this.state.departmentId = departmentId;
         this.syncWithWindow();
-        await this.refreshCategories();
+        
+        try {
+            // Verify department exists and use it; if not, find the first available
+            try {
+                const departments = await SupabaseService.client
+                    .from('departments')
+                    .select('id, name')
+                    .eq('id', departmentId)
+                    .single();
+                
+                if (departments.error) {
+                    // Department not found, fetch the first available
+                    const { data: allDepts, error: deptError } = await SupabaseService.client
+                        .from('departments')
+                        .select('id, name')
+                        .limit(1);
+                    
+                    if (deptError || !allDepts || !allDepts.length) {
+                        this.showToast('No departments found. Please create a department first.', 'error');
+                        return;
+                    }
+                    
+                    this.state.departmentId = allDepts[0].id;
+                    console.log(`Using department: ${allDepts[0].name} (ID: ${allDepts[0].id})`);
+                }
+            } catch (deptCheckError) {
+                console.warn('Could not verify department:', deptCheckError.message);
+            }
+            
+            // Load both templates and columns from new schema
+            this.state.allTemplates = await SupabaseService.getTemplates(this.state.departmentId);
+            this.state.allColumns = await SupabaseService.getColumns(this.state.departmentId);
+            this.renderCategoryCards();
+        } catch (error) {
+            this.showToast('Failed to load templates: ' + error.message, 'error');
+        }
     },    
 
     syncWithWindow: function () {
-        window.switchCategory    = (name)     => this.switchCategory(name);
+        window.switchTemplate    = (id)        => this.switchTemplate(id);
         window.saveData          = ()          => this.saveData();
         window.editEntry         = (id)        => this.editEntry(id);
         window.closeEditModal    = ()          => this.closeEditModal();
@@ -46,10 +87,10 @@ export const AppCore = {
 
         window.filterCategoryCards = () => this.filterCategoryCards();
 
-        window.createNewCategory = ()          => this.createNewCategory();
-        window.addColumnToActive = ()          => this.addColumnToActive();
+        window.createNewTemplate = ()          => this.createNewTemplate();
+        window.addColumnToTemplate = ()        => this.addColumnToTemplate();
         window.deleteColumn      = (id, name)  => this.deleteColumn(id, name);
-        window.deleteCategory    = (id, name)  => this.deleteCategory(id, name);
+        window.deleteTemplate    = (id, name)  => this.deleteTemplate(id, name);
         window.renameCategory = (id, name) => this.renameCategory(id, name);
         window.renameColumn   = (id, name) => this.renameColumn(id, name);
         window.toggleMenu        = (event, id) => this.toggleMenu(event, `menu-${id}`);
@@ -215,64 +256,52 @@ export const AppCore = {
     },
 
     // ============================================================
-    // CATEGORY SWITCHING
+    // TEMPLATE SWITCHING
     // ============================================================
-    switchCategory: async function (name) {
+    switchTemplate: async function (templateId) {
         if (this.state.isLoading) return;
-
-        this.updateActiveUI(name);
+        
         const workspace = document.getElementById('moduleWorkspace');
-        workspace.style.display       = 'block';
-        workspace.style.opacity       = '0.4';
+        workspace.style.display = 'block';
+        workspace.style.opacity = '0.4';
         workspace.style.pointerEvents = 'none';
         this.state.isLoading = true;
 
-        await new Promise(resolve => {
-            requestAnimationFrame(async () => {
-                try {                    
-                    if (this.state.cache[name]) {
-                        this.state.currentTemplate = this.state.cache[name].template;
-                        this.state.localEntries    = this.state.cache[name].entries;                     
-                    } else {
-                        const templateId = this.state.allTemplates.find(t => t.name === name)?.id;
-                        if (!templateId) throw new Error('Template not found');
+        try {
+            const cacheKey = `template-${templateId}`;
+            
+            if (this.state.cache[cacheKey]) {
+                // Use cached data
+                this.state.currentTemplate = this.state.cache[cacheKey].template;
+                this.state.localEntries = this.state.cache[cacheKey].entries;
+            } else {
+                // Load from Supabase
+                this.state.currentTemplate = await SupabaseService.getTemplate(templateId);
+                this.state.localEntries = await SupabaseService.getEntries(templateId);
+                
+                // Cache it
+                this.state.cache[cacheKey] = {
+                    template: this.state.currentTemplate,
+                    entries: this.state.localEntries
+                };
+            }
 
-                        const [tRes, eRes] = await Promise.all([
-                            supabaseClient.from('doc_templates').select('*, doc_columns(*)').eq('id', templateId).single(),
-                            supabaseClient.from('doc_entries').select('*').eq('template_id', templateId)
-                        ]);
-
-                        if (tRes.error) throw tRes.error;
-                        if (eRes.error) throw eRes.error;
-
-                        const template = tRes.data;
-                        template.doc_columns.sort((a, b) => a.display_order - b.display_order);
-
-                        this.state.currentTemplate = template;
-                        this.state.localEntries    = eRes.data || [];
-                        this.state.cache[name]     = { template, entries: this.state.localEntries };
-                    }
-
-                    this.renderAll();
-
-                } catch (err) {
-                    this.showToast('Switch failed: ' + err.message, 'error');
-                } finally {
-                    workspace.style.opacity       = '1';
-                    workspace.style.pointerEvents = 'auto';
-                    this.state.isLoading          = false;
-                    resolve();
-                }
-            });
-        });
+            this.state.currentTemplateId = templateId;
+            this.updateActiveUI(templateId);
+            this.renderAll();
+        } catch (error) {
+            this.showToast('Switch failed: ' + error.message, 'error');
+        } finally {
+            workspace.style.opacity = '1';
+            workspace.style.pointerEvents = 'auto';
+            this.state.isLoading = false;
+        }
     },
 
-    updateActiveUI: function (name) {
+    updateActiveUI: function (templateId) {
         document.querySelectorAll('.category-card').forEach(c => c.classList.remove('active'));
-        const activeCard = document.getElementById(`card-${name}`);
+        const activeCard = document.getElementById(`card-${templateId}`);
         if (activeCard) activeCard.classList.add('active');
-        const label = document.getElementById('activeCategoryName');
-        if (label) label.innerText = name;
     },
 
     // ============================================================
@@ -282,35 +311,43 @@ export const AppCore = {
         const form = document.getElementById('dynamicForm');
         if (!form) return;
 
-        //Instant load to ya para sa name ng entry form
         const title = document.getElementById('entryFormTitle');
         if (title && this.state.currentTemplate) {
             title.innerText = `${this.state.currentTemplate.name} Entry Form`;
-        }      
+        }
 
-        // FIX #2: use correct input type per column_type
-        form.innerHTML = this.state.currentTemplate.doc_columns.map(c => `
-            <div class="input-box">
-                <label>${c.column_name}</label>
-                <input type="text"
-                    id="input_${c.column_name}"
-                    placeholder="Enter ${c.column_name}"
-                    step="${c.column_type === 'number' ? 'any' : ''}">
-            </div>
-        `).join('') + `<button onclick="saveData()" class="save-btn" id="mainSaveBtn">Save Record</button>`;
+        // Use columns from encoding_template_columns
+        const columns = this.state.currentTemplate.columns || [];
+        
+        form.innerHTML = columns.map(col => {
+            const colDef = col.encoding_columns; // join from template_columns
+            return `
+                <div class="input-box">
+                    <label>${colDef.column_name}</label>
+                    <input type="text"
+                        id="input_${colDef.id}"
+                        data-column-id="${colDef.id}"
+                        data-column-name="${colDef.column_name}"
+                        placeholder="Enter ${colDef.column_name}">
+                </div>
+            `;
+        }).join('') + `<button onclick="saveData()" class="save-btn" id="mainSaveBtn">Save Record</button>`;
 
         const headers = document.getElementById('tableHeaders');
         headers.innerHTML = `<tr>
             <th><input type="checkbox" id="selectAll"></th>
-            ${this.state.currentTemplate.doc_columns.map(c => `
-                <th data-col-id="${c.id}" data-col-name="${c.column_name}">
-                    <div class="th-inner">
-                        <span class="th-text">${c.column_name}</span>
-                        <button class="del-col-btn" title="Delete column"
-                            onclick="deleteColumn('${c.id}', '${c.column_name}')">✕</button>
-                    </div>
-                </th>
-            `).join('')}
+            ${columns.map(col => {
+                const colDef = col.encoding_columns;
+                return `
+                    <th data-col-id="${colDef.id}" data-col-name="${colDef.column_name}">
+                        <div class="th-inner">
+                            <span class="th-text">${colDef.column_name}</span>
+                            <button class="del-col-btn" title="Delete column"
+                                onclick="deleteColumn('${colDef.id}', '${colDef.column_name}')">✕</button>
+                        </div>
+                    </th>
+                `;
+            }).join('')}
         </tr>`;
 
         this.renderTable(this.state.localEntries);
@@ -322,21 +359,49 @@ export const AppCore = {
         const body = document.getElementById('tableData');
         if (!body) return;
 
+        // Count and log empty entries
+        const emptyEntries = entries.filter(e => !e.valueDetails || e.valueDetails.length === 0);
+        if (emptyEntries.length > 0) {
+            console.warn(`⚠️ FOUND ${emptyEntries.length} completely EMPTY entries in database!`);
+            console.warn('Empty entry IDs:', emptyEntries.slice(0, 10).map(e => e.id.substring(0, 8)));
+            console.log('Delete these empty entries? They shouldnt be imported.');
+        }
+
+        console.log(`Rendering ${entries.length} entries... (${emptyEntries.length} are empty)`);
+
         if (!entries.length) {
             body.innerHTML = `<tr><td colspan="100%" class="no-data">No records found.</td></tr>`;
             return;
         }
 
-        body.innerHTML = entries.map(e => `
-            <tr data-entry-id="${e.id}">
-                <td><input type="checkbox" class="rowCheckbox" data-id="${e.id}"></td>
-                ${this.state.currentTemplate.doc_columns.map(c => {
-                    const rawVal = e.content ? (e.content[c.column_name] ?? '') : '';
-                    const val = this.formatDisplayValue(rawVal, c.column_type);
-                    return `<td contenteditable="true" data-col-name="${c.column_name}">${val}</td>`;
-                }).join('')}
-            </tr>
-        `).join('');
+        const columns = this.state.currentTemplate.columns || [];
+
+        body.innerHTML = entries.map(entry => {
+            // For each entry, we need to get the values from valueDetails
+            const valueMap = {};
+            if (entry.valueDetails) {
+                entry.valueDetails.forEach(v => {
+                    valueMap[v.column_id] = v.value || v.value_number || '';
+                });
+            }
+            
+            const isEmpty = !entry.valueDetails || entry.valueDetails.length === 0;
+
+            return `
+                <tr data-entry-id="${entry.id}" style="${isEmpty ? 'background-color: #ffcccc;' : ''}">
+                    <td><input type="checkbox" class="rowCheckbox" data-id="${entry.id}"></td>
+                    ${columns.map(col => {
+                        const colDef = col.encoding_columns;
+                        const val = valueMap[colDef.id] || '';
+                        return `
+                            <td contenteditable="true" 
+                                data-col-id="${colDef.id}" 
+                                data-col-name="${colDef.column_name}">${val}</td>
+                        `;
+                    }).join('')}
+                </tr>
+            `;
+        }).join('');
     },
 
     formatDisplayValue: function (raw, colType) {
@@ -369,7 +434,7 @@ export const AppCore = {
             const row = td.closest('tr');
             const rows = Array.from(body.rows);
             const ri = rows.indexOf(row);
-            const cells = Array.from(row.querySelectorAll('td[data-col-name]'));
+            const cells = Array.from(row.querySelectorAll('td[data-col-id]'));
             const ci = cells.indexOf(td);
             return { ri, ci };
         };
@@ -398,7 +463,7 @@ export const AppCore = {
 
         // mousedown — start selection or focus single cell
         body.addEventListener('mousedown', (e) => {
-            const td = e.target.closest('td[data-col-name]');
+            const td = e.target.closest('td[data-col-id]');
             if (!td) { clearSelection(); return; }
 
             if (e.shiftKey && selStartTd) {
@@ -419,7 +484,7 @@ export const AppCore = {
         // mouseover — drag to extend selection
         body.addEventListener('mouseover', (e) => {
             if (!isSelecting || !selStartTd) return;
-            const td = e.target.closest('td[data-col-name]');
+            const td = e.target.closest('td[data-col-id]');
             if (!td) return;
             selEndTd = td;
             applySelection(selStartTd, selEndTd);
@@ -557,20 +622,29 @@ export const AppCore = {
         if (!td || td.tagName !== 'TD') return null;
         const row     = td.closest('tr');
         const entryId = row?.dataset.entryId;
+        const colId = td.dataset.colId;
         const colName = td.dataset.colName;
-        return entryId && colName ? { entryId, colName } : null;
+        return entryId && (colId || colName) ? { entryId, colId, colName } : null;
     },
 
-    onTableCellBlur: function (td) {
+    onTableCellBlur: async function (td) {
         const info = this.getTableCellInfo(td);
         if (!info) return;
-        const entry = this.state.localEntries.find(e => e.id === info.entryId);
-        if (!entry) return;
-        const newValue     = td.textContent.trim();
-        const currentValue = String(entry.content[info.colName] ?? '');
-        if (newValue === currentValue) return;
-        entry.content[info.colName] = newValue;
-        this.saveEntryField(entry.id, entry.content);
+        
+        const newValue = td.textContent.trim();
+        const colId = info.colId;
+        
+        try {
+            const values = {};
+            values[colId] = newValue;
+            await SupabaseService.updateEntryValues(info.entryId, values);
+            
+            // Update cache
+            const cacheKey = `template-${this.state.currentTemplate.id}`;
+            delete this.state.cache[cacheKey];
+        } catch (err) {
+            this.showToast('Save failed: ' + err.message, 'error');
+        }
     },
 
     onTableCellKeyDown: function (e) {
@@ -584,7 +658,7 @@ export const AppCore = {
         if (!text) return;
 
         // Use focused cell or the first selected cell as paste anchor
-        const td = e.target?.closest?.('td[data-col-name]')
+        const td = e.target?.closest?.('td[data-col-id]')
             || document.querySelector('#tableData td.cell-selected');
         if (!td) return;
 
@@ -596,8 +670,9 @@ export const AppCore = {
         const tbody          = document.getElementById('tableData');
         const rows           = Array.from(tbody.rows);
         const startRowIndex  = rows.indexOf(td.closest('tr'));
-        const columns        = this.state.currentTemplate.doc_columns.map(c => c.column_name);
-        const startColIndex  = columns.indexOf(td.dataset.colName);
+        const columns        = this.state.currentTemplate.columns || [];
+        const columnIds      = columns.map(col => col.encoding_columns.id);
+        const startColIndex  = columnIds.indexOf(td.dataset.colId);
         const changedEntries = new Map();
 
         pasted.forEach((rowValues, rowOffset) => {
@@ -606,65 +681,75 @@ export const AppCore = {
             const entryId = targetRow.dataset.entryId;
             const entry   = this.state.localEntries.find(e => e.id === entryId);
             if (!entry) return;
+            
+            const values = {};
             rowValues.forEach((cellValue, colOffset) => {
-                const colName = columns[startColIndex + colOffset];
-                if (!colName) return;
-                const cell = targetRow.querySelector(`td[data-col-name="${colName}"]`);
+                const colId = columnIds[startColIndex + colOffset];
+                if (!colId) return;
+                const cell = targetRow.querySelector(`td[data-col-id="${colId}"]`);
                 if (!cell) return;
                 const normalized = cellValue.trim();
-                if (String(entry.content[colName] ?? '') === normalized) return;
-                entry.content[colName] = normalized;
+                values[colId] = normalized;
                 cell.textContent = normalized;
-                changedEntries.set(entryId, entry);
             });
+            
+            if (Object.keys(values).length > 0) {
+                changedEntries.set(entryId, values);
+            }
         });
 
         if (!changedEntries.size) return;
-        changedEntries.forEach((entry) => this.saveEntryField(entry.id, entry.content));
+        
+        changedEntries.forEach(async (values, entryId) => {
+            try {
+                await SupabaseService.updateEntryValues(entryId, values);
+                const cacheKey = `template-${this.state.currentTemplate.id}`;
+                delete this.state.cache[cacheKey];
+            } catch (err) {
+                this.showToast('Save failed: ' + err.message, 'error');
+            }
+        });
     },
 
-    saveEntryField: async function (entryId, content) {
+    saveEntryField: async function (entryId, values) {
         try {
-            const { error } = await supabaseClient
-                .from('doc_entries').update({ content }).eq('id', entryId);
-            if (error) throw error;
-            if (this.state.cache[this.state.currentTemplate.name]) {
-                this.state.cache[this.state.currentTemplate.name].entries = this.state.localEntries;
-            }
+            await SupabaseService.updateEntryValues(entryId, values);
+            const cacheKey = `template-${this.state.currentTemplate.id}`;
+            delete this.state.cache[cacheKey];
         } catch (err) {
             this.showToast('Save failed: ' + err.message, 'error');
         }
     },
 
-    // ============================================================
-    // EDIT ENTRY — POPUP MODAL
-    // ============================================================
-    editEntry: function (id) {
-        const entry = this.state.localEntries.find(e => e.id === id);
-        if (!entry) return;
-        this.state.editingId = id;
+    editEntry: async function (id) {
+        try {
+            const entry = await SupabaseService.getEntry(id);
+            this.state.editingId = id;
+            this.state.editingValues = entry.values;
 
-        const editForm = document.getElementById('editForm');
-        // FIX #2: use correct input types in edit modal too
-        editForm.innerHTML = this.state.currentTemplate.doc_columns.map(c => {
-            const inputType = 'text';
-            const rawVal    = String(entry.content[c.column_name] ?? '');
-            // For date inputs, value must be YYYY-MM-DD
-            const val = (inputType === 'date' && rawVal && !/^\d{4}-\d{2}-\d{2}$/.test(rawVal))
-                ? this.anyDateToISO(rawVal) || rawVal
-                : rawVal;
-            return `
-            <div class="input-box">
-                <label>${c.column_name}</label>
-                <input type="${inputType}"
-                    id="edit_input_${c.column_name}"
-                    value="${val.replace(/"/g, '&quot;')}"
-                    step="${inputType === 'number' ? 'any' : ''}"
-                    placeholder="Enter ${c.column_name}">
-            </div>`;
-        }).join('');
+            const editForm = document.getElementById('editForm');
+            const columns = this.state.currentTemplate.columns || [];
 
-        document.getElementById('editModal').style.display = 'block';
+            editForm.innerHTML = columns.map(col => {
+                const colDef = col.encoding_columns;
+                const val = entry.values[colDef.column_name] || '';
+                return `
+                    <div class="input-box">
+                        <label>${colDef.column_name}</label>
+                        <input type="text"
+                            id="edit_input_${colDef.id}"
+                            data-column-id="${colDef.id}"
+                            data-column-name="${colDef.column_name}"
+                            value="${val.toString().replace(/"/g, '&quot;')}"
+                            placeholder="Enter ${colDef.column_name}">
+                    </div>
+                `;
+            }).join('');
+
+            document.getElementById('editModal').style.display = 'block';
+        } catch (error) {
+            this.showToast('Failed to load entry: ' + error.message, 'error');
+        }
     },
 
     closeEditModal: function () {
@@ -674,48 +759,41 @@ export const AppCore = {
 
     saveEditEntry: async function () {
         if (!this.state.editingId) return;
-        const content = {};
-        this.state.currentTemplate.doc_columns.forEach(c => {
-            const el = document.getElementById(`edit_input_${c.column_name}`);
-            content[c.column_name] = el ? el.value : '';
-        });
-
-        const saveBtn     = document.getElementById('editSaveBtn');
-        saveBtn.disabled  = true;
-        saveBtn.innerText = 'Saving...';
 
         try {
-            const { data, error } = await supabaseClient
-                .from('doc_entries').update({ content }).eq('id', this.state.editingId).select();
-            if (error) throw error;
+            const values = {};
+            document.querySelectorAll('[data-column-id]').forEach(input => {
+                if (input.value) {
+                    values[input.dataset.columnId] = input.value;
+                }
+            });
 
-            const idx = this.state.localEntries.findIndex(e => e.id === this.state.editingId);
-            if (idx !== -1) this.state.localEntries[idx] = data[0];
+            await SupabaseService.updateEntryValues(this.state.editingId, values);
 
-            if (this.state.cache[this.state.currentTemplate.name]) {
-                this.state.cache[this.state.currentTemplate.name].entries = this.state.localEntries;
-            }
-
-            this.renderTable(this.state.localEntries);
             this.closeEditModal();
             this.showToast('Record updated!');
-        } catch (err) {
-            this.showToast('Update failed: ' + err.message, 'error');
-        } finally {
-            saveBtn.disabled  = false;
-            saveBtn.innerText = 'Save Changes';
+
+            // Reload entries
+            const cacheKey = `template-${this.state.currentTemplate.id}`;
+            delete this.state.cache[cacheKey];
+            this.state.localEntries = await SupabaseService.getEntries(this.state.currentTemplate.id);
+            this.renderTable(this.state.localEntries);
+        } catch (error) {
+            this.showToast('Failed to update: ' + error.message, 'error');
         }
     },
 
     // ============================================================
-    // CATEGORIES
+    // TEMPLATES
     // ============================================================
-    refreshCategories: async function () {
-        const { data, error } = await supabaseClient
-            .from('doc_templates').select('*').eq('module', this.state.moduleName);
-        if (error) { this.showToast('Failed to load categories.', 'error'); return; }
-        this.state.allTemplates = data || [];
-        this.renderCategoryCards();
+    refreshTemplates: async function () {
+        try {
+            this.state.allTemplates = await SupabaseService.getTemplates(this.state.departmentId);
+            this.state.allColumns = await SupabaseService.getColumns(this.state.departmentId);
+            this.renderCategoryCards();
+        } catch (error) {
+            this.showToast('Failed to load templates: ' + error.message, 'error');
+        }
     },
 
     renderCategoryCards: function (filteredTemplates) {
@@ -726,12 +804,12 @@ export const AppCore = {
             const hue   = Math.abs(t.name.split('').reduce((a, b) => (((a << 5) - a) + b.charCodeAt(0)) | 0, 0)) % 360;
             const color = `hsla(${hue}, 60%, 82%, 1)`;
             return `
-            <div class="category-card" id="card-${t.name}" style="background-color:${color};" onclick="switchCategory('${t.name}')">
+            <div class="category-card" id="card-${t.id}" style="background-color:${color};" onclick="switchTemplate('${t.id}')">
                 <div class="card-menu" onclick="event.stopPropagation()">
                     <button class="menu-btn" onclick="toggleMenu(event, '${t.id}')">⋮</button>
                     <div class="dropdown" id="menu-${t.id}">
                         <button onclick="renameCategory('${t.id}', '${t.name}')">✏️ Rename</button>
-                        <button onclick="deleteCategory('${t.id}', '${t.name}')">🗑️ Delete</button>
+                        <button onclick="deleteTemplate('${t.id}', '${t.name}')">🗑️ Delete</button>
                     </div>
                 </div>
                 <div class="card-icon">${t.name.substring(0, 2).toUpperCase()}</div>
@@ -748,188 +826,161 @@ export const AppCore = {
         this.renderCategoryCards(filtered);
     },
 
-    createNewCategory: async function () {
+    createNewTemplate: async function () {
         const name = document.getElementById('newCategoryName').value.trim();
-        if (!name) return this.showToast('Category name is required.', 'error');
+        const templateType = document.getElementById('newTemplateType').value || 'encoding';
+        if (!name) return this.showToast('Template name is required.', 'error');
+
         try {
-            const { data, error } = await supabaseClient
-                .from('doc_templates').insert([{ name, module: this.state.moduleName }]).select();
-            if (error) throw error;
-            this.state.allTemplates.push(data[0]);
+            const template = await SupabaseService.createTemplate(
+                this.state.departmentId,
+                name,
+                null,
+                templateType // Pass template type
+            );
+
+            this.state.allTemplates.push(template);
             this.renderCategoryCards();
-            this.showToast('Category created!');
+            this.showToast(`Template created (Type: ${templateType})!`);
             document.getElementById('newCategoryName').value = '';
+            document.getElementById('newTemplateType').value = 'encoding';
             window.closeModal();
-        } catch (err) {
-            this.showToast('Failed: ' + err.message, 'error');
+        } catch (error) {
+            this.showToast('Failed: ' + error.message, 'error');
         }
     },
 
-    deleteCategory: async function (id, name) {
+    deleteTemplate: async function (id, name) {
         if (!confirm(`Delete "${name}"? All data will be lost.`)) return;
+
         try {
-            const { error } = await supabaseClient.from('doc_templates').delete().eq('id', id);
-            if (error) throw error;
+            await SupabaseService.deleteTemplate(id);
             this.state.allTemplates = this.state.allTemplates.filter(t => t.id !== id);
-            delete this.state.cache[name];
+            const cacheKey = `template-${id}`;
+            delete this.state.cache[cacheKey];
+            
             if (this.state.currentTemplate?.id === id) {
                 this.state.currentTemplate = null;
                 document.getElementById('moduleWorkspace').style.display = 'none';
             }
+
             this.renderCategoryCards();
-            this.showToast('Category deleted.');
-        } catch (err) {
-            this.showToast('Failed: ' + err.message, 'error');
+            this.showToast('Template deleted.');
+        } catch (error) {
+            this.showToast('Failed: ' + error.message, 'error');
         }
     },
 
     // ============================================================
     // COLUMNS
     // ============================================================
-    addColumnToActive: async function () {
+    addColumnToTemplate: async function () {
         const name = document.getElementById('newColumnName').value.trim();
-        const type = 'text';
         if (!name) return this.showToast('Column name is required.', 'error');
-        if (!this.state.currentTemplate) return this.showToast('No category selected.', 'error');
-        const order = this.state.currentTemplate.doc_columns.length;
+        if (!this.state.currentTemplate) return this.showToast('No template selected.', 'error');
+
         try {
-            const { data, error } = await supabaseClient
-                .from('doc_columns')
-                .insert([{ template_id: this.state.currentTemplate.id, column_name: name, column_type: type, display_order: order }])
-                .select();
-            if (error) throw error;
-            this.state.currentTemplate.doc_columns.push(data[0]);
-            if (this.state.cache[this.state.currentTemplate.name]) {
-                this.state.cache[this.state.currentTemplate.name].template = this.state.currentTemplate;
-            }
+            // Create reusable column
+            const column = await SupabaseService.createColumn(
+                this.state.departmentId,
+                name,
+                'text'
+            );
+
+            // Add to current template
+            await SupabaseService.addColumnToTemplate(
+                this.state.currentTemplate.id,
+                column.id
+            );
+
+            // Refresh
+            this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
             this.renderAll();
             this.showToast('Column added!');
             document.getElementById('newColumnName').value = '';
             window.closeColumnModal();
-        } catch (err) {
-            this.showToast('Failed to add column: ' + err.message, 'error');
+        } catch (error) {
+            this.showToast('Failed to add column: ' + error.message, 'error');
         }
     },
 
-    deleteColumn: async function (id, name) {
-        if (!confirm(`Delete column "${name}"? This will affect all records.`)) return;
-        const column = this.state.currentTemplate?.doc_columns.find(c => c.id === id);
-        if (!column) return this.showToast('Column not found.', 'error');
-        const columnName = column.column_name;
+    deleteColumn: async function (columnId, columnName) {
+        if (!confirm(`Delete column "${columnName}"? This affects all records.`)) return;
 
         try {
-            const { error } = await supabaseClient.from('doc_columns').delete().eq('id', id);
-            if (error) throw error;
+            // Remove from template
+            await SupabaseService.removeColumnFromTemplate(
+                this.state.currentTemplate.id,
+                columnId
+            );
 
-            const { data: entries, error: fetchErr } = await supabaseClient
-                .from('doc_entries')
-                .select('id, content')
-                .eq('template_id', this.state.currentTemplate.id);
-            if (fetchErr) throw fetchErr;
+            // Refresh
+            this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
 
-            if (entries && entries.length) {
-                const updates = entries
-                    .filter(entry => entry.content && Object.prototype.hasOwnProperty.call(entry.content, columnName))
-                    .map(entry => {
-                        const updatedContent = { ...entry.content };
-                        delete updatedContent[columnName];
-                        return supabaseClient
-                            .from('doc_entries')
-                            .update({ content: updatedContent })
-                            .eq('id', entry.id);
-                    });
+            const cacheKey = `template-${this.state.currentTemplate.id}`;
+            delete this.state.cache[cacheKey];
 
-                if (updates.length) {
-                    const results = await Promise.all(updates);
-                    const failed = results.find(r => r.error);
-                    if (failed) throw failed.error;
-                }
-            }
-
-            if (this.state.cache[this.state.currentTemplate.name]) {
-                delete this.state.cache[this.state.currentTemplate.name];
-            }
-
-            await this.reloadCurrentTemplate();
+            this.renderAll();
             this.showToast('Column deleted.');
-        } catch (err) {
-            this.showToast('Failed: ' + err.message, 'error');
+        } catch (error) {
+            this.showToast('Failed: ' + error.message, 'error');
         }
-    },
-
-    reloadCurrentTemplate: async function () {
-        const templateId = this.state.currentTemplate?.id;
-        if (!templateId) return;
-
-        const [tRes, eRes] = await Promise.all([
-            supabaseClient.from('doc_templates').select('*, doc_columns(*)').eq('id', templateId).single(),
-            supabaseClient.from('doc_entries').select('*').eq('template_id', templateId)
-        ]);
-
-        if (tRes.error) throw tRes.error;
-        if (eRes.error) throw eRes.error;
-
-        const template = tRes.data;
-        template.doc_columns.sort((a, b) => a.display_order - b.display_order);
-
-        this.state.currentTemplate = template;
-        this.state.localEntries    = eRes.data || [];
-        this.state.cache[template.name] = { template, entries: this.state.localEntries };
-
-        this.updateActiveUI(template.name);
-        this.renderAll();
     },
 
     // ============================================================
     // ENTRIES — SAVE / DELETE
     // ============================================================
     saveData: async function () {
-        const content = {};
-        this.state.currentTemplate.doc_columns.forEach(c => {
-            const el = document.getElementById(`input_${c.column_name}`);
-            content[c.column_name] = el ? el.value : '';
-        });
-
-        const btn = document.getElementById('mainSaveBtn');
-        btn.disabled = true;
-
         try {
-            const { data, error } = await supabaseClient
-                .from('doc_entries')
-                .insert([{ template_id: this.state.currentTemplate.id, content }])
-                .select();
-            if (error) throw error;
+            // Create entry
+            const entry = await SupabaseService.createEntry(
+                this.state.currentTemplate.id,
+                this.state.departmentId
+            );
 
-            this.state.localEntries.push(data[0]);
-            if (this.state.cache[this.state.currentTemplate.name]) {
-                this.state.cache[this.state.currentTemplate.name].entries = this.state.localEntries;
-            }
-            this.renderTable(this.state.localEntries);
-            this.state.currentTemplate.doc_columns.forEach(c => {
-                const el = document.getElementById(`input_${c.column_name}`);
-                if (el) el.value = '';
+            // Get values from form
+            const values = {};
+            document.querySelectorAll('[data-column-id]').forEach(input => {
+                if (input.value) {
+                    values[input.dataset.columnId] = input.value;
+                }
             });
-            this.showToast('Saved successfully!');
-        } catch (err) {
-            this.showToast(err.message, 'error');
-        } finally {
-            btn.disabled = false;
+
+            // Save values
+            if (Object.keys(values).length > 0) {
+                await SupabaseService.updateEntryValues(entry.id, values);
+            }
+
+            // Clear form
+            document.querySelectorAll('[data-column-id]').forEach(input => {
+                input.value = '';
+            });
+
+            this.showToast('Record saved!');
+
+            // Reload entries
+            const cacheKey = `template-${this.state.currentTemplate.id}`;
+            delete this.state.cache[cacheKey];
+            this.state.localEntries = await SupabaseService.getEntries(this.state.currentTemplate.id);
+            this.renderTable(this.state.localEntries);
+        } catch (error) {
+            this.showToast('Failed to save: ' + error.message, 'error');
         }
     },
 
     deleteEntry: async function (id) {
         if (!confirm('Are you sure you want to delete this record?')) return;
+
         try {
-            const { error } = await supabaseClient.from('doc_entries').delete().eq('id', id);
-            if (error) throw error;
-            this.state.localEntries = this.state.localEntries.filter(e => e.id !== id);
-            if (this.state.cache[this.state.currentTemplate.name]) {
-                this.state.cache[this.state.currentTemplate.name].entries = this.state.localEntries;
-            }
+            await SupabaseService.deleteEntry(id);
+            this.showToast('Record deleted!');
+
+            const cacheKey = `template-${this.state.currentTemplate.id}`;
+            delete this.state.cache[cacheKey];
+            this.state.localEntries = await SupabaseService.getEntries(this.state.currentTemplate.id);
             this.renderTable(this.state.localEntries);
-            this.showToast('Record deleted.');
-        } catch (err) {
-            this.showToast('Delete failed: ' + err.message, 'error');
+        } catch (error) {
+            this.showToast('Failed to delete: ' + error.message, 'error');
         }
     },
 
@@ -938,18 +989,28 @@ export const AppCore = {
     // ============================================================
     searchData: function () {
         const term     = document.getElementById('search').value.toLowerCase();
-        const filtered = this.state.localEntries.filter(e =>
-            JSON.stringify(e.content).toLowerCase().includes(term)
-        );
+        const filtered = this.state.localEntries.filter(e => {
+            // Search across all values in the entry
+            const values = e.valueDetails || [];
+            return values.some(v => 
+                String(v.value || v.value_number || '').toLowerCase().includes(term)
+            );
+        });
         this.renderTable(filtered);
     },
 
     sortByDate: function () {
-        const dateCol = this.state.currentTemplate.doc_columns.find(c => c.column_type === 'date');
-        if (!dateCol) return this.showToast('No date column found.', 'error');
+        const columns = this.state.currentTemplate.columns || [];
+        const dateColDef = columns.find(col => col.encoding_columns.column_type === 'date');
+        if (!dateColDef) return this.showToast('No date column found.', 'error');
+        
+        const dateColId = dateColDef.encoding_columns.id;
+        
         this.state.localEntries.sort((a, b) => {
-            const d1 = new Date(a.content[dateCol.column_name] || 0);
-            const d2 = new Date(b.content[dateCol.column_name] || 0);
+            const aVal = a.valueDetails?.find(v => v.column_id === dateColId)?.value || '0';
+            const bVal = b.valueDetails?.find(v => v.column_id === dateColId)?.value || '0';
+            const d1 = new Date(aVal);
+            const d2 = new Date(bVal);
             return this.state.dateSortAsc ? d1 - d2 : d2 - d1;
         });
         this.state.dateSortAsc = !this.state.dateSortAsc;
@@ -961,28 +1022,29 @@ export const AppCore = {
     // ============================================================
     exportToExcel: function () {
         if (!this.state.currentTemplate) 
-            return this.showToast('No category selected.', 'error');
+            return this.showToast('No template selected.', 'error');
 
         if (!this.state.localEntries.length) 
             return this.showToast('No data to export.', 'error');
 
-        const cols = this.state.currentTemplate.doc_columns;
+        const columns = this.state.currentTemplate.columns || [];
 
-        // Build ordered data
+        // Build ordered data from new schema
         const formatted = this.state.localEntries.map(entry => {
             const row = {};
-            cols.forEach(col => {
-                row[col.column_name] = entry.content[col.column_name] ?? '';
+            columns.forEach(col => {
+                const colDef = col.encoding_columns;
+                const valueEntry = entry.valueDetails?.find(v => v.column_id === colDef.id);
+                row[colDef.column_name] = valueEntry?.value || valueEntry?.value_number || '';
             });
             return row;
         });
 
         const ws = XLSX.utils.json_to_sheet(formatted);
-
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, this.state.currentTemplate.name);
-
         XLSX.writeFile(wb, `${this.state.currentTemplate.name}.xlsx`);
+        this.showToast('Exported successfully!');
     },
 
     // ============================================================
@@ -1081,7 +1143,10 @@ export const AppCore = {
 
     openImportModal: function () {
         if (!this.state.currentTemplate)
-            return this.showToast('Select a category first.', 'error');
+            return this.showToast('Select a template first.', 'error');
+        const columns = this.state.currentTemplate.columns || [];
+        if (!columns.length)
+            return this.showToast('Add columns to template before importing.', 'error');
         document.getElementById('importModal').style.display = 'block';
     },
 
@@ -1170,27 +1235,27 @@ export const AppCore = {
             `;
         }
 
-        // FIX #4: Manual column mapping UI
         // Build a dropdown per DB column so user can pick which Excel column maps to it
         if (colMapping) {
-            const dbCols = this.state.currentTemplate.doc_columns;
+            const columns = this.state.currentTemplate.columns || [];
             const optionsHtml = `<option value="">(skip)</option>` +
                 excelCols.map(c => `<option value="${c.replace(/"/g, '&quot;')}">${c}</option>`).join('');
 
             colMapping.innerHTML = `
                 <p class="import-section-label" style="margin-top:12px;">Map columns</p>
                 <div class="col-mapping-grid">
-                    ${dbCols.map(c => {
+                    ${columns.map(col => {
+                        const colDef = col.encoding_columns;
                         // Auto-select exact match (case-insensitive)
                         const autoMatch = excelCols.find(
-                            ec => ec.trim().toLowerCase() === c.column_name.trim().toLowerCase()
+                            ec => ec.trim().toLowerCase() === colDef.column_name.trim().toLowerCase()
                         ) || '';
                         return `
                         <div class="col-mapping-row">
-                            <span class="col-mapping-label" title="${c.column_type}">${c.column_name}
-                                <small class="col-type-badge">${c.column_type}</small>
+                            <span class="col-mapping-label" title="${colDef.column_type}">${colDef.column_name}
+                                <small class="col-type-badge">${colDef.column_type}</small>
                             </span>
-                            <select class="col-mapping-select" data-db-col="${c.column_name}" data-col-type="${c.column_type}">
+                            <select class="col-mapping-select" data-db-col="${colDef.column_name}" data-col-type="${colDef.column_type}">
                                 ${optionsHtml}
                             </select>
                         </div>`;
@@ -1199,12 +1264,13 @@ export const AppCore = {
             `;
 
             // Set auto-matched selections
-            dbCols.forEach(c => {
+            columns.forEach(col => {
+                const colDef = col.encoding_columns;
                 const autoMatch = excelCols.find(
-                    ec => ec.trim().toLowerCase() === c.column_name.trim().toLowerCase()
+                    ec => ec.trim().toLowerCase() === colDef.column_name.trim().toLowerCase()
                 );
                 if (autoMatch) {
-                    const sel = colMapping.querySelector(`select[data-db-col="${c.column_name}"]`);
+                    const sel = colMapping.querySelector(`select[data-db-col="${colDef.column_name}"]`);
                     if (sel) sel.value = autoMatch;
                 }
             });
@@ -1253,14 +1319,25 @@ export const AppCore = {
     // FIX #3 + #5: confirmImport now uses mapping UI and re-fetches ordered data
     confirmImport: async function () {
         if (!this.state._importWorkbook) return this.showToast('No file loaded.', 'error');
-        if (!this.state.currentTemplate)  return this.showToast('No category selected.', 'error');
+        if (!this.state.currentTemplate)  return this.showToast('No template selected.', 'error');
 
         const sheetName = this._el('importSheet')?.value;
         const headerRow = Math.max(1, parseInt(this._el('importHeaderRow')?.value || '1') || 1);
         const ws        = this.state._importWorkbook.Sheets[sheetName];
-        const rows      = XLSX.utils.sheet_to_json(ws, { defval: '', range: headerRow - 1, raw: false });
+        let rows        = XLSX.utils.sheet_to_json(ws, { defval: '', range: headerRow - 1, raw: false });
 
         if (!rows.length) return this.showToast('No data rows to import.', 'error');
+
+        // Filter out completely empty rows
+        rows = rows.filter(row => {
+            const values = Object.values(row).map(v => String(v).trim());
+            return values.some(v => v && v !== '');
+        });
+
+        if (!rows.length) return this.showToast('No data rows to import.', 'error');
+
+        console.log(`Starting batch import of ${rows.length} rows...`);
+        console.log('First row sample:', JSON.stringify(rows[0]));
 
         // Read the manual column mapping from UI
         const mappingSelects = document.querySelectorAll('.col-mapping-select');
@@ -1271,51 +1348,107 @@ export const AppCore = {
             if (dbCol && excelCol) mapping[dbCol] = excelCol;
         });
 
-        const dbCols = this.state.currentTemplate.doc_columns;
+        console.log('Column mapping:', mapping);
 
-        const entries = rows.map(row => {
-            const content = {};
-            dbCols.forEach(c => {
-                const excelColName = mapping[c.column_name] || '';
-                // If skipped, omit the key entirely — do not store blank
-                if (!excelColName) return;
-                const rawVal = row[excelColName] ?? '';
-                content[c.column_name] = this.convertValue(rawVal, c.column_type);
-            });
-            return { template_id: this.state.currentTemplate.id, content };
-        });
-
-        const confirmBtn     = this._el('importConfirmBtn');
+        const columns = this.state.currentTemplate.columns || [];
+        const confirmBtn = this._el('importConfirmBtn');
         if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.innerText = 'Importing...'; }
 
         try {
-            const batchSize = 100;
-            for (let i = 0; i < entries.length; i += batchSize) {
-                const { error } = await supabaseClient
-                    .from('doc_entries').insert(entries.slice(i, i + batchSize));
-                if (error) throw error;
+            // STEP 1: Get list of mapped columns (those that are not skipped)
+            const mappedExcelCols = [];
+            columns.forEach(col => {
+                const excelColName = mapping[col.encoding_columns.column_name];
+                if (excelColName && excelColName !== '(skip)') {
+                    mappedExcelCols.push(excelColName);
+                }
+            });
+            
+            console.log(`Filtering by ${mappedExcelCols.length} mapped columns: ${mappedExcelCols.join(', ')}`);
+            
+            // Filter out COMPLETELY empty rows (all MAPPED columns blank)
+            // BUT allow rows with some values even if some mapped columns are blank
+            const rowsWithData = rows.filter((row, idx) => {
+                // Get values ONLY from mapped columns (trim whitespace)
+                const mappedValues = mappedExcelCols.map(colName => String(row[colName] || '').trim());
+                // Keep row if at least ONE mapped cell has actual data
+                return mappedValues.some(v => v && v !== '');
+            });
+
+            console.log(`✓ Rows to import: ${rowsWithData.length}`);
+            console.log(`✗ Completely empty rows (skipped): ${rows.length - rowsWithData.length}`);
+            
+            if (rowsWithData.length === 0) {
+                return this.showToast('No rows with data found in mapped columns.', 'error');
             }
 
-            // FIX #3 + #5: re-fetch fresh data in correct order, then render immediately
-            const { data: freshData, error: fetchErr } = await supabaseClient
-                .from('doc_entries')
-                .select('*')
-                .eq('template_id', this.state.currentTemplate.id);
-            if (fetchErr) throw fetchErr;
+            // STEP 2: Batch create entries for all rows with any data
+            console.log(`Creating ${rowsWithData.length} entries...`);
+            const entries = await SupabaseService.createEntries(
+                this.state.currentTemplate.id,
+                this.state.departmentId,
+                rowsWithData.length
+            );
+            console.log(`Created ${entries.length} entries`);
 
-            this.state.localEntries = freshData || [];
-            // Rebuild cache so it's not stale
-            this.state.cache[this.state.currentTemplate.name] = {
-                template: this.state.currentTemplate,
-                entries:  this.state.localEntries
-            };
+            // STEP 3: Build ALL values for ALL entries in memory first
+            console.log(`Preparing values for all rows...`);
+            const allValues = [];
+            
+            rowsWithData.forEach((row, idx) => {
+                const entry = entries[idx];
+                const values = {};
+                
+                columns.forEach(col => {
+                    const colDef = col.encoding_columns;
+                    const excelColName = mapping[colDef.column_name];
+                    
+                    if (!excelColName || excelColName === '(skip)') return;
+                    
+                    const rawVal = row[excelColName];
+                    if (rawVal !== undefined && rawVal !== null && rawVal !== '') {
+                        const convertedVal = this.convertValue(String(rawVal).trim(), colDef.column_type);
+                        values[colDef.id] = convertedVal;
+                    }
+                });
 
-            // FIX #3: render the table BEFORE closing modal so user sees data immediately
+                // Add all value records for this entry to the batch
+                Object.entries(values).forEach(([columnId, value]) => {
+                    allValues.push({
+                        entry_id: entry.id,
+                        column_id: columnId,
+                        value: typeof value === 'number' ? null : String(value),
+                        value_number: typeof value === 'number' ? value : null
+                    });
+                });
+                
+                // Log first few rows for debugging
+                if (idx < 3) {
+                    console.log(`Row ${idx} values:`, JSON.stringify(values));
+                }
+            });
+
+            // STEP 4: Insert ALL values in one batch call
+            console.log(`Inserting ${allValues.length} column values in batch...`);
+            if (allValues.length > 0) {
+                const { error: valuesError } = await SupabaseService.client
+                    .from('encoding_entry_values')
+                    .upsert(allValues, { onConflict: 'entry_id,column_id' });
+                
+                if (valuesError) throw valuesError;
+            }
+
+            console.log(`All values inserted. Reloading entries...`);
+
+            // Reload entries
+            const cacheKey = `template-${this.state.currentTemplate.id}`;
+            delete this.state.cache[cacheKey];
+            this.state.localEntries = await SupabaseService.getEntries(this.state.currentTemplate.id);
             this.renderTable(this.state.localEntries);
             this.closeImportModal();
-            this.showToast(`${entries.length} rows imported successfully!`);
-
+            this.showToast(`${rowsWithData.length} rows imported successfully!`);
         } catch (err) {
+            console.error('Import error:', err);
             this.showToast('Import failed: ' + err.message, 'error');
         } finally {
             if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.innerText = 'Import'; }
@@ -1335,7 +1468,7 @@ export const AppCore = {
     },
 
     // ============================================================
-    //Delete Selection lang sa mga checkbox ituuu
+    //Delete Selection
     // ============================================================
     deleteSelected: async function () {
         const checked = Array.from(document.querySelectorAll('.rowCheckbox:checked'))
@@ -1346,48 +1479,42 @@ export const AppCore = {
 
         if (!confirm(`Delete ${checked.length} records?`)) return;
 
-        const chunkSize = 100;
+        const deleteBtn = document.querySelector('[onclick*="deleteSelected"]');
+        const originalText = deleteBtn?.innerText;
+        if (deleteBtn) { deleteBtn.disabled = true; deleteBtn.innerText = `Deleting ${checked.length}...`; }
 
         try {
-            for (let i = 0; i < checked.length; i += chunkSize) {
-                const chunk = checked.slice(i, i + chunkSize);
-
-                const { error } = await supabaseClient
-                    .from('doc_entries')
-                    .delete()
-                    .in('id', chunk);
-
-                if (error) throw error;
-            }
+            // Delete entries in batches of 100 (service layer handles batching)
+            console.log(`Deleting ${checked.length} entries in chunks...`);
+            await SupabaseService.deleteEntries(checked);
+            console.log(`Deleted ${checked.length} entries`);
 
             // update UI
             this.state.localEntries = this.state.localEntries.filter(e => !checked.includes(e.id));
             this.renderTable(this.state.localEntries);
 
-            this.showToast('Deleted selected records.');
+            this.showToast(`Deleted ${checked.length} records.`);
         } catch (err) {
+            console.error('Delete error:', err);
             this.showToast('Delete failed: ' + err.message, 'error');
+        } finally {
+            if (deleteBtn) { deleteBtn.disabled = false; deleteBtn.innerText = originalText; }
         }
     },
 
     renameCategory: async function (id, oldName) {
-        const newName = prompt('Enter new category name:', oldName);
+        const newName = prompt('Enter new template name:', oldName);
         if (!newName || newName.trim() === oldName) return;
 
         try {
-            const { error } = await supabaseClient
-                .from('doc_templates')
-                .update({ name: newName.trim() })
-                .eq('id', id);
-
-            if (error) throw error;
+            await SupabaseService.updateTemplate(id, { name: newName.trim() });
 
             // update local state
-            const cat = this.state.allTemplates.find(t => t.id === id);
-            if (cat) cat.name = newName.trim();
+            const template = this.state.allTemplates.find(t => t.id === id);
+            if (template) template.name = newName.trim();
 
             this.renderCategoryCards();
-            this.showToast('Category renamed!');
+            this.showToast('Template renamed!');
         } catch (err) {
             this.showToast('Rename failed: ' + err.message, 'error');
         }
@@ -1398,39 +1525,14 @@ export const AppCore = {
         if (!newName || newName.trim() === oldName) return;
 
         try {
-            const { error } = await supabaseClient
-                .from('doc_columns')
+            // Update column in encoding_columns
+            await SupabaseService.client
+                .from('encoding_columns')
                 .update({ column_name: newName.trim() })
                 .eq('id', id);
 
-            if (error) throw error;
-
-            // update local column
-            const col = this.state.currentTemplate.doc_columns.find(c => c.id === id);
-            if (!col) return;
-
-            const oldKey = col.column_name;
-            const newKey = newName.trim();
-            col.column_name = newKey;
-
-            // update entries
-            this.state.localEntries.forEach(entry => {
-                if (entry.content && entry.content[oldKey] !== undefined) {
-                    entry.content[newKey] = entry.content[oldKey];
-                    delete entry.content[oldKey];
-                }
-            });
-
-            // save all entries
-            await Promise.all(
-                this.state.localEntries.map(e =>
-                    supabaseClient
-                        .from('doc_entries')
-                        .update({ content: e.content })
-                        .eq('id', e.id)
-                )
-            );
-
+            // Refresh the current template to get updated column names
+            this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
             this.renderAll();
             this.showToast('Column renamed!');
         } catch (err) {
@@ -1479,30 +1581,29 @@ export const AppCore = {
     },   
 
     moveColumn: function (from, to) {
-        const cols = this.state.currentTemplate.doc_columns;
+        const columns = this.state.currentTemplate.columns || [];
+        if (!columns.length) return;
 
         // adjust index (skip checkbox column)
         from -= 1;
         to   -= 1;
 
-        const moved = cols.splice(from, 1)[0];
-        cols.splice(to, 0, moved);
+        if (from < 0 || to < 0 || from >= columns.length || to >= columns.length) return;
 
-        // update display_order
-        cols.forEach((c, i) => {
-            c.display_order = i;
+        const moved = columns.splice(from, 1)[0];
+        columns.splice(to, 0, moved);
+
+        // Save updated positions to database
+        Promise.all(columns.map((tc, idx) =>
+            SupabaseService.client
+                .from('encoding_template_columns')
+                .update({ display_order: idx })
+                .eq('id', tc.id)
+        )).then(() => {
+            this.renderAll();
+        }).catch(err => {
+            this.showToast('Failed to update column order: ' + err.message, 'error');
         });
-
-        // save to supabase
-        Promise.all(cols.map(c =>
-            supabaseClient
-                .from('doc_columns')
-                .update({ display_order: c.display_order })
-                .eq('id', c.id)
-        ));
-
-        // re-render
-        this.renderAll();
     },
 
     //-----------------------------------------------------------------------------------------

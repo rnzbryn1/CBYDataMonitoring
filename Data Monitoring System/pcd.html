@@ -16,12 +16,12 @@
     <!-- HEADER -->
     <header class="header">
         <h1>Sales Order Desk</h1>
-        <button class="add-cat-btn" onclick="openModal()">+ New Category</button>
+        <button class="add-cat-btn" onclick="openModal()">+ New Template</button>
     </header>
 
     <!-- CATEGORY CARDS -->
 
-    <h3>Select Category</h3>
+    <h3>Select Template</h3>
     <div class="category-nav-wrapper">
         <input type="text" id="categorySearch" placeholder="Search categories..." style="margin-bottom:10px;width:100%;padding:8px;box-sizing:border-box;" oninput="filterCategoryCards()">
         <div id="categoryCards" class="category-scroll-container"></div>
@@ -67,11 +67,16 @@
 <div id="categoryModal" class="modal">
     <div class="modal-content">
         <span class="close-btn" onclick="closeModal()">&times;</span>
-        <h3>New Category</h3>
+        <h3>New Template</h3>
         <input type="text" id="newCategoryName" placeholder="e.g. Pickup, Encoding, Sales">
+        <label>Template Type</label>
+        <select id="newTemplateType">
+            <option value="encoding">Encoding (data input source)</option>
+            <option value="monitoring">Monitoring (compiled/computed data)</option>
+        </select>
         <div class="modal-actions">
             <button onclick="closeModal()">Cancel</button>
-            <button onclick="createNewCategory()">Create</button>
+            <button onclick="createNewTemplate()">Create</button>
         </div>
     </div>
 </div>
@@ -89,7 +94,7 @@
         </select>
         <div class="modal-actions">
             <button onclick="closeColumnModal()">Cancel</button>
-            <button onclick="addColumnToActive()">Add</button>
+            <button onclick="addColumnToTemplate()">Add</button>
         </div>
     </div>
 </div>
