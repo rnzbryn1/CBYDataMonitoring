@@ -20,7 +20,8 @@ export const AppCore = {
         isLoading:              false,
         _importWorkbook:        null,
         _importExcelCols:       [],   // detected Excel column names
-        tableEventsInitialized: false
+        tableEventsInitialized: false,
+        historyStack: [],
     },
 
     // ============================================================
@@ -1686,42 +1687,35 @@ export const AppCore = {
         modal.className = 'compute-modal';
 
         const cols = this.state.currentTemplate?.columns || [];
-        const colOptions = cols.map(c => `<option value="${c.encoding_columns.column_name}">${c.encoding_columns.column_name}</option>`).join('');
-
-        const calculations = [
-            { value: 'sum', label: 'Sum (Total)' },
-            { value: 'average', label: 'Average' },
-            { value: 'count', label: 'Count' },
-            { value: 'max', label: 'Maximum' },
-            { value: 'min', label: 'Minimum' },
-            { value: 'deduct', label: 'Deduct (Subtract)' }
-        ];
-        const calcOptions = calculations.map(c => `<option value="${c.value}">${c.label}</option>`).join('');
 
         modal.innerHTML = `
             <div class="compute-box">
-                <h3>Compute Calculation</h3>
+                <h3>Compute Formula</h3>
 
-                <label>Source Column</label>
-                <select id="computeSourceColumn">
-                    <option value="">-- Select Column --</option>
-                    ${colOptions}
-                </select>
-
-                <label>Calculation Type</label>
-                <select id="computeCalculationType">
-                    <option value="">-- Select Calculation --</option>
-                    ${calcOptions}
-                </select>
-
-                <label>Target Column Name</label>
-                <input id="computeTargetColumn" placeholder="e.g., Total, Average, etc.">
+                <label>Formula</label>
+                <input id="computeFormula" placeholder="=Price * Quantity">
 
                 <label>Apply Mode</label>
                 <select id="computeMode">
                     <option value="cell">Selected Cell</option>
                     <option value="column">Whole Column</option>
                 </select>
+
+                <div class="compute-columns">
+                    ${cols.map(c => `
+                        <button type="button" class="col-btn">
+                            ${c.encoding_columns.column_name}
+                        </button>
+                    `).join('')}
+                </div>
+
+                <div class="compute-functions">
+                    <button type="button" class="func-btn">=SUM()</button>
+                    <button type="button" class="func-btn">=AVERAGE()</button>
+                    <button type="button" class="func-btn">=COUNT()</button>
+                    <button type="button" class="func-btn">=MAX()</button>
+                    <button type="button" class="func-btn">=MIN()</button>
+                </div>
 
                 <div class="compute-actions">
                     <button id="runCompute">Apply</button>
@@ -1732,96 +1726,203 @@ export const AppCore = {
 
         document.body.appendChild(modal);
 
+        // click column → auto insert sa formula
+        const input = modal.querySelector('#computeFormula');
+
+        // 🔹 COLUMN BUTTONS
+        modal.querySelectorAll('.col-btn').forEach(btn => {
+            btn.onclick = () => {
+                const start = input.selectionStart ?? input.value.length;
+                const end = input.selectionEnd ?? input.value.length;
+
+                const text = btn.textContent.trim();
+
+                const before = input.value.substring(0, start);
+                const after = input.value.substring(end);
+
+                // 👉 check kung nasa loob ng function (para comma instead of space)
+                const insideFunc = /\w+\([^()]*$/.test(before);
+
+                const insert = insideFunc
+                    ? (before.endsWith('(') ? '' : ', ') + text
+                    : (before.trim() === '' ? '' : ' ') + text;
+
+                input.value = before + insert + after;
+
+                const newPos = start + insert.length;
+                input.selectionStart = input.selectionEnd = newPos;
+
+                input.focus();
+            };
+        });
+
+
+        // 🔹 FUNCTION BUTTONS
+        modal.querySelectorAll('.func-btn').forEach(btn => {
+            btn.onclick = () => {
+                const start = input.selectionStart ?? input.value.length;
+                const end = input.selectionEnd ?? input.value.length;
+
+                const funcName = btn.textContent.replace('()', '').trim();
+                const insert = `${funcName}()`;
+
+                const before = input.value.substring(0, start);
+                const after = input.value.substring(end);
+
+                input.value = before + insert + after;
+
+                // 👉 cursor inside parentheses
+                const pos = start + funcName.length + 1;
+                input.selectionStart = input.selectionEnd = pos;
+
+                input.focus();
+            };
+        });
+
         modal.querySelector('#closeCompute').onclick = () => modal.remove();
 
         modal.querySelector('#runCompute').onclick = () => {
-            const sourceCol = modal.querySelector('#computeSourceColumn').value;
-            const calcType = modal.querySelector('#computeCalculationType').value;
-            const targetCol = modal.querySelector('#computeTargetColumn').value;
+            const formula = modal.querySelector('#computeFormula').value;
             const mode = modal.querySelector('#computeMode').value;
 
-            if (!sourceCol || !calcType || !targetCol) {
-                return this.showToast('Please fill in all fields', 'error');
-            }
-
-            this.applyCalculation(sourceCol, calcType, targetCol, mode);
+            this.applyFormula(formula, mode);
             modal.remove();
         };
     },
 
-    applyCalculation: function (sourceColumnName, calculationType, targetColumnName, mode) {
+    applyFormula: function (formula, mode) {
+        if (!formula.startsWith('=')) {
+            return this.showToast('Formula must start with "="', 'error');
+        }
+
+        const expr = formula.slice(1);
         const columns = this.state.currentTemplate?.columns || [];
-        
-        // Find column definitions to get IDs
-        const sourceColDef = columns.find(c => c.encoding_columns.column_name === sourceColumnName)?.encoding_columns;
-        const targetColDef = columns.find(c => c.encoding_columns.column_name === targetColumnName)?.encoding_columns;
 
-        if (!sourceColDef) return this.showToast('Source column not found.', 'error');
-        if (!targetColDef) return this.showToast(`Target column "${targetColumnName}" not found.`, 'error');
+        const computeRow = (entry) => {
+            let evalExpr = expr;
 
-        const sourceColId = sourceColDef.id;
-        const targetColId = targetColDef.id;
+            columns.forEach(c => {
+                const colName = c.encoding_columns.column_name;
+                const raw = entry.values[colName] ?? '0';
 
-        const performCalculation = (valuesArray) => {
-            // Convert all values to numbers, cleaning out currency symbols/commas
-            const nums = valuesArray.map(v => parseFloat(String(v ?? '0').replace(/[^\d.-]/g, '')) || 0);
+                // convert text → number
+                const num = parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
 
-            switch (calculationType) {
-                case 'sum': return nums.reduce((a, b) => a + b, 0);
-                case 'average': return nums.length > 0 ? nums.reduce((a, b) => a + b, 0) / nums.length : 0;
-                case 'count': return nums.length;
-                case 'max': return nums.length > 0 ? Math.max(...nums) : 0;
-                case 'min': return nums.length > 0 ? Math.min(...nums) : 0;
-                case 'deduct': return nums.length > 0 ? nums[0] - nums.slice(1).reduce((a, b) => a + b, 0) : 0;
-                default: return 0;
+                const safeCol = colName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const regex = new RegExp(`\\b${safeCol}\\b`, 'g');
+
+                evalExpr = evalExpr.replace(regex, num);
+
+                // SUPPORT Excel-like functions
+                // helper: convert argument → number
+                const getVal = (arg, entry) => {
+                    const clean = arg.trim();
+
+                    // if number literal
+                    if (!isNaN(clean)) return parseFloat(clean);
+
+                    // if column name
+                    const raw = entry.values[clean] ?? '0';
+                    return parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
+                };
+
+                // AVERAGE(...)
+                evalExpr = evalExpr.replace(/AVERAGE\((.*?)\)/gi, (_, args) => {
+                    const vals = args.split(',').map(a => getVal(a, entry));
+                    return vals.length ? vals.reduce((a,b)=>a+b,0) / vals.length : 0;
+                });
+
+                // SUM(...)
+                evalExpr = evalExpr.replace(/SUM\((.*?)\)/gi, (_, args) => {
+                    const vals = args.split(',').map(a => getVal(a, entry));
+                    return vals.reduce((a,b)=>a+b,0);
+                });
+
+                // COUNT(...)
+                evalExpr = evalExpr.replace(/COUNT\((.*?)\)/gi, (_, args) => {
+                    return args.split(',').length;
+                });
+
+                // MAX(...)
+                evalExpr = evalExpr.replace(/MAX\((.*?)\)/gi, (_, args) => {
+                    const vals = args.split(',').map(a => getVal(a, entry));
+                    return Math.max(...vals);
+                });
+
+                // MIN(...)
+                evalExpr = evalExpr.replace(/MIN\((.*?)\)/gi, (_, args) => {
+                    const vals = args.split(',').map(a => getVal(a, entry));
+                    return Math.min(...vals);
+                });
+            });
+
+            try {
+                return eval(evalExpr);
+            } catch {
+                return 'ERR';
             }
         };
 
-        // Get all data from the source column across all rows
-        const allSourceValues = this.state.localEntries.map(entry => entry.values[sourceColumnName] ?? '0');
-        
-        // Calculate the aggregate result (e.g., the sum of the whole column)
-        const computedResult = performCalculation(allSourceValues);
-
+        // 🟢 SINGLE CELL
         if (mode === 'cell') {
             const td = this.state.currentCell;
             if (!td) return this.showToast('No cell selected', 'error');
-            
-            const entryId = td.closest('tr').dataset.entryId;
+
+            const row = td.closest('tr');
+            const entryId = row.dataset.entryId;
+
             const entry = this.state.localEntries.find(e => e.id === entryId);
+            if (!entry) return;
 
-            if (entry) {
-                const updatePayload = {};
-                updatePayload[targetColId] = computedResult;
-                
-                // Update local state and details for rendering
-                entry.values[targetColumnName] = computedResult;
-                let detail = entry.valueDetails.find(v => v.column_id === targetColId);
-                if (detail) detail.value = String(computedResult);
-                else entry.valueDetails.push({ column_id: targetColId, value: String(computedResult) });
+            const result = computeRow(entry);
 
-                this.saveEntryField(entry.id, updatePayload);
+            td.textContent = result;
+            entry.values[this.state.currentColName] = result;
+
+            const colDef = columns.find(c => c.encoding_columns.column_name === this.state.currentColName)?.encoding_columns;
+
+            if (colDef) {
+                let detail = entry.valueDetails.find(v => v.column_id === colDef.id);
+                if (detail) detail.value = String(result);
+                else entry.valueDetails.push({ column_id: colDef.id, value: String(result) });
+
+                const payload = {};
+                payload[colDef.id] = result;
+
+                this.saveEntryField(entry.id, payload);
             }
         }
 
+        // 🟢 WHOLE COLUMN (PER ROW COMPUTATION)
         if (mode === 'column') {
             this.state.localEntries.forEach(entry => {
-                const updatePayload = {};
-                updatePayload[targetColId] = computedResult;
+                const result = computeRow(entry);
 
-                entry.values[targetColumnName] = computedResult;
-                let detail = entry.valueDetails.find(v => v.column_id === targetColId);
-                if (detail) detail.value = String(computedResult);
-                else entry.valueDetails.push({ column_id: targetColId, value: String(computedResult) });
-                
-                this.saveEntryField(entry.id, updatePayload);
+                entry.values[this.state.currentColName] = result;
+
+                const colDef = columns.find(c => c.encoding_columns.column_name === this.state.currentColName)?.encoding_columns;
+
+                if (colDef) {
+                    let detail = entry.valueDetails.find(v => v.column_id === colDef.id);
+                    if (detail) detail.value = String(result);
+                    else entry.valueDetails.push({ column_id: colDef.id, value: String(result) });
+
+                    const payload = {};
+                    payload[colDef.id] = result;
+
+                    this.saveEntryField(entry.id, payload);
+                }
             });
+
+            this.renderTable(this.state.localEntries);
         }
 
-        this.renderTable(this.state.localEntries);
-        this.showToast('Calculation applied successfully!');
+        this.showToast('Computed!');
     },
 
+    //-----------------------------------------------------------------------------------------
+    //------------Para lang to sa delete all empty rows------------------
+    //-----------------------------------------------------------------------------------------
     deleteEmptyRows: async function () {
         if (!this.state.currentTemplateId) {
             return this.showToast('No template selected.', 'error');
@@ -1876,6 +1977,21 @@ export const AppCore = {
         } catch (err) {
             console.error(err);
             this.showToast('Failed to delete empty rows: ' + err.message, 'error');
+        }
+    },
+
+    //-----------------------------------------------------------------------------------------
+    //------------ctrl + z and ctrl y function for undo and redo------------------
+    //-----------------------------------------------------------------------------------------
+    pushToHistory: function (changes) {
+        // changes = [{ entryId, colId, oldValue, newValue }]
+        if (!changes.length) return;
+
+        this.state.historyStack.push(changes);
+
+        // Limit history (optional para di lumobo memory)
+        if (this.state.historyStack.length > 100) {
+            this.state.historyStack.shift();
         }
     },
 };

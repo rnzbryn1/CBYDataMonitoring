@@ -840,6 +840,27 @@ td.cell-focused {
     color: white;
 }
 
+.compute-functions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.func-btn {
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    font-size: 12px;
+    padding: 5px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: 0.15s ease;
+}
+
+.func-btn:hover {
+    background: #2563eb;
+    color: white;
+}
+
 
 /* =========================
    ACTION BUTTONS
