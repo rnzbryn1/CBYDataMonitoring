@@ -70,6 +70,7 @@ export const AppCore = {
 
     syncWithWindow: function () {
         window.switchTemplate    = (id)        => this.switchTemplate(id);
+        window.loadEntries     = (templateId) => this.loadEntries(templateId);
         window.saveData          = ()          => this.saveData();
         window.editEntry         = (id)        => this.editEntry(id);
         window.closeEditModal    = ()          => this.closeEditModal();
@@ -295,6 +296,28 @@ export const AppCore = {
             workspace.style.opacity = '1';
             workspace.style.pointerEvents = 'auto';
             this.state.isLoading = false;
+        }
+    },
+    // ============================================================
+    // REFRESH DATA
+    // ============================================================
+    loadEntries: async function (templateId) {
+        try {
+            // Fetch fresh entries from Supabase
+            const entries = await SupabaseService.getEntries(templateId);
+            this.state.localEntries = entries;
+
+            // Update cache so the fresh data persists
+            const cacheKey = `template-${templateId}`;
+            if (this.state.cache[cacheKey]) {
+                this.state.cache[cacheKey].entries = entries;
+            }
+
+            // Re-render the table with the new data
+            this.renderTable(this.state.localEntries);
+        } catch (error) {
+            console.error('Error refreshing entries:', error);
+            this.showToast('Error refreshing data', 'error');
         }
     },
 
@@ -762,24 +785,21 @@ export const AppCore = {
 
         try {
             const values = {};
-            document.querySelectorAll('[data-column-id]').forEach(input => {
-                if (input.value) {
-                    values[input.dataset.columnId] = input.value;
-                }
+            // Fixes data bleeding by scoping to #editForm
+            const inputs = document.querySelectorAll('#editForm [data-column-id]');
+            
+            inputs.forEach(input => {
+                values[input.dataset.columnId] = input.value;
             });
 
             await SupabaseService.updateEntryValues(this.state.editingId, values);
-
+            
             this.closeEditModal();
-            this.showToast('Record updated!');
-
-            // Reload entries
-            const cacheKey = `template-${this.state.currentTemplate.id}`;
-            delete this.state.cache[cacheKey];
-            this.state.localEntries = await SupabaseService.getEntries(this.state.currentTemplate.id);
-            this.renderTable(this.state.localEntries);
+            this.showToast('Entry updated successfully!');
+            await this.loadEntries(this.state.currentTemplateId);
         } catch (error) {
-            this.showToast('Failed to update: ' + error.message, 'error');
+            console.error('Error updating entry:', error);
+            this.showToast('Error updating entry', 'error');
         }
     },
 
@@ -930,41 +950,46 @@ export const AppCore = {
     // ============================================================
     // ENTRIES — SAVE / DELETE
     // ============================================================
-    saveData: async function () {
+       saveData: async function () {
+        const core = AppCore;
+
+        if (!core.state.currentTemplateId) {
+            core.showToast('Please select a template first', 'error');
+            return;
+        }
+
         try {
-            // Create entry
+            // 1. Create the base entry record
             const entry = await SupabaseService.createEntry(
-                this.state.currentTemplate.id,
-                this.state.departmentId
+                core.state.currentTemplateId, 
+                core.state.departmentId
             );
 
-            // Get values from form
+            // 2. Collect values from the dynamic form
             const values = {};
-            document.querySelectorAll('[data-column-id]').forEach(input => {
-                if (input.value) {
+            const inputs = document.querySelectorAll('#dynamicForm [data-column-id]');
+            
+            inputs.forEach(input => {
+                if (input.value && input.value.trim() !== '') {
                     values[input.dataset.columnId] = input.value;
                 }
             });
 
-            // Save values
+            // 3. Save the values if any were entered
             if (Object.keys(values).length > 0) {
                 await SupabaseService.updateEntryValues(entry.id, values);
             }
 
-            // Clear form
-            document.querySelectorAll('[data-column-id]').forEach(input => {
-                input.value = '';
-            });
+            // 4. UI Feedback
+            inputs.forEach(input => input.value = '');
+            core.showToast('Data saved successfully!');
+            
+            // 5. Refresh Table using the now-defined function
+            await core.loadEntries(core.state.currentTemplateId);
 
-            this.showToast('Record saved!');
-
-            // Reload entries
-            const cacheKey = `template-${this.state.currentTemplate.id}`;
-            delete this.state.cache[cacheKey];
-            this.state.localEntries = await SupabaseService.getEntries(this.state.currentTemplate.id);
-            this.renderTable(this.state.localEntries);
         } catch (error) {
-            this.showToast('Failed to save: ' + error.message, 'error');
+            console.error('Error saving data:', error);
+            core.showToast('Error saving data: ' + error.message, 'error');
         }
     },
 
@@ -1328,18 +1353,7 @@ export const AppCore = {
 
         if (!rows.length) return this.showToast('No data rows to import.', 'error');
 
-        // Filter out completely empty rows
-        rows = rows.filter(row => {
-            const values = Object.values(row).map(v => String(v).trim());
-            return values.some(v => v && v !== '');
-        });
-
-        if (!rows.length) return this.showToast('No data rows to import.', 'error');
-
-        console.log(`Starting batch import of ${rows.length} rows...`);
-        console.log('First row sample:', JSON.stringify(rows[0]));
-
-        // Read the manual column mapping from UI
+        // Read the manual column mapping from UI FIRST
         const mappingSelects = document.querySelectorAll('.col-mapping-select');
         const mapping = {}; // dbColName -> excelColName
         mappingSelects.forEach(sel => {
@@ -1351,38 +1365,46 @@ export const AppCore = {
         console.log('Column mapping:', mapping);
 
         const columns = this.state.currentTemplate.columns || [];
+        
+        // Get list of mapped columns (those that are NOT skipped)
+        const mappedExcelCols = [];
+        columns.forEach(col => {
+            const excelColName = mapping[col.encoding_columns.column_name];
+            if (excelColName && excelColName !== '(skip)') {
+                mappedExcelCols.push(excelColName);
+            }
+        });
+        
+        console.log(`Filtering by ${mappedExcelCols.length} mapped columns: ${mappedExcelCols.join(', ')}`);
+
+        // FILTER BEFORE PROCESSING: Check if each row has ANY data in the MAPPED columns
+        const rowsWithData = rows.filter((row, idx) => {
+            // Get values ONLY from mapped columns (trim whitespace)
+            const mappedValues = mappedExcelCols.map(colName => String(row[colName] || '').trim());
+            // Keep row only if at least ONE mapped cell has actual data
+            const hasData = mappedValues.some(v => v && v !== '');
+            if (!hasData) {
+                console.warn(`Row ${idx} skipped (all mapped columns empty):`, row);
+            }
+            return hasData;
+        });
+
+        console.log(`✓ Rows to import: ${rowsWithData.length}`);
+        console.log(`✗ Completely empty rows (skipped): ${rows.length - rowsWithData.length}`);
+        
+        if (rowsWithData.length === 0) {
+            return this.showToast('No rows with data found in mapped columns.', 'error');
+        }
+
+        console.log(`Starting batch import of ${rowsWithData.length} rows...`);
+        console.log('First row sample:', JSON.stringify(rowsWithData[0]));
+
         const confirmBtn = this._el('importConfirmBtn');
         if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.innerText = 'Importing...'; }
 
         try {
-            // STEP 1: Get list of mapped columns (those that are not skipped)
-            const mappedExcelCols = [];
-            columns.forEach(col => {
-                const excelColName = mapping[col.encoding_columns.column_name];
-                if (excelColName && excelColName !== '(skip)') {
-                    mappedExcelCols.push(excelColName);
-                }
-            });
             
-            console.log(`Filtering by ${mappedExcelCols.length} mapped columns: ${mappedExcelCols.join(', ')}`);
-            
-            // Filter out COMPLETELY empty rows (all MAPPED columns blank)
-            // BUT allow rows with some values even if some mapped columns are blank
-            const rowsWithData = rows.filter((row, idx) => {
-                // Get values ONLY from mapped columns (trim whitespace)
-                const mappedValues = mappedExcelCols.map(colName => String(row[colName] || '').trim());
-                // Keep row if at least ONE mapped cell has actual data
-                return mappedValues.some(v => v && v !== '');
-            });
-
-            console.log(`✓ Rows to import: ${rowsWithData.length}`);
-            console.log(`✗ Completely empty rows (skipped): ${rows.length - rowsWithData.length}`);
-            
-            if (rowsWithData.length === 0) {
-                return this.showToast('No rows with data found in mapped columns.', 'error');
-            }
-
-            // STEP 2: Batch create entries for all rows with any data
+            // STEP 1: Batch create entries for all rows with any data
             console.log(`Creating ${rowsWithData.length} entries...`);
             const entries = await SupabaseService.createEntries(
                 this.state.currentTemplate.id,
@@ -1391,7 +1413,7 @@ export const AppCore = {
             );
             console.log(`Created ${entries.length} entries`);
 
-            // STEP 3: Build ALL values for ALL entries in memory first
+            // STEP 2: Build ALL values for ALL entries in memory first
             console.log(`Preparing values for all rows...`);
             const allValues = [];
             
@@ -1428,7 +1450,7 @@ export const AppCore = {
                 }
             });
 
-            // STEP 4: Insert ALL values in one batch call
+            // STEP 3: Insert ALL values in one batch call
             console.log(`Inserting ${allValues.length} column values in batch...`);
             if (allValues.length > 0) {
                 const { error: valuesError } = await SupabaseService.client
@@ -1607,32 +1629,49 @@ export const AppCore = {
     },
 
     //-----------------------------------------------------------------------------------------
-    //-------------Para sa Computation ng mga cells, pwede selected or apply to all column-----
+    //-------------Para sa Computation ng mga cells gamit calculation types------------------
     //-----------------------------------------------------------------------------------------
     openComputeModal: function () {
         const modal = document.createElement('div');
         modal.className = 'compute-modal';
 
-        const cols = this.state.currentTemplate.doc_columns;
+        const cols = this.state.currentTemplate?.columns || [];
+        const colOptions = cols.map(c => `<option value="${c.encoding_columns.column_name}">${c.encoding_columns.column_name}</option>`).join('');
+
+        const calculations = [
+            { value: 'sum', label: 'Sum (Total)' },
+            { value: 'average', label: 'Average' },
+            { value: 'count', label: 'Count' },
+            { value: 'max', label: 'Maximum' },
+            { value: 'min', label: 'Minimum' },
+            { value: 'deduct', label: 'Deduct (Subtract)' }
+        ];
+        const calcOptions = calculations.map(c => `<option value="${c.value}">${c.label}</option>`).join('');
 
         modal.innerHTML = `
             <div class="compute-box">
-                <h3>Compute Formula</h3>
+                <h3>Compute Calculation</h3>
 
-                <label>Formula</label>
-                <input id="computeFormula" placeholder="=Num 1 + Num 2">
+                <label>Source Column</label>
+                <select id="computeSourceColumn">
+                    <option value="">-- Select Column --</option>
+                    ${colOptions}
+                </select>
+
+                <label>Calculation Type</label>
+                <select id="computeCalculationType">
+                    <option value="">-- Select Calculation --</option>
+                    ${calcOptions}
+                </select>
+
+                <label>Target Column Name</label>
+                <input id="computeTargetColumn" placeholder="e.g., Total, Average, etc.">
 
                 <label>Apply Mode</label>
                 <select id="computeMode">
                     <option value="cell">Selected Cell</option>
                     <option value="column">Whole Column</option>
                 </select>
-
-                <div class="compute-columns">
-                    ${cols.map(c => `
-                        <button type="button" class="col-btn">${c.column_name}</button>
-                    `).join('')}
-                </div>
 
                 <div class="compute-actions">
                     <button id="runCompute">Apply</button>
@@ -1643,84 +1682,93 @@ export const AppCore = {
 
         document.body.appendChild(modal);
 
-        // click column → insert sa formula
-        modal.querySelectorAll('.col-btn').forEach(btn => {
-            btn.onclick = () => {
-                const input = modal.querySelector('#computeFormula');
-                input.value += ` ${btn.textContent}`;
-            };
-        });
-
         modal.querySelector('#closeCompute').onclick = () => modal.remove();
 
         modal.querySelector('#runCompute').onclick = () => {
-            const formula = modal.querySelector('#computeFormula').value;
+            const sourceCol = modal.querySelector('#computeSourceColumn').value;
+            const calcType = modal.querySelector('#computeCalculationType').value;
+            const targetCol = modal.querySelector('#computeTargetColumn').value;
             const mode = modal.querySelector('#computeMode').value;
 
-            this.applyFormula(formula, mode);
+            if (!sourceCol || !calcType || !targetCol) {
+                return this.showToast('Please fill in all fields', 'error');
+            }
+
+            this.applyCalculation(sourceCol, calcType, targetCol, mode);
             modal.remove();
         };
     },
 
-    applyFormula: function (formula, mode) {
-        if (!formula.startsWith('=')) {
-            return this.showToast('Formula must start with "="', 'error');
-        }
+    applyCalculation: function (sourceColumnName, calculationType, targetColumnName, mode) {
+        const columns = this.state.currentTemplate?.columns || [];
+        
+        // Find column definitions to get IDs
+        const sourceColDef = columns.find(c => c.encoding_columns.column_name === sourceColumnName)?.encoding_columns;
+        const targetColDef = columns.find(c => c.encoding_columns.column_name === targetColumnName)?.encoding_columns;
 
-        const expr = formula.slice(1); // remove '='
-        const columns = this.state.currentTemplate.doc_columns.map(c => c.column_name);
+        if (!sourceColDef) return this.showToast('Source column not found.', 'error');
+        if (!targetColDef) return this.showToast(`Target column "${targetColumnName}" not found.`, 'error');
 
-        const computeRow = (entry) => {
-            let evalExpr = expr;
+        const sourceColId = sourceColDef.id;
+        const targetColId = targetColDef.id;
 
-            columns.forEach(col => {
-                const raw = entry.content[col] ?? '0';
+        const performCalculation = (valuesArray) => {
+            // Convert all values to numbers, cleaning out currency symbols/commas
+            const nums = valuesArray.map(v => parseFloat(String(v ?? '0').replace(/[^\d.-]/g, '')) || 0);
 
-                // extract number kahit text
-                const num = parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
-
-                const safeCol = col.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                const regex = new RegExp(`\\b${safeCol}\\b`, 'g');
-
-                evalExpr = evalExpr.replace(regex, num);
-            });
-
-            try {
-                return eval(evalExpr);
-            } catch {
-                return 'ERR';
+            switch (calculationType) {
+                case 'sum': return nums.reduce((a, b) => a + b, 0);
+                case 'average': return nums.length > 0 ? nums.reduce((a, b) => a + b, 0) / nums.length : 0;
+                case 'count': return nums.length;
+                case 'max': return nums.length > 0 ? Math.max(...nums) : 0;
+                case 'min': return nums.length > 0 ? Math.min(...nums) : 0;
+                case 'deduct': return nums.length > 0 ? nums[0] - nums.slice(1).reduce((a, b) => a + b, 0) : 0;
+                default: return 0;
             }
         };
 
+        // Get all data from the source column across all rows
+        const allSourceValues = this.state.localEntries.map(entry => entry.values[sourceColumnName] ?? '0');
+        
+        // Calculate the aggregate result (e.g., the sum of the whole column)
+        const computedResult = performCalculation(allSourceValues);
+
         if (mode === 'cell') {
             const td = this.state.currentCell;
-            const row = td.closest('tr');
-            const entryId = row.dataset.entryId;
-
+            if (!td) return this.showToast('No cell selected', 'error');
+            
+            const entryId = td.closest('tr').dataset.entryId;
             const entry = this.state.localEntries.find(e => e.id === entryId);
-            if (!entry) return;
 
-            const result = computeRow(entry);
+            if (entry) {
+                const updatePayload = {};
+                updatePayload[targetColId] = computedResult;
+                
+                // Update local state and details for rendering
+                entry.values[targetColumnName] = computedResult;
+                let detail = entry.valueDetails.find(v => v.column_id === targetColId);
+                if (detail) detail.value = String(computedResult);
+                else entry.valueDetails.push({ column_id: targetColId, value: String(computedResult) });
 
-            td.textContent = result;
-            entry.content[this.state.currentColName] = result;
-
-            this.saveEntryField(entry.id, entry.content);
+                this.saveEntryField(entry.id, updatePayload);
+            }
         }
 
         if (mode === 'column') {
             this.state.localEntries.forEach(entry => {
-                const result = computeRow(entry);
-                entry.content[this.state.currentColName] = result;
-            });
+                const updatePayload = {};
+                updatePayload[targetColId] = computedResult;
 
-            this.renderTable(this.state.localEntries);
-
-            this.state.localEntries.forEach(e => {
-                this.saveEntryField(e.id, e.content);
+                entry.values[targetColumnName] = computedResult;
+                let detail = entry.valueDetails.find(v => v.column_id === targetColId);
+                if (detail) detail.value = String(computedResult);
+                else entry.valueDetails.push({ column_id: targetColId, value: String(computedResult) });
+                
+                this.saveEntryField(entry.id, updatePayload);
             });
         }
 
-        this.showToast('Computed!');
+        this.renderTable(this.state.localEntries);
+        this.showToast('Calculation applied successfully!');
     },
 };
