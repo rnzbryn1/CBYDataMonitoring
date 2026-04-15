@@ -102,6 +102,7 @@ export const AppCore = {
         window.previewSheet      = ()          => this.previewSheet();
         window.confirmImport     = ()          => this.confirmImport();
         window.deleteSelected    = ()          => this.deleteSelected();
+        window.deleteEmptyRows   = ()          => this.deleteEmptyRows();
 
         window.addEventListener('click', () => {
             document.querySelectorAll('.dropdown').forEach(d => d.style.display = 'none');
@@ -411,7 +412,7 @@ export const AppCore = {
             const isEmpty = !entry.valueDetails || entry.valueDetails.length === 0;
 
             return `
-                <tr data-entry-id="${entry.id}" style="${isEmpty ? 'background-color: #ffcccc;' : ''}">
+                <tr data-entry-id="${entry.id}" style="${isEmpty ? 'background-color: #ffffff;' : ''}">
                     <td><input type="checkbox" class="rowCheckbox" data-id="${entry.id}"></td>
                     ${columns.map(col => {
                         const colDef = col.encoding_columns;
@@ -529,25 +530,71 @@ export const AppCore = {
             this.onTableCellBlur(td);
         });
 
-        // keydown — Ctrl+C copies selection, Enter blurs cell
+        // keydown — Ctrl+C copies selection, Enter blurs cell, and delete function for delete or backspace button
         body.addEventListener('keydown', (e) => {
-            // Ctrl+C or Cmd+C — copy selected cells
-            if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+
+            // ✅ DELETE / BACKSPACE — clear selected cells
+            if (e.key === 'Delete' || e.key === 'Backspace') {
                 const selected = body.querySelectorAll('td.cell-selected');
-                if (!selected.length) return; // let browser handle normal copy
+
+                // If walang selection, normal behavior lang
+                if (!selected.length) return;
 
                 e.preventDefault();
-                // Group selected cells by row for TSV output
+
+                const changedEntries = new Map();
+
+                selected.forEach(td => {
+                    td.textContent = ''; // clear UI
+
+                    const info = this.getTableCellInfo(td);
+                    if (!info) return;
+
+                    if (!changedEntries.has(info.entryId)) {
+                        changedEntries.set(info.entryId, {});
+                    }
+
+                    changedEntries.get(info.entryId)[info.colId] = '';
+                });
+
+                // Save changes sa database
+                changedEntries.forEach(async (values, entryId) => {
+                    try {
+                        await SupabaseService.updateEntryValues(entryId, values);
+
+                        const cacheKey = `template-${this.state.currentTemplate.id}`;
+                        delete this.state.cache[cacheKey];
+                    } catch (err) {
+                        this.showToast('Delete failed: ' + err.message, 'error');
+                    }
+                });
+
+                this.showToast(`Cleared ${selected.length} cell(s)`);
+                return;
+            }
+
+            // ✅ COPY (existing)
+            if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+                const selected = body.querySelectorAll('td.cell-selected');
+                if (!selected.length) return;
+
+                e.preventDefault();
+
                 const rowMap = new Map();
                 selected.forEach(td => {
                     const row = td.closest('tr');
                     const rows = Array.from(body.rows);
                     const ri = rows.indexOf(row);
+
                     if (!rowMap.has(ri)) rowMap.set(ri, []);
                     rowMap.get(ri).push(td.textContent);
                 });
-                const tsv = Array.from(rowMap.keys()).sort((a,b) => a-b)
-                    .map(ri => rowMap.get(ri).join('\t')).join('\n');
+
+                const tsv = Array.from(rowMap.keys())
+                    .sort((a,b) => a-b)
+                    .map(ri => rowMap.get(ri).join('\t'))
+                    .join('\n');
+
                 navigator.clipboard.writeText(tsv).catch(() => {});
                 this.showToast(`Copied ${selected.length} cell(s)`);
                 return;
@@ -1475,6 +1522,9 @@ export const AppCore = {
         } finally {
             if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.innerText = 'Import'; }
         }
+
+        // Auto cleanup after import
+        await this.deleteEmptyRows();
     },
 
     // ============================================================
@@ -1770,5 +1820,62 @@ export const AppCore = {
 
         this.renderTable(this.state.localEntries);
         this.showToast('Calculation applied successfully!');
+    },
+
+    deleteEmptyRows: async function () {
+        if (!this.state.currentTemplateId) {
+            return this.showToast('No template selected.', 'error');
+        }
+
+        const entries = this.state.localEntries || [];
+
+        // Hanapin lahat ng rows na totally empty
+        const emptyEntries = entries.filter(entry => {
+            // walang valueDetails = empty
+            if (!entry.valueDetails || entry.valueDetails.length === 0) {
+                return true;
+            }
+
+            // check if ALL values are empty
+            return entry.valueDetails.every(v => {
+                const val = v.value ?? v.value_number;
+                return val === null || val === undefined || String(val).trim() === '';
+            });
+        });
+
+        if (!emptyEntries.length) {
+            return this.showToast('No empty rows found.', 'info');
+        }
+
+        // DOUBLE CONFIRMATION (safe)
+        const confirm1 = confirm(`Found ${emptyEntries.length} empty rows.\n\nDelete them?`);
+        if (!confirm1) return;
+
+        const confirm2 = confirm('This action cannot be undone. Continue?');
+        if (!confirm2) return;
+
+        try {
+            const ids = emptyEntries.map(e => e.id);
+
+            // batch delete
+            const { error } = await SupabaseService.client
+                .from('encoding_entries')
+                .delete()
+                .in('id', ids);
+
+            if (error) throw error;
+
+            // refresh cache + UI
+            const cacheKey = `template-${this.state.currentTemplate.id}`;
+            delete this.state.cache[cacheKey];
+
+            this.state.localEntries = await SupabaseService.getEntries(this.state.currentTemplate.id);
+            this.renderTable(this.state.localEntries);
+
+            this.showToast(`${ids.length} empty rows deleted!`);
+        } catch (err) {
+            console.error(err);
+            this.showToast('Failed to delete empty rows: ' + err.message, 'error');
+        }
     },
 };
