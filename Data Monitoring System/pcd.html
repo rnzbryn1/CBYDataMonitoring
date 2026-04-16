@@ -42,7 +42,7 @@
                 <input type="text" id="search" placeholder="Search records..." oninput="searchData()">
                 <button onclick="deleteEmptyRows()" class="danger-btn">Delete Empty Rows</button>
                 <button onclick="deleteSelected()">Delete Selected</button>
-                <button onclick="sortByDate()">Sort by Date</button>
+                <!-- <button onclick="sortByDate()">Sort by Date</button>-->
                 <button onclick="exportToExcel()">Export Excel</button>
                 <button onclick="openImportModal()">Import Excel</button>
                 <button class="add-cat-btn" onclick="openColumnModal()">+ Add Column</button>
@@ -169,9 +169,33 @@
     </div>
 </div>
 
+<!-- COLOR MODAL -->
+<div id="colorModal" class="modal">
+    <div class="modal-content color-modal">
+        <span class="close-btn" onclick="closeColorModal()">&times;</span>
+        <h3>🎨 Apply Color</h3>
+
+        <div class="color-palette" id="colorPalette"></div>
+        <h3><br>Select Target</h3>
+
+        <div class="target-group">
+            <button class="target-btn active" data-target="single">Single</button>
+            <button class="target-btn" data-target="row">Horizontal</button>
+            <button class="target-btn" data-target="column">Vertical</button>
+        </div>
+
+        <div class="modal-actions">
+            <button onclick="closeColorModal()">Cancel</button>
+            <button onclick="applyCellColor()">Apply</button>
+        </div>
+    </div>
+</div>
+
 <div id="contextMenu" class="context-menu">
     <button id="ctxEdit">Edit Row</button>
+    <button id="ctxColor">Add Cell Color</button> 
     <button id="ctxCompute">Compute</button>
+    <button id="ctxComputeColumn">Compute Specific Column</button>
     <button id="ctxDelete" class="delete">Delete Row</button>
 </div>
 

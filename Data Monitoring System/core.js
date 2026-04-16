@@ -104,12 +104,25 @@ export const AppCore = {
         window.confirmImport     = ()          => this.confirmImport();
         window.deleteSelected    = ()          => this.deleteSelected();
         window.deleteEmptyRows   = ()          => this.deleteEmptyRows();
+        window.applyCellColor = () => this.applyCellColor();
+        window.openColorModal = () => this.openColorModal();
+        window.closeColorModal = () => this.closeColorModal();
 
         window.addEventListener('click', () => {
             document.querySelectorAll('.dropdown').forEach(d => d.style.display = 'none');
         });
 
         this.ensureContextMenu();
+
+        // TARGET BUTTON (no radio, toggle active)
+        document.addEventListener('click', (e) => {
+            if (e.target.classList.contains('target-btn')) {
+                document.querySelectorAll('.target-btn')
+                    .forEach(btn => btn.classList.remove('active'));
+
+                e.target.classList.add('active');
+            }
+        });
 
         // CONTEXT MENU ACTIONS
         document.getElementById('ctxEdit')?.addEventListener('click', () => {
@@ -127,6 +140,16 @@ export const AppCore = {
         document.getElementById('ctxCompute')?.addEventListener('click', () => {
             console.log('Compute clicked'); 
             this.openComputeModal();
+        });
+
+        document.getElementById('ctxComputeColumn')?.addEventListener('click', () => {
+            if (this.state.currentColName) {
+                this.openColumnComputeModal();
+            }
+        });
+
+        document.getElementById('ctxColor')?.addEventListener('click', () => {
+            this.openColorModal();
         });
     },
 
@@ -154,6 +177,12 @@ export const AppCore = {
         computeBtn.type = 'button';
         computeBtn.textContent = 'Compute';
 
+        const computeColBtn = document.createElement('button');
+        computeColBtn.id = 'ctxComputeColumn';
+        computeColBtn.type = 'button';
+        computeColBtn.textContent = 'Compute Specific Column';
+
+        menu.appendChild(computeColBtn);
         menu.appendChild(computeBtn);
         menu.appendChild(editBtn);
         menu.appendChild(deleteBtn);
@@ -715,6 +744,11 @@ export const AppCore = {
             delete this.state.cache[cacheKey];
         } catch (err) {
             this.showToast('Save failed: ' + err.message, 'error');
+        }
+
+        // AUTO UPDATE COLUMN COMPUTE   
+        if (this.state.activeColumnCompute) {
+            this.updateColumnComputation();
         }
     },
 
@@ -1928,7 +1962,7 @@ export const AppCore = {
         // click column → auto insert sa formula
         const input = modal.querySelector('#computeFormula');
 
-        // 🔹 COLUMN BUTTONS
+        // COLUMN BUTTONS
         modal.querySelectorAll('.col-btn').forEach(btn => {
             btn.onclick = () => {
                 const start = input.selectionStart ?? input.value.length;
@@ -1939,7 +1973,7 @@ export const AppCore = {
                 const before = input.value.substring(0, start);
                 const after = input.value.substring(end);
 
-                // 👉 check kung nasa loob ng function (para comma instead of space)
+                // check kung nasa loob ng function (para comma instead of space)
                 const insideFunc = /\w+\([^()]*$/.test(before);
 
                 const insert = insideFunc
@@ -1956,7 +1990,7 @@ export const AppCore = {
         });
 
 
-        // 🔹 FUNCTION BUTTONS
+        // FUNCTION BUTTONS
         modal.querySelectorAll('.func-btn').forEach(btn => {
             btn.onclick = () => {
                 const start = input.selectionStart ?? input.value.length;
@@ -1970,7 +2004,7 @@ export const AppCore = {
 
                 input.value = before + insert + after;
 
-                // 👉 cursor inside parentheses
+                // cursor inside parentheses
                 const pos = start + funcName.length + 1;
                 input.selectionStart = input.selectionEnd = pos;
 
@@ -2056,13 +2090,14 @@ export const AppCore = {
             });
 
             try {
-                return eval(evalExpr);
+                const result = eval(evalExpr);
+                return this.formatNumber(result); // APPLY HERE
             } catch {
                 return 'ERR';
             }
         };
 
-        // 🟢 SINGLE CELL
+        // SINGLE CELL
         if (mode === 'cell') {
             const td = this.state.currentCell;
             if (!td) return this.showToast('No cell selected', 'error');
@@ -2092,7 +2127,7 @@ export const AppCore = {
             }
         }
 
-        // 🟢 WHOLE COLUMN (PER ROW COMPUTATION)
+        // WHOLE COLUMN (PER ROW COMPUTATION)
         if (mode === 'column') {
             this.state.localEntries.forEach(entry => {
                 const result = computeRow(entry);
@@ -2180,6 +2215,139 @@ export const AppCore = {
     },
 
     //-----------------------------------------------------------------------------------------
+    //------------Specific Column Computation------------------
+    //-----------------------------------------------------------------------------------------
+    openColumnComputeModal: function () {
+        const modal = document.createElement('div');
+        modal.className = 'compute-modal';
+
+        modal.innerHTML = `
+            <div class="compute-box">
+                <h3>Compute Column</h3>
+
+                <label>Function</label>
+                <select id="colFunc">
+                    <option value="sum">SUM</option>
+                    <option value="average">AVERAGE</option>
+                    <option value="max">MAX</option>
+                    <option value="min">MIN</option>
+                    <option value="count">COUNT</option>
+                </select>
+
+                <div class="compute-actions">
+                    <button id="runColCompute">Apply</button>
+                    <button id="closeColCompute">Cancel</button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        modal.querySelector('#closeColCompute').onclick = () => modal.remove();
+
+        modal.querySelector('#runColCompute').onclick = () => {
+            const func = modal.querySelector('#colFunc').value;
+            const col = this.state.currentColName;
+
+            this.computeColumnLive(col, func);
+            modal.remove();
+        };
+    },
+
+    computeColumnLive: function (columnName, funcType) {
+        this.state.activeColumnCompute = {
+            column: columnName,
+            func: funcType
+        };
+
+        this.updateColumnComputation();
+    },
+
+    updateColumnComputation: function () {
+        const config = this.state.activeColumnCompute;
+        if (!config) return;
+
+        const { column, func } = config;
+
+        const values = this.state.localEntries.map(entry => {
+            const raw = entry.values?.[column] ?? '';
+            return parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
+        });
+
+        let result = 0;
+
+        switch (func) {
+            case 'sum':
+                result = values.reduce((a,b)=>a+b,0);
+                break;
+            case 'average':
+                result = values.length ? values.reduce((a,b)=>a+b,0)/values.length : 0;
+                break;
+            case 'max':
+                result = Math.max(...values);
+                break;
+            case 'min':
+                result = Math.min(...values);
+                break;
+            case 'count':
+                result = values.length;
+                break;
+        }
+
+        result = this.formatNumber(result); // 
+        this.renderColumnFooter(column, func, result);
+    },
+
+    renderColumnFooter: function (columnName, func, result) {
+        const tbody = document.getElementById('tableData');
+        if (!tbody) return;
+
+        // remove old footer
+        const old = tbody.querySelector('.column-footer');
+        if (old) old.remove();
+
+        const cols = this.state.currentTemplate.columns;
+
+        // hanapin index ng target column
+        const colIndex = cols.findIndex(
+            c => c.encoding_columns.column_name === columnName
+        );
+
+        const tr = document.createElement('tr');
+        tr.className = 'column-footer';
+
+        // kung may index column (#), dagdag offset
+        const firstRow = tbody.querySelector('tr');
+        const actualCells = firstRow ? firstRow.children.length : cols.length;
+
+        const offset = actualCells - cols.length;
+
+        const totalCols = cols.length + offset;
+
+        for (let i = 0; i < totalCols; i++) {
+            const td = document.createElement('td');
+
+            // exact position
+            if (i === colIndex + offset) {
+                td.textContent = `${func.toUpperCase()}: ${result}`;
+                td.style.fontWeight = 'bold';
+                td.style.background = '#f1f5f9';
+            }
+
+            tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+    },
+
+    //para sa 2 decimal places to beh
+    formatNumber: function (val) {
+        const num = parseFloat(val);
+        if (isNaN(num)) return val;
+
+        return Number(num.toFixed(2)); //number pa rin, hindi string
+    },
+
+    //-----------------------------------------------------------------------------------------
     //------------ctrl + z and ctrl y function for undo and redo------------------
     //-----------------------------------------------------------------------------------------
     pushToHistory: function (changes) {
@@ -2193,4 +2361,103 @@ export const AppCore = {
             this.state.historyStack.shift();
         }
     },
+
+    //-----------------------------------------------------------------------------------------
+    //------------Color cells------------------
+    //-----------------------------------------------------------------------------------------
+    openColorModal: function () {
+        if (!this.state.currentCell) return;        
+
+        // 🔥 HIDE CONTEXT MENU
+        const menu = document.getElementById('contextMenu');
+        if (menu) menu.style.display = 'none';
+
+        document.getElementById('colorModal').style.display = 'block';
+
+        this.initColorPalette();
+        this.bindPaletteEvents();
+
+        this.state.selectedColor = "#ff0000";
+    },
+
+    closeColorModal: function () {
+        document.getElementById('colorModal').style.display = 'none';
+    },
+
+    applyCellColor: function () {
+        const color = this.state.selectedColor || "#ff0000";
+        const target = document.querySelector('.target-btn.active')?.dataset.target;
+
+        const td = this.state.currentCell;
+        if (!td) return;
+
+        const row = td.closest('tr');
+        const table = document.getElementById('tableData');
+
+        if (target === 'single') {
+            td.style.backgroundColor = color;
+        }
+
+        if (target === 'row') {
+            row.querySelectorAll('td[data-col-id]')
+                .forEach(cell => cell.style.backgroundColor = color);
+        }
+
+        if (target === 'column') {
+            const colIndex = Array.from(td.parentNode.children).indexOf(td);
+
+            table.querySelectorAll('tr').forEach(r => {
+                const cells = r.querySelectorAll('td[data-col-id]');
+                if (cells[colIndex - 1]) { // -1 dahil may checkbox column
+                    cells[colIndex - 1].style.backgroundColor = color;
+                }
+            });
+        }
+
+        this.closeColorModal();
+    },
+
+    initColorPalette: function () {
+        const palette = document.getElementById('colorPalette');
+        if (!palette) return;
+
+        const colors = [
+            "#000000","#444","#666","#999","#bbb","#ddd","#eee","#FFFFFF",
+            "#ff0000","#ff9900","#ffff00","#00ff00","#00ffff","#0000ff","#9900ff","#ff00ff",
+            "#f4cccc","#fce5cd","#fff2cc","#d9ead3","#d0e0e3","#cfe2f3","#d9d2e9","#ead1dc",
+            "#ea9999","#f9cb9c","#ffe599","#b6d7a8","#a2c4c9","#9fc5e8","#b4a7d6","#d5a6bd",
+            "#e06666","#f6b26b","#ffd966","#93c47d","#76a5af","#6fa8dc","#8e7cc3","#c27ba0",
+            "#cc0000","#e69138","#f1c232","#6aa84f","#45818e","#3d85c6","#674ea7","#a64d79"
+        ];
+
+        palette.innerHTML = colors.map(c => `
+            <div class="color-swatch" 
+                data-color="${c}" 
+                style="background:${c}">
+            </div>
+        `).join('');
+    },
+
+    bindPaletteEvents: function () {
+        if (this.state.paletteInitialized) return;
+
+        document.addEventListener('click', (e) => {
+            const swatch = e.target.closest('.color-swatch');
+            if (!swatch) return;
+
+            document.querySelectorAll('.color-swatch')
+                .forEach(s => s.classList.remove('active'));
+
+            swatch.classList.add('active');
+
+            // save selected color
+            this.state.selectedColor = swatch.dataset.color;
+        });
+
+        this.state.paletteInitialized = true;
+    },
+
+    //-----------------------------------------------------------------------------------------
+    //------------function para mapunta agad sa last row------------------
+    //-----------------------------------------------------------------------------------------
 };

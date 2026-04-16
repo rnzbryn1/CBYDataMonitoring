@@ -951,6 +951,63 @@ td.cell-focused {
     font-weight: 500;
 }
 
+/* ------------------------------------ */
+/* ------Para sa Add Color Modal------- */
+/* ------------------------------------ */
+/* Target buttons (reuse feel ng func-btn pero mas clear active state) */
+.color-modal input[type="color"] {
+    width: 100%;
+    height: 50px;
+    border: none;
+    margin: 15px 0;
+    cursor: pointer;
+}
+
+.target-group {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.target-btn {
+    flex: 1;
+    padding: 10px;
+    border: none;
+    background: #eee;
+    cursor: pointer;
+    border-radius: 6px;
+}
+
+.target-btn.active {
+    background: #2563eb;
+    color: white;
+}
+
+.color-palette {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 8px;
+    margin: 15px 0;
+}
+
+.color-swatch {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: transform 0.1s ease;
+}
+
+.color-swatch:hover {
+    transform: scale(1.1);
+}
+
+.color-swatch.active {
+    border: 2px solid #2563eb;
+    box-shadow: 0 0 0 2px #93c5fd;
+}
+
 /* --- SCROLLBAR --- */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
