@@ -414,21 +414,50 @@ export const SupabaseService = {
     if (monitoringError) throw monitoringError;
     
     if (!monitoringEntries || monitoringEntries.length === 0) {
-      // Create monitoring entries sequentially to preserve order
-      const newEntries = [];
-      for (const encEntry of allEncodingEntries) {
-        const { data: newEntry, error: createError } = await this.client
-          .from('encoding_entries')
-          .insert([{
-            template_id: monitoringTemplateId,
-            department_id: departmentId
-          }])
-          .select()
-          .single();
+      // Create monitoring entries with matching created_at timestamps to preserve order
+      const entriesToInsert = allEncodingEntries.map(encEntry => ({
+        template_id: monitoringTemplateId,
+        department_id: departmentId,
+        status: 'draft',
+        created_at: encEntry.created_at
+      }));
+
+      const { data: newEntries, error: createError } = await this.client
+        .from('encoding_entries')
+        .insert(entriesToInsert)
+        .select();
+      
+      if (createError) throw createError;
+      
+      // Copy values from encoding entries to newly created monitoring entries
+      const valuesToInsert = [];
+      for (let i = 0; i < newEntries.length; i++) {
+        const monitoringEntryId = newEntries[i].id;
+        const encEntryId = allEncodingEntries[i].id;
+        const encValue = valueMap[encEntryId];
         
-        if (createError) throw createError;
-        newEntries.push(newEntry);
+        if (!encValue) continue; // Skip if no value for this column
+        
+        const valueData = {};
+        if (encValue.value !== null) valueData.value = encValue.value;
+        if (encValue.value_number !== null) valueData.value_number = encValue.value_number;
+        
+        valuesToInsert.push({
+          entry_id: monitoringEntryId,
+          column_id: columnId,
+          ...valueData
+        });
       }
+      
+      if (valuesToInsert.length > 0) {
+        const { error: insertError } = await this.client
+          .from('encoding_entry_values')
+          .insert(valuesToInsert);
+        
+        if (insertError) throw insertError;
+      }
+      
+      return valuesToInsert.length;
     } else {
       // Monitoring entries already exist, add values by position
       const valuesToInsert = [];

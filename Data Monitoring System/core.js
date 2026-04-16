@@ -993,8 +993,14 @@ export const AppCore = {
 
         const isMonitoring = this.state.currentTemplate.module === 'monitoring';
         const loadingOverlay = document.getElementById('loadingOverlay');
+        const addColumnBtn = document.getElementById('addColumnBtn');
 
         try {
+            // Disable button to prevent double-click
+            if (addColumnBtn) {
+                addColumnBtn.disabled = true;
+                addColumnBtn.innerText = 'Adding...';
+            }
             // Refresh template state first to ensure we have latest columns
             const cacheKey = `template-${this.state.currentTemplate.id}`;
             delete this.state.cache[cacheKey];
@@ -1085,9 +1091,13 @@ export const AppCore = {
             if (loadingOverlay) {
                 loadingOverlay.style.display = 'none';
             }
+            // Always re-enable button
+            if (addColumnBtn) {
+                addColumnBtn.disabled = false;
+                addColumnBtn.innerText = 'Add';
+            }
         }
     },
-
     deleteColumn: async function (columnId, columnName) {
         if (!confirm(`Delete column "${columnName}"? This affects all records.`)) return;
 
@@ -1097,6 +1107,12 @@ export const AppCore = {
                 this.state.currentTemplate.id,
                 columnId
             );
+
+            // Also delete from encoding_columns table (only for encoding templates)
+            // For monitoring templates, keep the column for reuse in other templates
+            if (this.state.currentTemplate.module !== 'monitoring') {
+                await SupabaseService.deleteColumn(columnId);
+            }
 
             // Refresh
             this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
@@ -1495,7 +1511,6 @@ export const AppCore = {
         const s = String(raw ?? '').trim();
         if (!s) return '';
 
-
         if (colType === 'number') {
             // Strip commas from numbers like "1,440"
             const cleaned = s.replace(/,/g, '');
@@ -1519,17 +1534,20 @@ export const AppCore = {
 
         // Read the manual column mapping from UI FIRST
         const mappingSelects = document.querySelectorAll('.col-mapping-select');
-        const mapping = {}; // dbColName -> excelColName
+        const mapping = {}; // dbColName -> excelColName (null = skipped)
         mappingSelects.forEach(sel => {
             const dbCol  = sel.dataset.dbCol;
             const excelCol = sel.value;
-            if (dbCol && excelCol) mapping[dbCol] = excelCol;
+            // Include all columns in mapping, even skipped ones (empty string = skipped)
+            if (dbCol) {
+                mapping[dbCol] = excelCol || null;
+            }
         });
 
         console.log('Column mapping:', mapping);
 
         const columns = this.state.currentTemplate.columns || [];
-        
+
         // Get list of mapped columns (those that are NOT skipped)
         const mappedExcelCols = [];
         columns.forEach(col => {
@@ -1538,7 +1556,7 @@ export const AppCore = {
                 mappedExcelCols.push(excelColName);
             }
         });
-        
+
         console.log(`Filtering by ${mappedExcelCols.length} mapped columns: ${mappedExcelCols.join(', ')}`);
 
         // Create a normalized mapping of Excel column names to row keys
@@ -1598,19 +1616,50 @@ export const AppCore = {
         if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.innerText = 'Importing...'; }
 
         try {
-            
-            // STEP 1: Batch create entries for all rows with any data
-            console.log(`Creating ${rowsWithData.length} entries...`);
-            const entries = await SupabaseService.createEntries(
-                this.state.currentTemplate.id,
-                this.state.departmentId,
-                rowsWithData.length
-            );
-            console.log(`Created ${entries.length} entries`);
+            // Check if there are existing entries to determine if this is a re-import
+            const existingEntries = await SupabaseService.getEntries(this.state.currentTemplate.id);
+            const isReimport = existingEntries.length > 0;
 
-            // STEP 2: Build ALL values for ALL entries in memory first
+            let entries;
+            let allValues = [];
+
+            if (isReimport) {
+                // RE-IMPORT: Update existing entries instead of deleting them
+                // This allows importing columns separately without losing data
+                console.log(`Re-import mode: Updating ${existingEntries.length} existing entries...`);
+                console.log(`Spreadsheet has ${rowsWithData.length} rows`);
+                
+                // If spreadsheet has more rows than existing entries, create additional entries
+                if (rowsWithData.length > existingEntries.length) {
+                    const additionalCount = rowsWithData.length - existingEntries.length;
+                    console.log(`Creating ${additionalCount} additional entries...`);
+                    const newEntries = await SupabaseService.createEntries(
+                        this.state.currentTemplate.id,
+                        this.state.departmentId,
+                        additionalCount
+                    );
+                    entries = [...existingEntries, ...newEntries];
+                } else if (rowsWithData.length < existingEntries.length) {
+                    // If spreadsheet has fewer rows, only use the first N entries
+                    console.log(`Spreadsheet has fewer rows, using first ${rowsWithData.length} entries`);
+                    entries = existingEntries.slice(0, rowsWithData.length);
+                } else {
+                    entries = existingEntries;
+                }
+            } else {
+                // NEW IMPORT: Create new entries
+                console.log(`Creating ${rowsWithData.length} new entries...`);
+                entries = await SupabaseService.createEntries(
+                    this.state.currentTemplate.id,
+                    this.state.departmentId,
+                    rowsWithData.length
+                );
+            }
+
+            console.log(`Total entries: ${entries.length}`);
+
+            // Build ALL values for ALL entries in memory first
             console.log(`Preparing values for all rows...`);
-            const allValues = [];
             
             rowsWithData.forEach((row, idx) => {
                 const entry = entries[idx];
@@ -1620,7 +1669,7 @@ export const AppCore = {
                     const colDef = col.encoding_columns;
                     const excelColName = mapping[colDef.column_name];
                     
-                    if (!excelColName || excelColName === '(skip)') return;
+                    if (!excelColName || excelColName === '(skip)' || excelColName === '') return;
                     
                     // Use normalized column mapping to get the correct row key
                     const rowKey = colNameMap[excelColName];
@@ -1648,8 +1697,8 @@ export const AppCore = {
                 }
             });
 
-            // STEP 3: Insert ALL values in one batch call
-            console.log(`Inserting ${allValues.length} column values in batch...`);
+            // STEP 3: Insert/Update ALL values in one batch call
+            console.log(`Upserting ${allValues.length} column values in batch...`);
             if (allValues.length > 0) {
                 const { error: valuesError } = await SupabaseService.client
                     .from('encoding_entry_values')
