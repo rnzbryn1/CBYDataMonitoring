@@ -979,7 +979,6 @@ export const AppCore = {
                 this.showToast('Failed to load encoding columns: ' + error.message, 'error');
             }
         } else {
-            // Show encoding form (create new column)
             encodingForm.style.display = 'block';
             monitoringForm.style.display = 'none';
             document.getElementById('newColumnName').value = '';
@@ -993,8 +992,14 @@ export const AppCore = {
         if (!this.state.currentTemplate) return this.showToast('No template selected.', 'error');
 
         const isMonitoring = this.state.currentTemplate.module === 'monitoring';
+        const loadingOverlay = document.getElementById('loadingOverlay');
 
         try {
+            // Refresh template state first to ensure we have latest columns
+            const cacheKey = `template-${this.state.currentTemplate.id}`;
+            delete this.state.cache[cacheKey];
+            this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
+
             let columnId;
 
             if (isMonitoring) {
@@ -1031,42 +1036,37 @@ export const AppCore = {
                 columnId
             );
 
+            // Refresh template again to get new column
+            delete this.state.cache[cacheKey];
+            this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
+
             // If monitoring template, copy data from encoding entries
             if (isMonitoring) {
                 // Show loading overlay
-                const loadingOverlay = document.getElementById('loadingOverlay');
                 if (loadingOverlay) {
                     loadingOverlay.style.display = 'flex';
                 }
 
-                try {
-                    const copiedCount = await SupabaseService.copyColumnDataToMonitoring(
-                        this.state.currentTemplate.id,
-                        columnId,
-                        this.state.departmentId
-                    );
-                    
-                    // Clear cache to force refresh
-                    const cacheKey = `template-${this.state.currentTemplate.id}`;
-                    delete this.state.cache[cacheKey];
-                    
-                    // Force reload entries after copy
-                    await this.loadEntries(this.state.currentTemplate.id);
-                    
-                    this.showToast(`Column added! ${copiedCount} entries copied from encoding.`);
-                } finally {
-                    // Hide loading overlay
-                    if (loadingOverlay) {
-                        loadingOverlay.style.display = 'none';
-                    }
-                }
+                const copiedCount = await SupabaseService.copyColumnDataToMonitoring(
+                    this.state.currentTemplate.id,
+                    columnId,
+                    this.state.departmentId
+                );
+                
+                // Clear cache again to force refresh after copy
+                delete this.state.cache[cacheKey];
+                
+                // Force reload entries after copy
+                await this.loadEntries(this.state.currentTemplate.id);
+                
+                this.showToast(`Column added! ${copiedCount} entries copied from encoding.`);
             } else {
+                // For encoding templates, just reload entries
+                await this.loadEntries(this.state.currentTemplate.id);
                 this.showToast('Column added!');
             }
 
-            // Refresh
-            this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
-            this.state.localEntries = await SupabaseService.getEntries(this.state.currentTemplate.id);
+            // Render with updated state
             this.renderAll();
             
             // Clear form
@@ -1080,6 +1080,11 @@ export const AppCore = {
             window.closeColumnModal();
         } catch (error) {
             this.showToast('Failed to add column: ' + error.message, 'error');
+        } finally {
+            // Always hide loading overlay
+            if (loadingOverlay) {
+                loadingOverlay.style.display = 'none';
+            }
         }
     },
 

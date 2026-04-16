@@ -340,24 +340,83 @@ export const SupabaseService = {
    * @returns {Promise<number>} Number of entries updated
    */
   async copyColumnDataToMonitoring(monitoringTemplateId, columnId, departmentId) {
-    // Get encoding values for this column
-    const encodingValues = await this.getEncodingEntriesByColumn(departmentId, columnId);
+    // Get all encoding template IDs
+    const { data: encodingTemplates, error: templatesError } = await this.client
+      .from('encoding_templates')
+      .select('id')
+      .eq('module', 'encoding')
+      .eq('department_id', departmentId);
     
-    if (!encodingValues || encodingValues.length === 0) {
+    if (templatesError) throw templatesError;
+    
+    if (!encodingTemplates || encodingTemplates.length === 0) {
       return 0;
     }
     
-    // Get all monitoring entries
-    const { data: monitoringEntries, error: entriesError } = await this.client
+    const encodingTemplateIds = encodingTemplates.map(t => t.id);
+    
+    // Find which encoding template this column belongs to
+    const { data: templateColumn, error: templateError } = await this.client
+      .from('encoding_template_columns')
+      .select('template_id')
+      .eq('column_id', columnId)
+      .in('template_id', encodingTemplateIds)
+      .limit(1)
+      .single();
+    
+    if (templateError || !templateColumn) {
+      // If column not found in any template, return 0
+      return 0;
+    }
+    
+    const sourceTemplateId = templateColumn.template_id;
+    
+    // Get all encoding entries from the specific template where the column exists
+    // Order by created_at descending to match how encoding template displays entries
+    const { data: allEncodingEntries, error: entriesError } = await this.client
       .from('encoding_entries')
-      .select('id')
-      .eq('template_id', monitoringTemplateId);
+      .select('id, created_at')
+      .eq('template_id', sourceTemplateId)
+      .order('created_at', { ascending: false });
     
     if (entriesError) throw entriesError;
     
+    if (!allEncodingEntries || allEncodingEntries.length === 0) {
+      return 0;
+    }
+    
+    // Get values for the specific column from the specific template
+    const encodingEntryIds = allEncodingEntries.map(e => e.id);
+    const { data: values, error: valuesError } = await this.client
+      .from('encoding_entry_values')
+      .select('entry_id, value, value_number')
+      .eq('column_id', columnId)
+      .in('entry_id', encodingEntryIds);
+    
+    if (valuesError) throw valuesError;
+    
+    // Create a map of entry_id to value for easy lookup
+    const valueMap = {};
+    (values || []).forEach(v => {
+      valueMap[v.entry_id] = {
+        value: v.value,
+        value_number: v.value_number
+      };
+    });
+    
+    // Get all monitoring entries ordered by created_at descending to match encoding order
+    const { data: monitoringEntries, error: monitoringError } = await this.client
+      .from('encoding_entries')
+      .select('id, created_at')
+      .eq('template_id', monitoringTemplateId)
+      .order('created_at', { ascending: false });
+    
+    if (monitoringError) throw monitoringError;
+    
     if (!monitoringEntries || monitoringEntries.length === 0) {
-      // Create monitoring entries to match encoding entries
-      for (const encValue of encodingValues) {
+      // Create monitoring entries sequentially to preserve order
+      const newEntries = [];
+      for (const encEntry of allEncodingEntries) {
         const { data: newEntry, error: createError } = await this.client
           .from('encoding_entries')
           .insert([{
@@ -368,46 +427,41 @@ export const SupabaseService = {
           .single();
         
         if (createError) throw createError;
+        newEntries.push(newEntry);
+      }
+    } else {
+      // Monitoring entries already exist, add values by position
+      const valuesToInsert = [];
+      const maxEntries = Math.min(monitoringEntries.length, allEncodingEntries.length);
+      
+      for (let i = 0; i < maxEntries; i++) {
+        const monitoringEntryId = monitoringEntries[i].id;
+        const encEntryId = allEncodingEntries[i].id;
+        const encValue = valueMap[encEntryId];
         
-        // Copy the value to the new entry
+        if (!encValue) continue; // Skip if no value for this column
+        
         const valueData = {};
         if (encValue.value !== null) valueData.value = encValue.value;
         if (encValue.value_number !== null) valueData.value_number = encValue.value_number;
         
-        await this.client
-          .from('encoding_entry_values')
-          .insert([{
-            entry_id: newEntry.id,
-            column_id: columnId,
-            ...valueData
-          }]);
-      }
-      
-      return encodingValues.length;
-    }
-    
-    // Copy values to existing monitoring entries (matching by index)
-    let updatedCount = 0;
-    for (let i = 0; i < Math.min(monitoringEntries.length, encodingValues.length); i++) {
-      const monitoringEntryId = monitoringEntries[i].id;
-      const encValue = encodingValues[i];
-      
-      const valueData = {};
-      if (encValue.value !== null) valueData.value = encValue.value;
-      if (encValue.value_number !== null) valueData.value_number = encValue.value_number;
-      
-      const { error: insertError } = await this.client
-        .from('encoding_entry_values')
-        .insert([{
+        valuesToInsert.push({
           entry_id: monitoringEntryId,
           column_id: columnId,
           ...valueData
-        }]);
+        });
+      }
       
-      if (!insertError) updatedCount++;
+      if (valuesToInsert.length > 0) {
+        const { error: insertError } = await this.client
+          .from('encoding_entry_values')
+          .insert(valuesToInsert);
+        
+        if (insertError) throw insertError;
+      }
+      
+      return valuesToInsert.length;
     }
-    
-    return updatedCount;
   },
 
   // =====================================================
@@ -445,6 +499,30 @@ export const SupabaseService = {
    * @returns {Promise<void>}
    */
   async removeColumnFromTemplate(templateId, columnId) {
+    // First, get all entry IDs for this template
+    const { data: entries, error: entriesError } = await this.client
+      .from('encoding_entries')
+      .select('id')
+      .eq('template_id', templateId);
+    
+    if (entriesError) {
+      console.warn('Failed to fetch entries:', entriesError);
+    } else if (entries && entries.length > 0) {
+      // Delete all values for this column in those entries
+      const entryIds = entries.map(e => e.id);
+      const { error: valuesError } = await this.client
+        .from('encoding_entry_values')
+        .delete()
+        .in('entry_id', entryIds)
+        .eq('column_id', columnId);
+      
+      if (valuesError) {
+        console.warn('Failed to delete column values:', valuesError);
+        // Continue anyway to remove the column mapping
+      }
+    }
+    
+    // Then remove the column-template mapping
     const { error } = await this.client
       .from('encoding_template_columns')
       .delete()
