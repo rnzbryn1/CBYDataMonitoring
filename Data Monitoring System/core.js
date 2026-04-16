@@ -1536,15 +1536,46 @@ export const AppCore = {
         
         console.log(`Filtering by ${mappedExcelCols.length} mapped columns: ${mappedExcelCols.join(', ')}`);
 
+        // Create a normalized mapping of Excel column names to row keys
+        // This handles case differences and trailing whitespace
+        const rowKeys = Object.keys(rows[0] || {});
+        const colNameMap = {};
+        mappedExcelCols.forEach(excelCol => {
+            const normalizedExcelCol = excelCol.trim().toLowerCase();
+            const matchingKey = rowKeys.find(key => key.trim().toLowerCase() === normalizedExcelCol);
+            if (matchingKey) {
+                colNameMap[excelCol] = matchingKey;
+            }
+        });
+
+        console.log('Column name mapping (Excel -> Row key):', colNameMap);
+
         // FILTER BEFORE PROCESSING: Check if each row has ANY data in the MAPPED columns
         const rowsWithData = rows.filter((row, idx) => {
-            // Get values ONLY from mapped columns (trim whitespace)
-            const mappedValues = mappedExcelCols.map(colName => String(row[colName] || '').trim());
+            // Get values ONLY from mapped columns using normalized keys
+            const mappedValues = mappedExcelCols.map(colName => {
+                const rowKey = colNameMap[colName];
+                const val = rowKey ? row[rowKey] : undefined;
+                const strVal = String(val || '').trim();
+                return strVal;
+            });
+            
             // Keep row only if at least ONE mapped cell has actual data
-            const hasData = mappedValues.some(v => v && v !== '');
+            // Check for non-empty strings, non-zero numbers, etc.
+            const hasData = mappedValues.some(v => {
+                if (v === '' || v === null || v === undefined) return false;
+                if (typeof v === 'string' && v.trim() === '') return false;
+                if (typeof v === 'number' && v === 0) return false; // 0 might be valid, but treating as empty for now
+                return true;
+            });
+            
             if (!hasData) {
                 console.warn(`Row ${idx} skipped (all mapped columns empty):`, row);
+                console.warn(`  Mapped values:`, mappedValues);
+            } else {
+                console.log(`Row ${idx} kept. Mapped values:`, mappedValues);
             }
+            
             return hasData;
         });
 
@@ -1586,7 +1617,10 @@ export const AppCore = {
                     
                     if (!excelColName || excelColName === '(skip)') return;
                     
-                    const rawVal = row[excelColName];
+                    // Use normalized column mapping to get the correct row key
+                    const rowKey = colNameMap[excelColName];
+                    const rawVal = rowKey ? row[rowKey] : undefined;
+                    
                     if (rawVal !== undefined && rawVal !== null && rawVal !== '') {
                         const convertedVal = this.convertValue(String(rawVal).trim(), colDef.column_type);
                         values[colDef.id] = convertedVal;

@@ -121,6 +121,14 @@ export const SupabaseService = {
    * @returns {Promise<void>}
    */
   async deleteTemplate(templateId) {
+    // Delete monitoring computed metrics that reference this template as source
+    const { error: metricsError } = await this.client
+      .from('monitoring_computed_metrics')
+      .delete()
+      .eq('source_template_id', templateId);
+    
+    if (metricsError) throw metricsError;
+
     // Delete entries first (cascade delete their values)
     const { error: entriesError } = await this.client
       .from('encoding_entries')
@@ -173,9 +181,28 @@ export const SupabaseService = {
    * @param {string} columnType - 'text', 'number', 'date', 'decimal', 'boolean', 'select'
    * @param {number} displayOrder
    * @param {boolean} isRequired
-   * @returns {Promise<Object>} New column
+   * @returns {Promise<Object>} New or existing column
    */
   async createColumn(departmentId, columnName, columnType = 'text', displayOrder = null, isRequired = false) {
+    // Check if column with same name already exists for this department
+    const { data: existingColumn, error: checkError } = await this.client
+      .from('encoding_columns')
+      .select('*')
+      .eq('department_id', departmentId)
+      .eq('column_name', columnName)
+      .single();
+    
+    if (checkError && checkError.code !== 'PGRST116') {
+      // PGRST116 means "not found", which is expected
+      throw checkError;
+    }
+    
+    // If column exists, return it
+    if (existingColumn) {
+      return existingColumn;
+    }
+    
+    // Otherwise create new column
     const { data, error } = await this.client
       .from('encoding_columns')
       .insert([{
