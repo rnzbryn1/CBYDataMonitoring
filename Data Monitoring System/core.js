@@ -155,7 +155,12 @@ export const AppCore = {
 
     ensureContextMenu: function () {
         this.injectContextMenuStyles();
-        if (document.getElementById('contextMenu')) return;
+        
+        // Remove existing menu if present to force recreation
+        const existingMenu = document.getElementById('contextMenu');
+        if (existingMenu) {
+            existingMenu.remove();
+        }
 
         const menu = document.createElement('div');
         menu.id = 'contextMenu';
@@ -182,8 +187,24 @@ export const AppCore = {
         computeColBtn.type = 'button';
         computeColBtn.textContent = 'Compute Specific Column';
 
+        const colorBtn = document.createElement('button');
+        colorBtn.id = 'ctxColor';
+        colorBtn.type = 'button';
+        colorBtn.textContent = 'Cell Color';
+
+        const deleteCompBtn = document.createElement('button');
+        deleteCompBtn.id = 'ctxDeleteComputation';
+        deleteCompBtn.type = 'button';
+        deleteCompBtn.textContent = 'Delete Column Computation';
+        deleteCompBtn.className = 'delete';
+        deleteCompBtn.addEventListener('click', () => {
+            this.deleteColumnComputation();
+        });
+
         menu.appendChild(computeColBtn);
         menu.appendChild(computeBtn);
+        menu.appendChild(colorBtn);
+        menu.appendChild(deleteCompBtn);
         menu.appendChild(editBtn);
         menu.appendChild(deleteBtn);
         document.body.appendChild(menu);
@@ -242,15 +263,13 @@ export const AppCore = {
 
             tbody td.cell-focused,
             tbody td[contenteditable="true"]:focus {
-                background: #eff6ff;
-                box-shadow: inset 0 0 0 1.5px #2563eb;
-                border-radius: 4px;
+                outline: 2px solid #2563eb;
+                outline-offset: -2px;
             }
 
             tbody td.cell-selected {
-                background: #dbeafe !important;
-                box-shadow: inset 0 0 0 1px #3b82f6;
-                border-radius: 2px;
+                outline: 2px solid #3b82f6;
+                outline-offset: -2px;
                 user-select: none;
             }
 
@@ -265,8 +284,8 @@ export const AppCore = {
                 }
             }
 
-            tr.row-selected td {
-                background: #e0f2fe !important;
+            tr.row-selected {
+                box-shadow: 0 0 0 2px #3b82f6;
             }
         `;
 
@@ -321,6 +340,9 @@ export const AppCore = {
             this.state.currentTemplateId = templateId;
             this.updateActiveUI(templateId);
             this.renderAll();
+
+            // Load saved column computations
+            await this.loadColumnComputations();
         } catch (error) {
             this.showToast('Switch failed: ' + error.message, 'error');
         } finally {
@@ -433,9 +455,11 @@ export const AppCore = {
         body.innerHTML = entries.map(entry => {
             // For each entry, we need to get the values from valueDetails
             const valueMap = {};
+            const colorMap = {};
             if (entry.valueDetails) {
                 entry.valueDetails.forEach(v => {
                     valueMap[v.column_id] = v.value || v.value_number || '';
+                    colorMap[v.column_id] = v.cell_color || null;
                 });
             }
             
@@ -447,10 +471,13 @@ export const AppCore = {
                     ${columns.map(col => {
                         const colDef = col.encoding_columns;
                         const val = valueMap[colDef.id] || '';
+                        const cellColor = colorMap[colDef.id] || '';
+                        const styleAttr = cellColor ? `style="background-color: ${cellColor};"` : '';
                         return `
                             <td contenteditable="true" 
                                 data-col-id="${colDef.id}" 
-                                data-col-name="${colDef.column_name}">${val}</td>
+                                data-col-name="${colDef.column_name}"
+                                ${styleAttr}>${val}</td>
                         `;
                     }).join('')}
                 </tr>
@@ -655,10 +682,19 @@ export const AppCore = {
         const menu = document.getElementById('contextMenu');
         
         body.addEventListener('contextmenu', (e) => {
-            const td = e.target.closest('td[data-col-name]');
+            const td = e.target.closest('td');
             if (!td) return;
 
             e.preventDefault();
+
+            // Show/hide delete column computation button based on active computation and column alignment
+            const deleteCompBtn = document.getElementById('ctxDeleteComputation');
+            if (deleteCompBtn) {
+                const clickedColName = td.dataset.colName;
+                const isComputedColumn = this.state.activeColumnCompute && 
+                                        clickedColName === this.state.activeColumnCompute.column;
+                deleteCompBtn.style.display = isComputedColumn ? 'flex' : 'none';
+            }
 
             // this part is for getting cell or column especially for computation
             this.state.currentCell = td;
@@ -672,7 +708,6 @@ export const AppCore = {
 
             // HIGHLIGHT buong row
             row.classList.add('row-selected');
-
             this.state.currentRowId = row.dataset.entryId;
 
             // Show menu
@@ -2234,6 +2269,12 @@ export const AppCore = {
                     <option value="count">COUNT</option>
                 </select>
 
+                <label>Display Position</label>
+                <select id="colPos">
+                    <option value="bottom">Bottom</option>
+                    <option value="top">Top</option>
+                </select>
+
                 <div class="compute-actions">
                     <button id="runColCompute">Apply</button>
                     <button id="closeColCompute">Cancel</button>
@@ -2247,18 +2288,37 @@ export const AppCore = {
 
         modal.querySelector('#runColCompute').onclick = () => {
             const func = modal.querySelector('#colFunc').value;
+            const pos = modal.querySelector('#colPos').value;
             const col = this.state.currentColName;
 
-            this.computeColumnLive(col, func);
+            this.computeColumnLive(col, func, pos);
             modal.remove();
         };
     },
 
-    computeColumnLive: function (columnName, funcType) {
+    computeColumnLive: async function (columnName, funcType, position) {
         this.state.activeColumnCompute = {
             column: columnName,
-            func: funcType
+            func: funcType,
+            position: position
         };
+
+        // Save to Supabase
+        try {
+            const columns = this.state.currentTemplate.columns || [];
+            const colDef = columns.find(c => c.encoding_columns.column_name === columnName);
+            
+            if (colDef) {
+                await SupabaseService.saveColumnComputation(
+                    this.state.currentTemplate.id,
+                    colDef.encoding_columns.id,
+                    funcType,
+                    position
+                );
+            }
+        } catch (err) {
+            console.error('Failed to save column computation:', err);
+        }
 
         this.updateColumnComputation();
     },
@@ -2294,16 +2354,16 @@ export const AppCore = {
                 break;
         }
 
-        result = this.formatNumber(result); // 
-        this.renderColumnFooter(column, func, result);
+        result = this.formatNumber(result); 
+        this.renderColumnFooter(column, func, result, config.position);
     },
 
-    renderColumnFooter: function (columnName, func, result) {
-        const tbody = document.getElementById('tableData');
-        if (!tbody) return;
+    renderColumnFooter: function (columnName, func, result, position) {
+        const table = document.getElementById('tableData');
+        if (!table) return;
 
         // remove old footer
-        const old = tbody.querySelector('.column-footer');
+        const old = table.querySelector('.column-footer');
         if (old) old.remove();
 
         const cols = this.state.currentTemplate.columns;
@@ -2317,7 +2377,7 @@ export const AppCore = {
         tr.className = 'column-footer';
 
         // kung may index column (#), dagdag offset
-        const firstRow = tbody.querySelector('tr');
+        const firstRow = table.querySelector('tr');
         const actualCells = firstRow ? firstRow.children.length : cols.length;
 
         const offset = actualCells - cols.length;
@@ -2336,7 +2396,112 @@ export const AppCore = {
 
             tr.appendChild(td);
         }
-        tbody.appendChild(tr);
+
+        // Insert at top (under header) or bottom based on position
+        if (position === 'top') {
+            const thead = table.querySelector('thead');
+            if (thead) thead.appendChild(tr);
+            else table.insertBefore(tr, table.firstChild);
+        } else {
+            const tbody = table.querySelector('tbody');
+            if (tbody) tbody.appendChild(tr);
+            else table.appendChild(tr);
+        }
+    },
+
+    loadColumnComputations: async function () {
+        if (!this.state.currentTemplate || !this.state.currentTemplate.id) return;
+
+        try {
+            const computations = await SupabaseService.getColumnComputations(this.state.currentTemplate.id);
+            const columns = this.state.currentTemplate.columns || [];
+
+            computations.forEach(comp => {
+                const colDef = columns.find(c => c.encoding_columns.id === comp.column_id);
+                if (colDef) {
+                    const columnName = colDef.encoding_columns.column_name;
+                    this.state.activeColumnCompute = {
+                        column: columnName,
+                        func: comp.function_type,
+                        position: comp.display_position || 'bottom'
+                    };
+                    this.updateColumnComputation();
+                }
+            });
+        } catch (err) {
+            console.error('Failed to load column computations:', err);
+        }
+    },
+
+    toggleColumnComputationPosition: async function () {
+        if (!this.state.activeColumnCompute) return;
+
+        const config = this.state.activeColumnCompute;
+        const newPosition = config.position === 'top' ? 'bottom' : 'top';
+
+        // Update state
+        config.position = newPosition;
+
+        // Save to Supabase
+        try {
+            const columns = this.state.currentTemplate.columns || [];
+            const colDef = columns.find(c => c.encoding_columns.column_name === config.column);
+            
+            if (colDef) {
+                await SupabaseService.saveColumnComputation(
+                    this.state.currentTemplate.id,
+                    colDef.encoding_columns.id,
+                    config.func,
+                    newPosition
+                );
+            }
+        } catch (err) {
+            console.error('Failed to update column computation position:', err);
+            this.showToast('Failed to update position', 'error');
+            return;
+        }
+
+        // Re-render footer in new position
+        this.updateColumnComputation();
+        this.showToast(`Position changed to ${newPosition}`);
+    },
+
+    deleteColumnComputation: async function () {
+        if (!this.state.activeColumnCompute) {
+            this.showToast('No active column computation to delete', 'info');
+            return;
+        }
+
+        const config = this.state.activeColumnCompute;
+
+        // Delete from Supabase
+        try {
+            const columns = this.state.currentTemplate.columns || [];
+            const colDef = columns.find(c => c.encoding_columns.column_name === config.column);
+            
+            if (colDef) {
+                await SupabaseService.deleteColumnComputation(
+                    this.state.currentTemplate.id,
+                    colDef.encoding_columns.id
+                );
+            }
+        } catch (err) {
+            console.error('Failed to delete column computation:', err);
+            this.showToast('Failed to delete computation', 'error');
+            return;
+        }
+
+        // Clear state
+        this.state.activeColumnCompute = null;
+
+        // Remove footer from UI (check both thead and tbody)
+        const table = document.getElementById('tableData');
+        if (table) {
+            const footer = table.querySelector('.column-footer');
+            if (footer) footer.remove();
+        }
+
+        this.showToast('Column computation deleted');
     },
 
     //para sa 2 decimal places to beh
@@ -2384,7 +2549,7 @@ export const AppCore = {
         document.getElementById('colorModal').style.display = 'none';
     },
 
-    applyCellColor: function () {
+    applyCellColor: async function () {
         const color = this.state.selectedColor || "#ff0000";
         const target = document.querySelector('.target-btn.active')?.dataset.target;
 
@@ -2394,13 +2559,25 @@ export const AppCore = {
         const row = td.closest('tr');
         const table = document.getElementById('tableData');
 
+        const cellColors = {};
+
         if (target === 'single') {
             td.style.backgroundColor = color;
+            const info = this.getTableCellInfo(td);
+            if (info) {
+                cellColors[`${info.entryId}_${info.colId}`] = color;
+            }
         }
 
         if (target === 'row') {
             row.querySelectorAll('td[data-col-id]')
-                .forEach(cell => cell.style.backgroundColor = color);
+                .forEach(cell => {
+                    cell.style.backgroundColor = color;
+                    const info = this.getTableCellInfo(cell);
+                    if (info) {
+                        cellColors[`${info.entryId}_${info.colId}`] = color;
+                    }
+                });
         }
 
         if (target === 'column') {
@@ -2410,8 +2587,27 @@ export const AppCore = {
                 const cells = r.querySelectorAll('td[data-col-id]');
                 if (cells[colIndex - 1]) { // -1 dahil may checkbox column
                     cells[colIndex - 1].style.backgroundColor = color;
+                    const info = this.getTableCellInfo(cells[colIndex - 1]);
+                    if (info) {
+                        cellColors[`${info.entryId}_${info.colId}`] = color;
+                    }
                 }
             });
+        }
+
+        // Save colors to database
+        if (Object.keys(cellColors).length > 0) {
+            try {
+                await SupabaseService.updateCellColors(cellColors);
+                
+                // Clear cache to force reload with new colors
+                const cacheKey = `template-${this.state.currentTemplate.id}`;
+                delete this.state.cache[cacheKey];
+                
+                this.showToast('Cell colors saved');
+            } catch (err) {
+                this.showToast('Failed to save colors: ' + err.message, 'error');
+            }
         }
 
         this.closeColorModal();

@@ -604,6 +604,7 @@ export const SupabaseService = {
           column_id,
           value,
           value_number,
+          cell_color,
           encoding_columns (
             id,
             column_name,
@@ -739,16 +740,26 @@ export const SupabaseService = {
    * Update entry values
    * @param {string} entryId
    * @param {Object} values - { columnId: value, ... }
+   * @param {Object} cellColors - { columnId: color, ... } (optional)
    * @returns {Promise<void>}
    */
-  async updateEntryValues(entryId, values) {
-    const updates = Object.entries(values).map(([columnId, value]) => ({
-      entry_id: entryId,
-      column_id: columnId,
-      value: typeof value === 'number' ? null : String(value),
-      value_number: typeof value === 'number' ? value : null,
-      updated_at: new Date().toISOString()
-    }));
+  async updateEntryValues(entryId, values, cellColors = null) {
+    const updates = Object.entries(values).map(([columnId, value]) => {
+      const update = {
+        entry_id: entryId,
+        column_id: columnId,
+        value: typeof value === 'number' ? null : String(value),
+        value_number: typeof value === 'number' ? value : null,
+        updated_at: new Date().toISOString()
+      };
+
+      // Include cell color if provided for this column
+      if (cellColors && cellColors[columnId]) {
+        update.cell_color = cellColors[columnId];
+      }
+
+      return update;
+    });
 
     // Batch all upserts into ONE call instead of looping through each one
     if (updates.length > 0) {
@@ -758,6 +769,82 @@ export const SupabaseService = {
       
       if (error) throw error;
     }
+  },
+
+  /**
+   * Update cell color for specific cells
+   * @param {Object} cellColors - { entryId_columnId: color, ... }
+   * @returns {Promise<void>}
+   */
+  async updateCellColors(cellColors) {
+    const updates = Object.entries(cellColors).map(([key, color]) => {
+      const [entryId, columnId] = key.split('_');
+      return {
+        entry_id: entryId,
+        column_id: columnId,
+        cell_color: color,
+        updated_at: new Date().toISOString()
+      };
+    });
+
+    if (updates.length > 0) {
+      const { error } = await this.client
+        .from('encoding_entry_values')
+        .upsert(updates, { onConflict: 'entry_id,column_id' });
+      
+      if (error) throw error;
+    }
+  },
+
+  /**
+   * Save column computation setting
+   * @param {string} templateId
+   * @param {string} columnId
+   * @param {string} functionType - 'sum', 'average', 'max', 'min', 'count'
+   * @param {string} displayPosition - 'top', 'bottom'
+   */
+  async saveColumnComputation(templateId, columnId, functionType, displayPosition = 'bottom') {
+    const { error } = await this.client
+      .from('column_computation')
+      .upsert({
+        template_id: templateId,
+        column_id: columnId,
+        function_type: functionType,
+        display_position: displayPosition,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'template_id,column_id' });
+    
+    if (error) throw error;
+  },
+
+  /**
+   * Get column computations for a template
+   * @param {string} templateId
+   * @returns {Promise<Array>} Array of column computation settings
+   */
+  async getColumnComputations(templateId) {
+    const { data, error } = await this.client
+      .from('column_computation')
+      .select('*')
+      .eq('template_id', templateId);
+    
+    if (error) throw error;
+    return data;
+  },
+
+  /**
+   * Delete column computation for a template
+   * @param {string} templateId
+   * @param {string} columnId
+   */
+  async deleteColumnComputation(templateId, columnId) {
+    const { error } = await this.client
+      .from('column_computation')
+      .delete()
+      .eq('template_id', templateId)
+      .eq('column_id', columnId);
+    
+    if (error) throw error;
   },
 
   /**

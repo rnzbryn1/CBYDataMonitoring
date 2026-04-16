@@ -297,13 +297,13 @@ h3 {
 table {
     width: 100%;
     min-width: 100%;
-    table-layout: auto;
+    table-layout: fixed;
     border-collapse: collapse;
     font-size: 13px;
 }
 
-thead th,
-tbody td {
+thead th:not(:first-child),
+tbody td:not(:first-child) {
     min-width: 160px;
     padding: 14px 16px;
     white-space: normal;
@@ -336,10 +336,32 @@ tbody tr:last-child { border-bottom: none; }
 
 tbody tr:hover { background: #f8fafc; }
 
-tbody td {
+tbody td:not(:first-child) {
     padding: 11px 14px;
     color: #1e293b;
     vertical-align: middle;
+}
+
+/* --- CHECKBOX COLUMN --- */
+table th:first-child,
+table td:first-child {
+    width: 20px !important;
+    min-width: 20px !important;
+    max-width: 20px !important;
+    padding: 3px 1px !important;
+    text-align: center !important;
+}
+
+.rowCheckbox,
+#selectAll {
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+}
+
+/* Override thead th padding for first-child */
+thead th:first-child {
+    padding: 3px 1px !important;
 }
 
 /* No data row */
@@ -642,7 +664,7 @@ tbody td[colspan] {
 }
 
 tr.row-selected td {
-    background: #e0f2fe !important;
+    background: #e0f2fe;
 }
 
 /* -------------------- */
@@ -709,7 +731,6 @@ td.cell-selected {
 }
 
 td.cell-focused {
-    background: #dbeafe !important;
     outline: 2px solid #2563eb;
 }
 
