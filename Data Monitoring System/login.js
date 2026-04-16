@@ -1,8 +1,4 @@
-import { SUPABASE_CONFIG } from './config.js';
-
-// Access createClient from the CDN global variable
-const { createClient } = supabase;
-const supabaseClient = createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
+import { supabaseClient } from './supabase-service.js';
 
 const loginBtn = document.getElementById('loginBtn');
 const errorMsg = document.getElementById('errorMsg');

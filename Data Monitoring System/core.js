@@ -84,7 +84,7 @@ export const AppCore = {
 
         window.openModal         = ()          => document.getElementById('categoryModal').style.display = 'block';
         window.closeModal        = ()          => document.getElementById('categoryModal').style.display = 'none';
-        window.openColumnModal   = ()          => document.getElementById('columnModal').style.display = 'block';
+        window.openColumnModal   = async ()      => this.openColumnModal();
         window.closeColumnModal  = ()          => document.getElementById('columnModal').style.display = 'none';
 
         window.filterCategoryCards = () => this.filterCategoryCards();
@@ -942,30 +942,141 @@ export const AppCore = {
     // ============================================================
     // COLUMNS
     // ============================================================
+    openColumnModal: async function () {
+        if (!this.state.currentTemplate) {
+            return this.showToast('No template selected.', 'error');
+        }
+
+        const modal = document.getElementById('columnModal');
+        const encodingForm = document.getElementById('encodingColumnForm');
+        const monitoringForm = document.getElementById('monitoringColumnForm');
+        const columnSelect = document.getElementById('existingColumnSelect');
+
+        // Check if current template is monitoring type
+        const isMonitoring = this.state.currentTemplate.module === 'monitoring';
+
+        if (isMonitoring) {
+            // Show monitoring form (select existing column)
+            encodingForm.style.display = 'none';
+            monitoringForm.style.display = 'block';
+
+            // Populate dropdown with columns from encoding templates
+            try {
+                const encodingColumns = await SupabaseService.getEncodingTemplateColumns(this.state.departmentId);
+                
+                columnSelect.innerHTML = '<option value="">-- Select a column --</option>';
+                encodingColumns.forEach(col => {
+                    const option = document.createElement('option');
+                    option.value = col.id;
+                    option.textContent = `${col.column_name} (${col.column_type})`;
+                    columnSelect.appendChild(option);
+                });
+
+                if (encodingColumns.length === 0) {
+                    this.showToast('No columns found in encoding templates. Please create encoding templates first.', 'error');
+                }
+            } catch (error) {
+                this.showToast('Failed to load encoding columns: ' + error.message, 'error');
+            }
+        } else {
+            // Show encoding form (create new column)
+            encodingForm.style.display = 'block';
+            monitoringForm.style.display = 'none';
+            document.getElementById('newColumnName').value = '';
+            document.getElementById('newColumnType').value = 'text';
+        }
+
+        modal.style.display = 'block';
+    },
+
     addColumnToTemplate: async function () {
-        const name = document.getElementById('newColumnName').value.trim();
-        if (!name) return this.showToast('Column name is required.', 'error');
         if (!this.state.currentTemplate) return this.showToast('No template selected.', 'error');
 
+        const isMonitoring = this.state.currentTemplate.module === 'monitoring';
+
         try {
-            // Create reusable column
-            const column = await SupabaseService.createColumn(
-                this.state.departmentId,
-                name,
-                'text'
-            );
+            let columnId;
+
+            if (isMonitoring) {
+                // For monitoring templates: select existing column from encoding
+                columnId = document.getElementById('existingColumnSelect').value;
+                if (!columnId) return this.showToast('Please select a column from encoding templates.', 'error');
+
+                // Check if column already exists in current template
+                const existingColumn = this.state.currentTemplate.columns?.find(
+                    col => col.encoding_columns.id === columnId
+                );
+                if (existingColumn) {
+                    return this.showToast('This column is already added to the template.', 'error');
+                }
+            } else {
+                // For encoding templates: create new column
+                const name = document.getElementById('newColumnName').value.trim();
+                const columnType = document.getElementById('newColumnType').value;
+                
+                if (!name) return this.showToast('Column name is required.', 'error');
+
+                // Create reusable column
+                const column = await SupabaseService.createColumn(
+                    this.state.departmentId,
+                    name,
+                    columnType
+                );
+                columnId = column.id;
+            }
 
             // Add to current template
             await SupabaseService.addColumnToTemplate(
                 this.state.currentTemplate.id,
-                column.id
+                columnId
             );
+
+            // If monitoring template, copy data from encoding entries
+            if (isMonitoring) {
+                // Show loading overlay
+                const loadingOverlay = document.getElementById('loadingOverlay');
+                if (loadingOverlay) {
+                    loadingOverlay.style.display = 'flex';
+                }
+
+                try {
+                    const copiedCount = await SupabaseService.copyColumnDataToMonitoring(
+                        this.state.currentTemplate.id,
+                        columnId,
+                        this.state.departmentId
+                    );
+                    
+                    // Clear cache to force refresh
+                    const cacheKey = `template-${this.state.currentTemplate.id}`;
+                    delete this.state.cache[cacheKey];
+                    
+                    // Force reload entries after copy
+                    await this.loadEntries(this.state.currentTemplate.id);
+                    
+                    this.showToast(`Column added! ${copiedCount} entries copied from encoding.`);
+                } finally {
+                    // Hide loading overlay
+                    if (loadingOverlay) {
+                        loadingOverlay.style.display = 'none';
+                    }
+                }
+            } else {
+                this.showToast('Column added!');
+            }
 
             // Refresh
             this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
+            this.state.localEntries = await SupabaseService.getEntries(this.state.currentTemplate.id);
             this.renderAll();
-            this.showToast('Column added!');
-            document.getElementById('newColumnName').value = '';
+            
+            // Clear form
+            if (!isMonitoring) {
+                document.getElementById('newColumnName').value = '';
+                document.getElementById('newColumnType').value = 'text';
+            } else {
+                document.getElementById('existingColumnSelect').value = '';
+            }
+            
             window.closeColumnModal();
         } catch (error) {
             this.showToast('Failed to add column: ' + error.message, 'error');

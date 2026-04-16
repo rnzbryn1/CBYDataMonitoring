@@ -1,6 +1,4 @@
-import { SUPABASE_CONFIG } from './config.js';
-const { createClient } = supabase;
-const supabaseClient = createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
+import { supabaseClient } from './supabase-service.js';
 
 export const DB = {
     async getTemplates(moduleName) {

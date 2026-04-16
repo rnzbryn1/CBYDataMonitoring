@@ -1,7 +1,4 @@
-import { SUPABASE_CONFIG } from './config.js';
-
-const { createClient } = supabase;
-const supabaseClient = createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
+import { supabaseClient } from './supabase-service.js';
 
 // --- PROTECT THE PAGE ---
 async function checkUser() {
