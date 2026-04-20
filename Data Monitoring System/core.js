@@ -1303,22 +1303,123 @@ export const AppCore = {
 
         const columns = this.state.currentTemplate.columns || [];
 
-        // Build ordered data from new schema
-        const formatted = this.state.localEntries.map(entry => {
-            const row = {};
+        // ============================
+        // 1. HEADER
+        // ============================
+        const header = columns.map(col => col.encoding_columns.column_name);
+
+        // ============================
+        // 2. DATA + COLORS
+        // ============================
+        const data = [];
+        const colorMatrix = [];
+
+        this.state.localEntries.forEach(entry => {
+            const row = [];
+            const colorRow = [];
+
             columns.forEach(col => {
                 const colDef = col.encoding_columns;
-                const valueEntry = entry.valueDetails?.find(v => v.column_id === colDef.id);
-                row[colDef.column_name] = valueEntry?.value || valueEntry?.value_number || '';
+                const valObj = entry.valueDetails?.find(v => v.column_id === colDef.id);
+
+                const value = valObj?.value || valObj?.value_number || '';
+                const color = valObj?.cell_color || null;
+
+                row.push(value);
+                colorRow.push(color);
             });
-            return row;
+
+            data.push(row);
+            colorMatrix.push(colorRow);
         });
 
-        const ws = XLSX.utils.json_to_sheet(formatted);
+        // ============================
+        // 3. COMPUTE ROW (UNDER HEADER)
+        // ============================
+        const computeRow = new Array(header.length).fill('');
+
+        if (this.state.activeColumnCompute) {
+            const { column, func } = this.state.activeColumnCompute;
+
+            const colIndex = header.indexOf(column);
+
+            if (colIndex !== -1) {
+                const values = data.map(r => parseFloat(r[colIndex]) || 0);
+
+                let result = 0;
+
+                switch (func) {
+                    case 'sum':
+                        result = values.reduce((a,b)=>a+b,0);
+                        break;
+                    case 'average':
+                        result = values.length ? values.reduce((a,b)=>a+b,0)/values.length : 0;
+                        break;
+                    case 'max':
+                        result = Math.max(...values);
+                        break;
+                    case 'min':
+                        result = Math.min(...values);
+                        break;
+                    case 'count':
+                        result = values.length;
+                        break;
+                }
+
+                computeRow[colIndex] = `${func.toUpperCase()}: ${result}`;
+            }
+        }
+
+        // ============================
+        // 4. FINAL DATA (HEADER + COMPUTE + DATA)
+        // ============================
+        const finalData = [
+            header,
+            computeRow,
+            ...data
+        ];
+
+        // ============================
+        // 5. CREATE SHEET
+        // ============================
+        const ws = XLSX.utils.aoa_to_sheet(finalData);
+
+        // ============================
+        // 6. APPLY COLORS
+        // ============================
+        for (let r = 0; r < data.length; r++) {
+            for (let c = 0; c < columns.length; c++) {
+                const color = colorMatrix[r][c];
+                if (!color) continue;
+
+                const excelRow = r + 2; // header + compute row
+
+                const cellRef = XLSX.utils.encode_cell({ r: excelRow, c });
+
+                if (!ws[cellRef]) continue;
+
+                ws[cellRef].s = {
+                    fill: {
+                        fgColor: { rgb: color.replace('#','').toUpperCase() }
+                    }
+                };
+            }
+        }
+
+        // ============================
+        // 7. AUTO WIDTH
+        // ============================
+        ws['!cols'] = header.map(() => ({ wch: 20 }));
+
+        // ============================
+        // 8. EXPORT
+        // ============================
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, this.state.currentTemplate.name);
+
         XLSX.writeFile(wb, `${this.state.currentTemplate.name}.xlsx`);
-        this.showToast('Exported successfully!');
+
+        this.showToast('Exported with colors & column totals!');
     },
 
     // ============================================================
