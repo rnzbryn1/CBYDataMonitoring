@@ -103,7 +103,6 @@ export const AppCore = {
         window.previewSheet      = ()          => this.previewSheet();
         window.confirmImport     = ()          => this.confirmImport();
         window.deleteSelected    = ()          => this.deleteSelected();
-        window.deleteEmptyRows   = ()          => this.deleteEmptyRows();
         window.applyCellColor = () => this.applyCellColor();
         window.openColorModal = () => this.openColorModal();
         window.closeColorModal = () => this.closeColorModal();
@@ -2290,65 +2289,6 @@ export const AppCore = {
         this.showToast('Computed!');
     },
 
-    //-----------------------------------------------------------------------------------------
-    //------------Para lang to sa delete all empty rows------------------
-    //-----------------------------------------------------------------------------------------
-    deleteEmptyRows: async function () {
-        if (!this.state.currentTemplateId) {
-            return this.showToast('No template selected.', 'error');
-        }
-
-        const entries = this.state.localEntries || [];
-
-        // Hanapin lahat ng rows na totally empty
-        const emptyEntries = entries.filter(entry => {
-            // walang valueDetails = empty
-            if (!entry.valueDetails || entry.valueDetails.length === 0) {
-                return true;
-            }
-
-            // check if ALL values are empty
-            return entry.valueDetails.every(v => {
-                const val = v.value ?? v.value_number;
-                return val === null || val === undefined || String(val).trim() === '';
-            });
-        });
-
-        if (!emptyEntries.length) {
-            return this.showToast('No empty rows found.', 'info');
-        }
-
-        // DOUBLE CONFIRMATION (safe)
-        const confirm1 = confirm(`Found ${emptyEntries.length} empty rows.\n\nDelete them?`);
-        if (!confirm1) return;
-
-        const confirm2 = confirm('This action cannot be undone. Continue?');
-        if (!confirm2) return;
-
-        try {
-            const ids = emptyEntries.map(e => e.id);
-
-            // batch delete
-            const { error } = await SupabaseService.client
-                .from('encoding_entries')
-                .delete()
-                .in('id', ids);
-
-            if (error) throw error;
-
-            // refresh cache + UI
-            const cacheKey = `template-${this.state.currentTemplate.id}`;
-            delete this.state.cache[cacheKey];
-
-            this.state.localEntries = await SupabaseService.getEntries(this.state.currentTemplate.id);
-            this.renderTable(this.state.localEntries);
-
-            this.showToast(`${ids.length} empty rows deleted!`);
-        } catch (err) {
-            console.error(err);
-            this.showToast('Failed to delete empty rows: ' + err.message, 'error');
-        }
-    },
 
     //-----------------------------------------------------------------------------------------
     //------------Specific Column Computation------------------
