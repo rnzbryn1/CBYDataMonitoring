@@ -409,12 +409,70 @@ export const AppCore = {
         }).join('') + `<button onclick="saveData()" class="save-btn" id="mainSaveBtn">Save Record</button>`;
 
         const headers = document.getElementById('tableHeaders');
-        headers.innerHTML = `<tr>
-            <th><input type="checkbox" id="selectAll"></th>
-            ${columns.map(col => {
-                const colDef = col.encoding_columns;
-                return `
-                    <th data-col-id="${colDef.id}" data-col-name="${colDef.column_name}">
+
+        // Generate header rows preserving original column order
+        let headerHTML = '<tr><th><input type="checkbox" id="selectAll"></th>';
+        let secondRowHTML = '';
+        let needsSecondRow = false;
+
+        let currentGroup = null;
+        let groupStartIndex = -1;
+
+        for (let i = 0; i < columns.length; i++) {
+            const col = columns[i];
+            const colDef = col.encoding_columns;
+            const groupName = colDef.group_name || null;
+
+            if (groupName && groupName !== currentGroup) {
+                // Close previous group if exists
+                if (currentGroup && groupStartIndex !== -1) {
+                    const groupLength = i - groupStartIndex;
+                    headerHTML += `<th colspan="${groupLength}" class="group-header"><span class="group-name">${currentGroup}</span></th>`;
+                    for (let j = groupStartIndex; j < i; j++) {
+                        const groupCol = columns[j];
+                        const groupColDef = groupCol.encoding_columns;
+                        secondRowHTML += `
+                            <th data-col-id="${groupColDef.id}" data-col-name="${groupColDef.column_name}">
+                                <div class="th-inner">
+                                    <span class="th-text">${groupColDef.column_name}</span>
+                                    <button class="del-col-btn" title="Delete column"
+                                        onclick="deleteColumn('${groupColDef.id}', '${groupColDef.column_name}')">✕</button>
+                                </div>
+                            </th>
+                        `;
+                    }
+                }
+                // Start new group
+                currentGroup = groupName;
+                groupStartIndex = i;
+                needsSecondRow = true;
+            } else if (!groupName && currentGroup) {
+                // Close previous group when hitting ungrouped column
+                if (groupStartIndex !== -1) {
+                    const groupLength = i - groupStartIndex;
+                    headerHTML += `<th colspan="${groupLength}" class="group-header"><span class="group-name">${currentGroup}</span></th>`;
+                    for (let j = groupStartIndex; j < i; j++) {
+                        const groupCol = columns[j];
+                        const groupColDef = groupCol.encoding_columns;
+                        secondRowHTML += `
+                            <th data-col-id="${groupColDef.id}" data-col-name="${groupColDef.column_name}">
+                                <div class="th-inner">
+                                    <span class="th-text">${groupColDef.column_name}</span>
+                                    <button class="del-col-btn" title="Delete column"
+                                        onclick="deleteColumn('${groupColDef.id}', '${groupColDef.column_name}')">✕</button>
+                                </div>
+                            </th>
+                        `;
+                    }
+                }
+                currentGroup = null;
+                groupStartIndex = -1;
+            }
+
+            // For ungrouped columns, add header with rowspan=2
+            if (!groupName) {
+                headerHTML += `
+                    <th data-col-id="${colDef.id}" data-col-name="${colDef.column_name}" rowspan="2">
                         <div class="th-inner">
                             <span class="th-text">${colDef.column_name}</span>
                             <button class="del-col-btn" title="Delete column"
@@ -422,8 +480,36 @@ export const AppCore = {
                         </div>
                     </th>
                 `;
-            }).join('')}
-        </tr>`;
+            }
+        }
+
+        // Close last group if exists
+        if (currentGroup && groupStartIndex !== -1) {
+            const groupLength = columns.length - groupStartIndex;
+            headerHTML += `<th colspan="${groupLength}" class="group-header"><span class="group-name">${currentGroup}</span></th>`;
+            for (let j = groupStartIndex; j < columns.length; j++) {
+                const groupCol = columns[j];
+                const groupColDef = groupCol.encoding_columns;
+                secondRowHTML += `
+                    <th data-col-id="${groupColDef.id}" data-col-name="${groupColDef.column_name}">
+                        <div class="th-inner">
+                            <span class="th-text">${groupColDef.column_name}</span>
+                            <button class="del-col-btn" title="Delete column"
+                                onclick="deleteColumn('${groupColDef.id}', '${groupColDef.column_name}')">✕</button>
+                        </div>
+                    </th>
+                `;
+            }
+        }
+
+        headerHTML += '</tr>';
+
+        // Add second row if needed
+        if (needsSecondRow) {
+            headerHTML += '<tr><th></th>' + secondRowHTML + '</tr>';
+        }
+
+        headers.innerHTML = headerHTML;
 
         this.renderTable(this.state.localEntries);
         this.setupTableEditing();
@@ -1051,6 +1137,7 @@ export const AppCore = {
             monitoringForm.style.display = 'none';
             document.getElementById('newColumnName').value = '';
             document.getElementById('newColumnType').value = 'text';
+            document.getElementById('columnGroup').value = '';
         }
 
         modal.style.display = 'block';
@@ -1092,22 +1179,40 @@ export const AppCore = {
                 // For encoding templates: create new column
                 const name = document.getElementById('newColumnName').value.trim();
                 const columnType = document.getElementById('newColumnType').value;
+                const groupName = document.getElementById('columnGroup').value.trim() || null;
                 
                 if (!name) return this.showToast('Column name is required.', 'error');
 
-                // Create reusable column
+                // Calculate display order to add column at the end
+                const existingColumns = this.state.currentTemplate.columns || [];
+                const maxDisplayOrder = existingColumns.length > 0 
+                    ? Math.max(...existingColumns.map(col => col.display_order || 0))
+                    : 0;
+                const newDisplayOrder = maxDisplayOrder + 1;
+
+                // Create reusable column with group name (for visual grouping only)
                 const column = await SupabaseService.createColumn(
                     this.state.departmentId,
                     name,
-                    columnType
+                    columnType,
+                    newDisplayOrder,
+                    false, // isRequired
+                    groupName // Use group name instead of parent_column_id
                 );
                 columnId = column.id;
             }
 
-            // Add to current template
+            // Add to current template with display order to add at the end
+            const existingColumns = this.state.currentTemplate.columns || [];
+            const maxDisplayOrder = existingColumns.length > 0 
+                ? Math.max(...existingColumns.map(col => col.display_order || 0))
+                : 0;
+            const newDisplayOrder = maxDisplayOrder + 1;
+
             await SupabaseService.addColumnToTemplate(
                 this.state.currentTemplate.id,
-                columnId
+                columnId,
+                newDisplayOrder
             );
 
             // Refresh template again to get new column
@@ -1147,6 +1252,7 @@ export const AppCore = {
             if (!isMonitoring) {
                 document.getElementById('newColumnName').value = '';
                 document.getElementById('newColumnType').value = 'text';
+                document.getElementById('columnGroup').value = '';
             } else {
                 document.getElementById('existingColumnSelect').value = '';
             }

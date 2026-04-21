@@ -59,7 +59,8 @@ export const SupabaseService = {
           column_name,
           column_type,
           is_required,
-          display_order
+          display_order,
+          group_name
         )
       `)
       .eq('template_id', templateId)
@@ -181,9 +182,10 @@ export const SupabaseService = {
    * @param {string} columnType - 'text', 'number', 'date', 'decimal', 'boolean', 'select'
    * @param {number} displayOrder
    * @param {boolean} isRequired
+   * @param {string} groupName - Optional group name for visual grouping (stored in parent_column_id field)
    * @returns {Promise<Object>} New or existing column
    */
-  async createColumn(departmentId, columnName, columnType = 'text', displayOrder = null, isRequired = false) {
+  async createColumn(departmentId, columnName, columnType = 'text', displayOrder = null, isRequired = false, groupName = null) {
     // Check if column with same name already exists for this department
     const { data: existingColumn, error: checkError } = await this.client
       .from('encoding_columns')
@@ -210,7 +212,8 @@ export const SupabaseService = {
         column_name: columnName,
         column_type: columnType,
         display_order: displayOrder,
-        is_required: isRequired
+        is_required: isRequired,
+        group_name: groupName // Store group name in group_name field
       }])
       .select()
       .single();
