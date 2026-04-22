@@ -2678,7 +2678,7 @@ export const AppCore = {
             this.renderTable(this.state.localEntries);
         }
 
-        this.showToast('Computed! ✅ Auto-update is now active for this formula.');
+        this.showToast('Computed! Auto-update is now active for this formula.');
     },
 
 
