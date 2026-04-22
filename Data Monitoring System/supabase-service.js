@@ -186,24 +186,38 @@ export const SupabaseService = {
    * @returns {Promise<Object>} New or existing column
    */
   async createColumn(departmentId, columnName, columnType = 'text', displayOrder = null, isRequired = false, groupName = null) {
-    // Check if column with same name already exists for this department
-    const { data: existingColumn, error: checkError } = await this.client
+    // Trim column name to remove leading/trailing spaces
+    columnName = columnName.trim();
+    groupName = groupName ? groupName.trim() : null;
+
+    // Check if column with same name AND same group already exists for this department
+    // Allow duplicate column names if they are in different groups
+    let query = this.client
       .from('encoding_columns')
       .select('*')
       .eq('department_id', departmentId)
-      .eq('column_name', columnName)
-      .single();
-    
-    if (checkError && checkError.code !== 'PGRST116') {
-      // PGRST116 means "not found", which is expected
+      .eq('column_name', columnName);
+
+    const { data: existingColumns, error: checkError } = await query;
+
+    if (checkError) {
       throw checkError;
     }
-    
-    // If column exists, return it
+
+    // Filter in application logic to handle null groups correctly
+    const existingColumn = existingColumns?.find(col => {
+      if (groupName) {
+        return col.group_name === groupName;
+      } else {
+        return col.group_name === null || col.group_name === '';
+      }
+    });
+
+    // If column exists with same name AND same group, return it
     if (existingColumn) {
       return existingColumn;
     }
-    
+
     // Otherwise create new column
     const { data, error } = await this.client
       .from('encoding_columns')

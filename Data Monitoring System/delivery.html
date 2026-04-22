@@ -120,6 +120,19 @@
     </div>
 </div>
 
+<!-- RENAME GROUP MODAL -->
+<div id="renameGroupModal" class="modal">
+    <div class="modal-content">
+        <span class="close-btn" onclick="closeRenameGroupModal()">&times;</span>
+        <h3>Rename Group</h3>
+        <input type="text" id="newGroupName" placeholder="Enter new group name">
+        <div class="modal-actions">
+            <button onclick="closeRenameGroupModal()">Cancel</button>
+            <button onclick="confirmRenameGroup()">Rename</button>
+        </div>
+    </div>
+</div>
+
 <!-- IMPORT MODAL -->
 <div id="importModal" class="modal">
     <div class="modal-content import-modal-content">

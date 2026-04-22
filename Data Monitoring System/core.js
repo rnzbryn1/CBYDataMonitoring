@@ -86,6 +86,9 @@ export const AppCore = {
         window.closeModal        = ()          => document.getElementById('categoryModal').style.display = 'none';
         window.openColumnModal   = async (groupName) => this.openColumnModal(groupName);
         window.closeColumnModal  = ()          => document.getElementById('columnModal').style.display = 'none';
+        window.openRenameGroupModal = (oldGroupName) => this.openRenameGroupModal(oldGroupName);
+        window.closeRenameGroupModal = () => this.closeRenameGroupModal();
+        window.confirmRenameGroup = () => this.confirmRenameGroup();
 
         window.filterCategoryCards = () => this.filterCategoryCards();
 
@@ -212,7 +215,19 @@ export const AppCore = {
         addColToGroupBtn.textContent = 'Add Column to Group';
         addColToGroupBtn.style.display = 'none';
 
+        const renameGroupBtn = document.createElement('button');
+        renameGroupBtn.id = 'ctxRenameGroup';
+        renameGroupBtn.type = 'button';
+        renameGroupBtn.textContent = 'Rename Group';
+        renameGroupBtn.style.display = 'none';
+        renameGroupBtn.addEventListener('click', () => {
+            if (this.state.currentGroupName) {
+                this.renameGroup(this.state.currentGroupName);
+            }
+        });
+
         menu.appendChild(addColToGroupBtn);
+        menu.appendChild(renameGroupBtn);
         menu.appendChild(computeColBtn);
         menu.appendChild(computeBtn);
         menu.appendChild(colorBtn);
@@ -872,8 +887,9 @@ export const AppCore = {
                     // Store the group name
                     this.state.currentGroupName = groupName;
 
-                    // Show only "Add Column to Group" option, hide others
+                    // Show "Add Column to Group" and "Rename Group" options, hide others
                     const addColToGroupBtn = document.getElementById('ctxAddColumnToGroup');
+                    const renameGroupBtn = document.getElementById('ctxRenameGroup');
                     const editBtn = document.getElementById('ctxEdit');
                     const deleteBtn = document.getElementById('ctxDelete');
                     const computeBtn = document.getElementById('ctxCompute');
@@ -882,6 +898,7 @@ export const AppCore = {
                     const deleteCompBtn = document.getElementById('ctxDeleteComputation');
 
                     if (addColToGroupBtn) addColToGroupBtn.style.display = 'flex';
+                    if (renameGroupBtn) renameGroupBtn.style.display = 'flex';
                     if (editBtn) editBtn.style.display = 'none';
                     if (deleteBtn) deleteBtn.style.display = 'none';
                     if (computeBtn) computeBtn.style.display = 'none';
@@ -1346,7 +1363,14 @@ export const AppCore = {
             
             window.closeColumnModal();
         } catch (error) {
-            this.showToast('Failed to add column: ' + error.message, 'error');
+            console.error('Failed to add column:', error);
+
+            // Show user-friendly error message
+            if (error.message && error.message.includes('duplicate') || error.message && error.message.includes('unique constraint')) {
+                this.showToast('A column with this name already exists in this group.', 'error');
+            } else {
+                this.showToast('Failed to add column. Please try again.', 'error');
+            }
         } finally {
             // Always hide loading overlay
             if (loadingOverlay) {
@@ -2169,6 +2193,59 @@ export const AppCore = {
             this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
             this.renderAll();
             this.showToast('Column renamed!');
+        } catch (err) {
+            this.showToast('Rename failed: ' + err.message, 'error');
+        }
+    },
+
+    renameGroup: async function (oldGroupName) {
+        this.openRenameGroupModal(oldGroupName);
+    },
+
+    openRenameGroupModal: function (oldGroupName) {
+        this.state.oldGroupName = oldGroupName;
+        document.getElementById('newGroupName').value = oldGroupName;
+        document.getElementById('renameGroupModal').style.display = 'block';
+    },
+
+    closeRenameGroupModal: function () {
+        document.getElementById('renameGroupModal').style.display = 'none';
+        this.state.oldGroupName = null;
+    },
+
+    confirmRenameGroup: async function () {
+        const newGroupName = document.getElementById('newGroupName').value.trim();
+        const oldGroupName = this.state.oldGroupName;
+
+        if (!newGroupName || newGroupName === oldGroupName) {
+            this.closeRenameGroupModal();
+            return;
+        }
+
+        try {
+            // Get all columns in the current template that belong to this group
+            const columns = this.state.currentTemplate.columns || [];
+            const columnsInGroup = columns
+                .filter(col => col.encoding_columns.group_name === oldGroupName)
+                .map(col => col.encoding_columns.id);
+
+            if (columnsInGroup.length === 0) {
+                this.showToast('No columns found in this group', 'error');
+                this.closeRenameGroupModal();
+                return;
+            }
+
+            // Update all columns in the group with the new name
+            await SupabaseService.client
+                .from('encoding_columns')
+                .update({ group_name: newGroupName })
+                .in('id', columnsInGroup);
+
+            // Refresh the current template to get updated group names
+            this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
+            this.renderAll();
+            this.showToast('Group renamed!');
+            this.closeRenameGroupModal();
         } catch (err) {
             this.showToast('Rename failed: ' + err.message, 'error');
         }
