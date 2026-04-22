@@ -414,6 +414,9 @@ export const AppCore = {
         const form = document.getElementById('dynamicForm');
         if (!form) return;
 
+        // Reset header rename initialization to re-attach event listeners
+        this.state.headerRenameInitialized = false;
+
         const title = document.getElementById('entryFormTitle');
         if (title && this.state.currentTemplate) {
             title.innerText = `${this.state.currentTemplate.name} Entry Form`;
@@ -478,7 +481,7 @@ export const AppCore = {
                 // Close previous group when hitting ungrouped column
                 if (groupStartIndex !== -1) {
                     const groupLength = i - groupStartIndex;
-                    headerHTML += `<th colspan="${groupLength}" class="group-header"><span class="group-name">${currentGroup}</span></th>`;
+                    headerHTML += `<th colspan="${groupLength}" class="group-header" data-group-name="${currentGroup}"><span class="group-name">${currentGroup}</span></th>`;
                     for (let j = groupStartIndex; j < i; j++) {
                         const groupCol = columns[j];
                         const groupColDef = groupCol.encoding_columns;
@@ -740,6 +743,11 @@ export const AppCore = {
                         this.showToast('Delete failed: ' + err.message, 'error');
                     }
                 });
+
+                // AUTO UPDATE COLUMN COMPUTE
+                if (this.state.activeColumnCompute) {
+                    this.updateColumnComputation();
+                }
 
                 this.showToast(`Cleared ${selected.length} cell(s)`);
                 return;
@@ -1021,6 +1029,11 @@ export const AppCore = {
                 this.showToast('Save failed: ' + err.message, 'error');
             }
         });
+
+        // AUTO UPDATE COLUMN COMPUTE   
+        if (this.state.activeColumnCompute) {
+            this.updateColumnComputation();
+        }
     },
 
     saveEntryField: async function (entryId, values) {
