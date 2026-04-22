@@ -2438,18 +2438,46 @@ export const AppCore = {
     //-----------------------------------------------------------------------------------------
     //-------------Para sa Computation ng mga cells gamit calculation types------------------
     //-----------------------------------------------------------------------------------------
+    getCurrentFormula: function () {
+        // Check if we have a current cell selected
+        const td = this.state.currentCell;
+        if (!td) return null;
+
+        const row = td.closest('tr');
+        const entryId = row?.dataset.entryId;
+        const columnName = this.state.currentColName;
+
+        if (!entryId || !columnName) return null;
+
+        // Check for cell-specific formula first
+        const cellFormulaKey = `${entryId}|${columnName}`;
+        if (this.state.cellFormulas[cellFormulaKey]) {
+            return this.state.cellFormulas[cellFormulaKey];
+        }
+
+        // Check for column formula
+        if (this.state.columnFormulas[columnName]) {
+            return this.state.columnFormulas[columnName];
+        }
+
+        return null;
+    },
+
     openComputeModal: function () {
         const modal = document.createElement('div');
         modal.className = 'compute-modal';
 
         const cols = this.state.currentTemplate?.columns || [];
+        
+        // Get current formula for the selected cell/column
+        const currentFormula = this.getCurrentFormula() || '';
 
         modal.innerHTML = `
             <div class="compute-box">
                 <h3>Compute Formula</h3>
 
                 <label>Formula</label>
-                <input id="computeFormula" placeholder="=Price * Quantity">
+                <input id="computeFormula" placeholder="=Price * Quantity" value="${currentFormula}">
 
                 <label>Apply Mode</label>
                 <select id="computeMode">
@@ -2547,6 +2575,11 @@ export const AppCore = {
     },
 
     applyFormula: async function (formula, mode) {
+        // Handle formula removal when formula is empty
+        if (!formula || formula.trim() === '') {
+            return this.removeFormula(mode);
+        }
+
         if (!formula.startsWith('=')) {
             return this.showToast('Formula must start with "="', 'error');
         }
@@ -2707,6 +2740,61 @@ export const AppCore = {
         }
 
         this.showToast('Computed! Auto-update is now active for this formula.');
+    },
+
+    removeFormula: async function (mode) {
+        const td = this.state.currentCell;
+        if (!td) return this.showToast('No cell selected', 'error');
+
+        const row = td.closest('tr');
+        const entryId = row?.dataset.entryId;
+        const columnName = this.state.currentColName;
+        const columns = this.state.currentTemplate?.columns || [];
+        const colDef = columns.find(c => c.encoding_columns.column_name === columnName)?.encoding_columns;
+
+        if (!entryId || !columnName || !colDef) {
+            return this.showToast('Invalid selection', 'error');
+        }
+
+        try {
+            if (mode === 'cell') {
+                // Remove cell-specific formula
+                const formulaKey = `${entryId}|${columnName}`;
+                delete this.state.cellFormulas[formulaKey];
+
+                // Remove from database
+                await SupabaseService.deleteCellFormula(
+                    this.state.currentTemplate.id,
+                    entryId,
+                    colDef.id
+                );
+
+                // Clear the cell value (optional - you might want to keep the last computed value)
+                // td.textContent = '';
+                
+                this.showToast('Cell formula removed');
+            } else if (mode === 'column') {
+                // Remove column formula
+                delete this.state.columnFormulas[columnName];
+
+                // Remove from database
+                await SupabaseService.deleteColumnFormula(
+                    this.state.currentTemplate.id,
+                    colDef.id
+                );
+
+                // Clear all cells in the column (optional)
+                // this.state.localEntries.forEach(entry => {
+                //     const cellTd = row.querySelector(`td[data-col-name="${columnName}"]`);
+                //     if (cellTd) cellTd.textContent = '';
+                // });
+
+                this.showToast('Column formula removed');
+            }
+        } catch (err) {
+            console.error('Failed to remove formula:', err);
+            this.showToast('Failed to remove formula: ' + err.message, 'error');
+        }
     },
 
 
