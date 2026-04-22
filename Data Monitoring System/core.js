@@ -1112,6 +1112,10 @@ export const AppCore = {
         container.innerHTML = templates.map(t => {
             const hue   = Math.abs(t.name.split('').reduce((a, b) => (((a << 5) - a) + b.charCodeAt(0)) | 0, 0)) % 360;
             const color = `hsla(${hue}, 60%, 82%, 1)`;
+            const isMonitoring = t.module === 'monitoring';
+            const typeBadge = isMonitoring
+                ? `<span class="card-type-badge monitoring">Monitoring</span>`
+                : `<span class="card-type-badge encoding">Encoding</span>`;
             return `
             <div class="category-card" id="card-${t.id}" style="background-color:${color};" onclick="switchTemplate('${t.id}')">
                 <div class="card-menu" onclick="event.stopPropagation()">
@@ -1123,6 +1127,7 @@ export const AppCore = {
                 </div>
                 <div class="card-icon">${t.name.substring(0, 2).toUpperCase()}</div>
                 <span class="card-label">${t.name}</span>
+                ${typeBadge}
             </div>`;
         }).join('');
     },

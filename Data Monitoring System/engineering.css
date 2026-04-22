@@ -94,6 +94,27 @@ body {
     color: #1e293b;
 }
 
+.card-type-badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 99px;
+    margin-top: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.card-type-badge.encoding {
+    background: rgba(37, 99, 235, 0.15);
+    color: #1d4ed8;
+}
+
+.card-type-badge.monitoring {
+    background: rgba(16, 185, 129, 0.15);
+    color: #059669;
+}
+
 /* --- CARD MENU (delete button) --- */
 .card-menu {
     position: absolute;
