@@ -864,6 +864,101 @@ export const SupabaseService = {
     if (error) throw error;
   },
 
+  // =====================================================
+  // CELL AND COLUMN FORMULAS (State Persistence)
+  // =====================================================
+
+  /**
+   * Save a cell formula (for a specific entry and column)
+   * @param {string} templateId
+   * @param {string} entryId
+   * @param {string} columnId
+   * @param {string} formula - e.g., "=Price * Quantity"
+   */
+  async saveCellFormula(templateId, entryId, columnId, formula) {
+    const { error } = await this.client
+      .from('cell_formulas')
+      .upsert({
+        template_id: templateId,
+        entry_id: entryId,
+        column_id: columnId,
+        formula: formula,
+        formula_type: 'cell',
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'template_id,entry_id,column_id' });
+    
+    if (error) throw error;
+  },
+
+  /**
+   * Save a column formula (applied to all rows in a column)
+   * @param {string} templateId
+   * @param {string} columnId
+   * @param {string} formula - e.g., "=Price * Quantity"
+   */
+  async saveColumnFormula(templateId, columnId, formula) {
+    const { error } = await this.client
+      .from('cell_formulas')
+      .upsert({
+        template_id: templateId,
+        entry_id: null,
+        column_id: columnId,
+        formula: formula,
+        formula_type: 'column',
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'template_id,entry_id,column_id' });
+
+    if (error) throw error;
+  },
+
+  /**
+   * Get all formulas for a template (both cell and column formulas)
+   * @param {string} templateId
+   * @returns {Promise<Array>} Array of formula records
+   */
+  async getFormulas(templateId) {
+    const { data, error } = await this.client
+      .from('cell_formulas')
+      .select('*')
+      .eq('template_id', templateId);
+    
+    if (error) throw error;
+    return data || [];
+  },
+
+  /**
+   * Delete a cell formula
+   * @param {string} templateId
+   * @param {string} entryId
+   * @param {string} columnId
+   */
+  async deleteCellFormula(templateId, entryId, columnId) {
+    const { error } = await this.client
+      .from('cell_formulas')
+      .delete()
+      .eq('template_id', templateId)
+      .eq('entry_id', entryId)
+      .eq('column_id', columnId);
+    
+    if (error) throw error;
+  },
+
+  /**
+   * Delete a column formula
+   * @param {string} templateId
+   * @param {string} columnId
+   */
+  async deleteColumnFormula(templateId, columnId) {
+    const { error } = await this.client
+      .from('cell_formulas')
+      .delete()
+      .eq('template_id', templateId)
+      .eq('column_id', columnId)
+      .is('entry_id', null);
+    
+    if (error) throw error;
+  },
+
   /**
    * Change entry status
    * @param {string} entryId

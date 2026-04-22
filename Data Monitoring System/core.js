@@ -341,7 +341,7 @@ export const AppCore = {
     // ============================================================
     switchTemplate: async function (templateId) {
         if (this.state.isLoading) return;
-        
+
         const workspace = document.getElementById('moduleWorkspace');
         workspace.style.display = 'block';
         workspace.style.opacity = '0.4';
@@ -350,7 +350,7 @@ export const AppCore = {
 
         try {
             const cacheKey = `template-${templateId}`;
-            
+
             if (this.state.cache[cacheKey]) {
                 // Use cached data
                 this.state.currentTemplate = this.state.cache[cacheKey].template;
@@ -359,7 +359,7 @@ export const AppCore = {
                 // Load from Supabase
                 this.state.currentTemplate = await SupabaseService.getTemplate(templateId);
                 this.state.localEntries = await SupabaseService.getEntries(templateId);
-                
+
                 // Cache it
                 this.state.cache[cacheKey] = {
                     template: this.state.currentTemplate,
@@ -369,12 +369,15 @@ export const AppCore = {
 
             this.state.currentTemplateId = templateId;
 
-            // 🔄 AUTO-UPDATE: Clear formula state when switching templates
+            // AUTO-UPDATE: Clear formula state when switching templates
             this.state.cellFormulas = {};
             this.state.columnFormulas = {};
 
             this.updateActiveUI(templateId);
             this.renderAll();
+
+            // LOAD SAVED FORMULAS: Load cell and column formulas from database
+            await this.loadSavedFormulas();
 
             // Load saved column computations
             await this.loadColumnComputations();
@@ -386,38 +389,32 @@ export const AppCore = {
             this.state.isLoading = false;
         }
     },
-    // ============================================================
-    // REFRESH DATA
-    // ============================================================
-    loadEntries: async function (templateId) {
-        try {
-            // Fetch fresh entries from Supabase
-            const entries = await SupabaseService.getEntries(templateId);
-            this.state.localEntries = entries;
-
-            // Update cache so the fresh data persists
-            const cacheKey = `template-${templateId}`;
-            if (this.state.cache[cacheKey]) {
-                this.state.cache[cacheKey].entries = entries;
-            }
-
-            // Re-render the table with the new data
-            this.renderTable(this.state.localEntries);
-
-            // 🔄 AUTO-UPDATE: Recalculate column computations after loading new data
-            if (this.state.activeColumnCompute) {
-                this.updateColumnComputation();
-            }
-        } catch (error) {
-            console.error('Error refreshing entries:', error);
-            this.showToast('Error refreshing data', 'error');
-        }
-    },
 
     updateActiveUI: function (templateId) {
         document.querySelectorAll('.category-card').forEach(c => c.classList.remove('active'));
         const activeCard = document.getElementById(`card-${templateId}`);
         if (activeCard) activeCard.classList.add('active');
+    },
+
+    loadEntries: async function (templateId) {
+        try {
+            const entries = await SupabaseService.getEntries(templateId);
+            this.state.localEntries = entries;
+
+            const cacheKey = `template-${templateId}`;
+            if (this.state.cache[cacheKey]) {
+                this.state.cache[cacheKey].entries = entries;
+            }
+
+            this.renderTable(this.state.localEntries);
+
+            if (this.state.activeColumnCompute) {
+                this.updateColumnComputation();
+            }
+        } catch (error) {
+            console.error('Error loading entries:', error);
+            this.showToast('Error loading data', 'error');
+        }
     },
 
     // ============================================================
@@ -978,35 +975,41 @@ export const AppCore = {
     onTableCellBlur: async function (td) {
         const info = this.getTableCellInfo(td);
         if (!info) return;
-        
+
         const newValue = td.textContent.trim();
         const colId = info.colId;
-        
-        try {
-            const values = {};
-            values[colId] = newValue;
-            await SupabaseService.updateEntryValues(info.entryId, values);
 
-            // UPDATE LOCAL STATE (REALTIME)
-            const entry = this.state.localEntries.find(e => e.id === info.entryId);
-            if (entry) {
-                if (!entry.values) entry.values = {};
-                entry.values[info.colName] = newValue;
+        // Get the old value to check if it actually changed
+        const entry = this.state.localEntries.find(e => e.id === info.entryId);
+        const oldValue = entry?.values?.[info.colName] || '';
+
+        // Only save and recalculate if the value actually changed
+        if (newValue !== oldValue) {
+            try {
+                const values = {};
+                values[colId] = newValue;
+                await SupabaseService.updateEntryValues(info.entryId, values);
+
+                // UPDATE LOCAL STATE (REALTIME)
+                if (entry) {
+                    if (!entry.values) entry.values = {};
+                    entry.values[info.colName] = newValue;
+                }
+
+                // Update cache
+                const cacheKey = `template-${this.state.currentTemplate.id}`;
+                delete this.state.cache[cacheKey];
+            } catch (err) {
+                this.showToast('Save failed: ' + err.message, 'error');
             }
-            
-            // Update cache
-            const cacheKey = `template-${this.state.currentTemplate.id}`;
-            delete this.state.cache[cacheKey];
-        } catch (err) {
-            this.showToast('Save failed: ' + err.message, 'error');
-        }
 
-        // 🔄 AUTO UPDATE - Recalculate all dependent computations
-        this.autoRecalculateDependentFormulas(info.colName, info.entryId);
+            // 🔄 AUTO UPDATE - Recalculate all dependent computations
+            this.autoRecalculateDependentFormulas(info.colName, info.entryId);
 
-        // AUTO UPDATE COLUMN COMPUTE   
-        if (this.state.activeColumnCompute) {
-            this.updateColumnComputation();
+            // AUTO UPDATE COLUMN COMPUTE
+            if (this.state.activeColumnCompute) {
+                this.updateColumnComputation();
+            }
         }
     },
 
@@ -2543,7 +2546,7 @@ export const AppCore = {
         };
     },
 
-    applyFormula: function (formula, mode) {
+    applyFormula: async function (formula, mode) {
         if (!formula.startsWith('=')) {
             return this.showToast('Formula must start with "="', 'error');
         }
@@ -2637,7 +2640,20 @@ export const AppCore = {
             const formulaKey = `${entryId}|${this.state.currentColName}`;
             this.state.cellFormulas[formulaKey] = formula;
 
+            // 💾 SAVE TO DATABASE: Persist cell formula
             const colDef = columns.find(c => c.encoding_columns.column_name === this.state.currentColName)?.encoding_columns;
+            if (colDef) {
+                try {
+                    await SupabaseService.saveCellFormula(
+                        this.state.currentTemplate.id,
+                        entryId,
+                        colDef.id,
+                        formula
+                    );
+                } catch (err) {
+                    console.error('Failed to save cell formula:', err);
+                }
+            }
 
             if (colDef) {
                 let detail = entry.valueDetails.find(v => v.column_id === colDef.id);
@@ -2656,12 +2672,24 @@ export const AppCore = {
             // 🔄 AUTO-UPDATE: Store the formula for auto-recalculation on each row
             this.state.columnFormulas[this.state.currentColName] = formula;
 
+            // 💾 SAVE TO DATABASE: Persist column formula
+            const colDef = columns.find(c => c.encoding_columns.column_name === this.state.currentColName)?.encoding_columns;
+            if (colDef) {
+                try {
+                    await SupabaseService.saveColumnFormula(
+                        this.state.currentTemplate.id,
+                        colDef.id,
+                        formula
+                    );
+                } catch (err) {
+                    console.error('Failed to save column formula:', err);
+                }
+            }
+
             this.state.localEntries.forEach(entry => {
                 const result = computeRow(entry);
 
                 entry.values[this.state.currentColName] = result;
-
-                const colDef = columns.find(c => c.encoding_columns.column_name === this.state.currentColName)?.encoding_columns;
 
                 if (colDef) {
                     let detail = entry.valueDetails.find(v => v.column_id === colDef.id);
@@ -2864,6 +2892,60 @@ export const AppCore = {
         } catch (err) {
             console.error('Failed to load column computations:', err);
         }
+    },
+
+    loadSavedFormulas: async function () {
+        if (!this.state.currentTemplate || !this.state.currentTemplate.id) return;
+
+        try {
+            const formulas = await SupabaseService.getFormulas(this.state.currentTemplate.id);
+            const columns = this.state.currentTemplate.columns || [];
+
+            formulas.forEach(formula => {
+                const colDef = columns.find(c => c.encoding_columns.id === formula.column_id);
+                if (!colDef) return;
+
+                const columnName = colDef.encoding_columns.column_name;
+
+                if (formula.formula_type === 'cell' && formula.entry_id) {
+                    // Cell formula: for a specific entry
+                    const formulaKey = `${formula.entry_id}|${columnName}`;
+                    this.state.cellFormulas[formulaKey] = formula.formula;
+                } else if (formula.formula_type === 'column') {
+                    // Column formula: for all rows in a column
+                    this.state.columnFormulas[columnName] = formula.formula;
+                }
+            });
+
+            // Apply loaded formulas to recalculate values
+            await this.applyLoadedFormulas();
+        } catch (err) {
+            console.error('Failed to load saved formulas:', err);
+        }
+    },
+
+    applyLoadedFormulas: async function () {
+        const columns = this.state.currentTemplate?.columns || [];
+
+        // Apply column formulas to all entries
+        for (const [columnName, formula] of Object.entries(this.state.columnFormulas || {})) {
+            const colDef = columns.find(c => c.encoding_columns.column_name === columnName);
+            if (!colDef) continue;
+
+            // Apply formula to each entry
+            for (const entry of this.state.localEntries) {
+                await this.recalculateSingleFormula(entry.id, columnName, formula);
+            }
+        }
+
+        // Apply cell formulas to specific entries
+        for (const [formulaKey, formula] of Object.entries(this.state.cellFormulas || {})) {
+            const [entryId, columnName] = formulaKey.split('|');
+            await this.recalculateSingleFormula(entryId, columnName, formula);
+        }
+
+        // Re-render table to show updated values
+        this.renderTable(this.state.localEntries);
     },
 
     toggleColumnComputationPosition: async function () {
