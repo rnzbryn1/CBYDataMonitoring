@@ -559,7 +559,9 @@ export const AppCore = {
         console.log(`Rendering ${entries.length} entries... (${emptyEntries.length} are empty)`);
 
         if (!entries.length) {
-            body.innerHTML = `<tr><td colspan="100%" class="no-data">No records found.</td></tr>`;
+            const columns = this.state.currentTemplate.columns || [];
+            const colSpan = columns.length + 1; // +1 for checkbox column
+            body.innerHTML = `<tr><td colspan="${colSpan}" class="no-data">No records found.</td></tr>`;
             return;
         }
 
