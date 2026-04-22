@@ -709,7 +709,7 @@ export const AppCore = {
         body.addEventListener('keydown', (e) => {
 
             // ✅ DELETE / BACKSPACE — clear selected cells
-            if (e.key === 'Delete' || e.key === 'Backspace') {
+            if (e.key === 'Delete') {
                 const selected = body.querySelectorAll('td.cell-selected');
 
                 // If walang selection, normal behavior lang
@@ -736,6 +736,18 @@ export const AppCore = {
                 changedEntries.forEach(async (values, entryId) => {
                     try {
                         await SupabaseService.updateEntryValues(entryId, values);
+
+                        const entry = this.state.localEntries.find(e => e.id === entryId);
+                        if (entry) {
+                            if (!entry.values) entry.values = {};
+                            Object.entries(values).forEach(([colId, val]) => {
+                                const col = this.state.currentTemplate.columns
+                                    .find(c => c.encoding_columns.id === colId);
+                                if (col) {
+                                    entry.values[col.encoding_columns.column_name] = val;
+                                }
+                            });
+                        }
 
                         const cacheKey = `template-${this.state.currentTemplate.id}`;
                         delete this.state.cache[cacheKey];
@@ -953,6 +965,13 @@ export const AppCore = {
             const values = {};
             values[colId] = newValue;
             await SupabaseService.updateEntryValues(info.entryId, values);
+
+            // UPDATE LOCAL STATE (REALTIME)
+            const entry = this.state.localEntries.find(e => e.id === info.entryId);
+            if (entry) {
+                if (!entry.values) entry.values = {};
+                entry.values[info.colName] = newValue;
+            }
             
             // Update cache
             const cacheKey = `template-${this.state.currentTemplate.id}`;
@@ -1023,6 +1042,18 @@ export const AppCore = {
         changedEntries.forEach(async (values, entryId) => {
             try {
                 await SupabaseService.updateEntryValues(entryId, values);
+
+                const entry = this.state.localEntries.find(e => e.id === entryId);
+                if (entry) {
+                    if (!entry.values) entry.values = {};
+                    Object.entries(values).forEach(([colId, val]) => {
+                        const col = this.state.currentTemplate.columns
+                            .find(c => c.encoding_columns.id === colId);
+                        if (col) {
+                            entry.values[col.encoding_columns.column_name] = val;
+                        }
+                    });
+                }
                 const cacheKey = `template-${this.state.currentTemplate.id}`;
                 delete this.state.cache[cacheKey];
             } catch (err) {
@@ -1039,6 +1070,19 @@ export const AppCore = {
     saveEntryField: async function (entryId, values) {
         try {
             await SupabaseService.updateEntryValues(entryId, values);
+
+            const entry = this.state.localEntries.find(e => e.id === entryId);
+            if (entry) {
+                if (!entry.values) entry.values = {};
+                Object.entries(values).forEach(([colId, val]) => {
+                    const col = this.state.currentTemplate.columns
+                        .find(c => c.encoding_columns.id === colId);
+                    if (col) {
+                        entry.values[col.encoding_columns.column_name] = val;
+                    }
+                });
+            }
+
             const cacheKey = `template-${this.state.currentTemplate.id}`;
             delete this.state.cache[cacheKey];
         } catch (err) {
@@ -1095,6 +1139,18 @@ export const AppCore = {
             });
 
             await SupabaseService.updateEntryValues(this.state.editingId, values);
+
+            const entry = this.state.localEntries.find(e => e.id === entryId);
+            if (entry) {
+                if (!entry.values) entry.values = {};
+                Object.entries(values).forEach(([colId, val]) => {
+                    const col = this.state.currentTemplate.columns
+                        .find(c => c.encoding_columns.id === colId);
+                    if (col) {
+                        entry.values[col.encoding_columns.column_name] = val;
+                    }
+                });
+            }
             
             this.closeEditModal();
             this.showToast('Entry updated successfully!');
@@ -1463,6 +1519,18 @@ export const AppCore = {
             // 3. Save the values if any were entered
             if (Object.keys(values).length > 0) {
                 await SupabaseService.updateEntryValues(entry.id, values);
+
+                const entry = this.state.localEntries.find(e => e.id === entryId);
+                if (entry) {
+                    if (!entry.values) entry.values = {};
+                    Object.entries(values).forEach(([colId, val]) => {
+                        const col = this.state.currentTemplate.columns
+                            .find(c => c.encoding_columns.id === colId);
+                        if (col) {
+                            entry.values[col.encoding_columns.column_name] = val;
+                        }
+                    });
+                }
             }
 
             // 4. UI Feedback
@@ -1489,6 +1557,11 @@ export const AppCore = {
             delete this.state.cache[cacheKey];
             this.state.localEntries = await SupabaseService.getEntries(this.state.currentTemplate.id);
             this.renderTable(this.state.localEntries);
+
+            // AUTO UPDATE COLUMN COMPUTE   
+            if (this.state.activeColumnCompute) {
+                this.updateColumnComputation();
+            }
         } catch (error) {
             this.showToast('Failed to delete: ' + error.message, 'error');
         }
