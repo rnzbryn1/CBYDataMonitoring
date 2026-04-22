@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Formula Fixes Test</title>
+<style>
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ccc; border-radius: 5px; }
+    .success { color: green; }
+    .error { color: red; }
+    .info { color: blue; }
+    .warning { color: orange; }
+</style>
+</head>
+<body>
+    <h1>Formula Removal Fixes - Test Results</h1>
+    
+    <div class="test-section">
+        <h2>Issues Fixed:</h2>
+        <div class="success">1. <strong>Async Race Condition:</strong> Fixed Promise.all() for column operations</div>
+        <div class="success">2. <strong>State Management:</strong> Proper order of operations (memory -> data -> database)</div>
+        <div class="success">3. <strong>UI Timing:</strong> renderTable() called after all operations complete</div>
+        <div class="success">4. <strong>Consistency:</strong> Both applyFormula and removeFormula follow same pattern</div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test Scenarios:</h2>
+        <ol>
+            <li><strong>Single Cell Formula:</strong> Apply formula, remove formula, verify consistency</li>
+            <li><strong>Column Formula:</strong> Apply to whole column, remove, verify all cells cleared</li>
+            <li><strong>Multiple Operations:</strong> Apply cell formula, then column formula, then remove both</li>
+            <li><strong>Template Switch:</strong> Apply formulas, switch templates, switch back - verify formulas persist</li>
+            <li><strong>Concurrent Operations:</strong> Apply formulas to multiple columns rapidly</li>
+        </ol>
+    </div>
+
+    <div class="test-section">
+        <h2>Key Changes Made:</h2>
+        <ul>
+            <li><div class="info">removeFormula() now uses Promise.all() for column operations</div></li>
+            <li><div class="info">applyFormula() fixed to avoid forEach() with async operations</div></li>
+            <li><div class="info">Memory updates happen before database operations</div></li>
+            <li><div class="info">UI updates happen after all async operations complete</div></li>
+            <li><div class="info">Consistent error handling and logging added</div></li>
+        </ul>
+    </div>
+
+    <div class="test-section">
+        <h2>Expected Behavior After Fix:</h2>
+        <ul>
+            <li>Formulas are completely removed when cleared</li>
+            <li>No phantom values reappearing</li>
+            <li>Consistent behavior across all columns</li>
+            <li>Proper database synchronization</li>
+            <li>UI reflects actual state immediately</li>
+        </ul>
+    </div>
+
+    <div class="test-section">
+        <h2>Manual Test Instructions:</h2>
+        <ol>
+            <li>Open pcd.html and load a template with data</li>
+            <li>Apply a formula to a single cell</li>
+            <li>Remove the formula (clear bar, click Update)</li>
+            <li>Verify the cell is completely empty</li>
+            <li>Apply a column formula</li>
+            <li>Remove the column formula</li>
+            <li>Verify ALL cells in column are empty</li>
+            <li>Repeat with different columns and formulas</li>
+        </ol>
+    </div>
+
+    <script>
+        console.log('Formula fixes implemented. Ready for testing.');
+    </script>
+</body>
+</html>

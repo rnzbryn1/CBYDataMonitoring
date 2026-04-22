@@ -994,6 +994,17 @@ export const AppCore = {
                 if (entry) {
                     if (!entry.values) entry.values = {};
                     entry.values[info.colName] = newValue;
+                    
+                    // Update valueDetails properly
+                    if (!entry.valueDetails) entry.valueDetails = [];
+                    entry.valueDetails = entry.valueDetails.filter(v => v.column_id !== colId);
+                    
+                    if (newValue !== '') {
+                        entry.valueDetails.push({
+                            column_id: colId,
+                            value: newValue
+                        });
+                    }
                 }
 
                 // Update cache
@@ -1113,11 +1124,30 @@ export const AppCore = {
             const entry = this.state.localEntries.find(e => e.id === entryId);
             if (entry) {
                 if (!entry.values) entry.values = {};
+                if (!entry.valueDetails) entry.valueDetails = [];
+                
                 Object.entries(values).forEach(([colId, val]) => {
                     const col = this.state.currentTemplate.columns
                         .find(c => c.encoding_columns.id === colId);
                     if (col) {
-                        entry.values[col.encoding_columns.column_name] = val;
+                        const columnName = col.encoding_columns.column_name;
+                        
+                        // Update entry values
+                        if (val === '' || val === null || val === undefined) {
+                            delete entry.values[columnName];
+                        } else {
+                            entry.values[columnName] = val;
+                        }
+                        
+                        // Update valueDetails
+                        entry.valueDetails = entry.valueDetails.filter(v => v.column_id !== colId);
+                        
+                        if (val !== '' && val !== null && val !== undefined) {
+                            entry.valueDetails.push({
+                                column_id: colId,
+                                value: String(val)
+                            });
+                        }
                     }
                 });
             }
@@ -2696,17 +2726,44 @@ export const AppCore = {
                 const payload = {};
                 payload[colDef.id] = result;
 
-                this.saveEntryField(entry.id, payload);
+                await this.saveEntryField(entry.id, payload);
+                
+                // Force clear all formula cache to ensure complete synchronization
+                await this.forceClearFormulaCache();
             }
         }
 
         // WHOLE COLUMN (PER ROW COMPUTATION)
         if (mode === 'column') {
-            // 🔄 AUTO-UPDATE: Store the formula for auto-recalculation on each row
+            // Store the formula for auto-recalculation on each row
             this.state.columnFormulas[this.state.currentColName] = formula;
 
-            // 💾 SAVE TO DATABASE: Persist column formula
             const colDef = columns.find(c => c.encoding_columns.column_name === this.state.currentColName)?.encoding_columns;
+
+            // Process all entries and save to database
+            const updatePromises = this.state.localEntries.map(async (entry) => {
+                const result = computeRow(entry);
+
+                // Update entry in memory
+                entry.values[this.state.currentColName] = result;
+
+                if (colDef) {
+                    // Update valueDetails
+                    let detail = entry.valueDetails.find(v => v.column_id === colDef.id);
+                    if (detail) detail.value = String(result);
+                    else entry.valueDetails.push({ column_id: colDef.id, value: String(result) });
+
+                    // Save to database
+                    const payload = {};
+                    payload[colDef.id] = result;
+                    await this.saveEntryField(entry.id, payload);
+                }
+            });
+
+            // Wait for all updates to complete
+            await Promise.all(updatePromises);
+
+            // Save formula to database after all values are updated
             if (colDef) {
                 try {
                     await SupabaseService.saveColumnFormula(
@@ -2714,29 +2771,13 @@ export const AppCore = {
                         colDef.id,
                         formula
                     );
+                    
+                    // Force clear all formula cache to ensure complete synchronization
+                    await this.forceClearFormulaCache();
                 } catch (err) {
                     console.error('Failed to save column formula:', err);
                 }
             }
-
-            this.state.localEntries.forEach(entry => {
-                const result = computeRow(entry);
-
-                entry.values[this.state.currentColName] = result;
-
-                if (colDef) {
-                    let detail = entry.valueDetails.find(v => v.column_id === colDef.id);
-                    if (detail) detail.value = String(result);
-                    else entry.valueDetails.push({ column_id: colDef.id, value: String(result) });
-
-                    const payload = {};
-                    payload[colDef.id] = result;
-
-                    this.saveEntryField(entry.id, payload);
-                }
-            });
-
-            this.renderTable(this.state.localEntries);
         }
 
         this.showToast('Computed! Auto-update is now active for this formula.');
@@ -2760,22 +2801,72 @@ export const AppCore = {
             if (mode === 'cell') {
                 // Remove cell-specific formula
                 const formulaKey = `${entryId}|${columnName}`;
+                console.log('Removing cell formula:', formulaKey);
+                
+                // Remove from memory first
                 delete this.state.cellFormulas[formulaKey];
 
-                // Remove from database
+                // Clear the cell value and reset to original
+                const entry = this.state.localEntries.find(e => e.id === entryId);
+                if (entry) {
+                    // Remove the computed value
+                    console.log('Clearing cell value for:', columnName);
+                    if (entry.values) {
+                        delete entry.values[columnName];
+                    }
+                    td.textContent = '';
+
+                    // Update valueDetails - remove all entries for this column
+                    if (entry.valueDetails) {
+                        entry.valueDetails = entry.valueDetails.filter(v => v.column_id !== colDef.id);
+                    }
+
+                    // Save empty value to database
+                    const payload = {};
+                    payload[colDef.id] = null; // Use null instead of empty string
+                    await this.saveEntryField(entry.id, payload);
+                }
+
+                // Remove from database last
                 await SupabaseService.deleteCellFormula(
                     this.state.currentTemplate.id,
                     entryId,
                     colDef.id
                 );
 
-                // Clear the cell value (optional - you might want to keep the last computed value)
-                // td.textContent = '';
-                
+                // Force clear all formula cache to ensure complete cleanup
+                this.forceClearFormulaCache();
+
                 this.showToast('Cell formula removed');
             } else if (mode === 'column') {
                 // Remove column formula
+                console.log('Removing column formula for:', columnName);
+                
+                // Remove from memory first
                 delete this.state.columnFormulas[columnName];
+
+                // Clear all cells in the column and reset values
+                const updatePromises = this.state.localEntries.map(async (entry) => {
+                    console.log('Clearing column value for entry:', entry.id, columnName);
+                    
+                    // Remove computed value
+                    if (entry.values) {
+                        delete entry.values[columnName];
+                    }
+
+                    // Update valueDetails - remove all entries for this column
+                    if (entry.valueDetails) {
+                        entry.valueDetails = entry.valueDetails.filter(v => v.column_id !== colDef.id);
+                    }
+
+                    // Save empty value to database
+                    const payload = {};
+                    payload[colDef.id] = null; // Use null instead of empty string
+                    await this.saveEntryField(entry.id, payload);
+                });
+
+                // Wait for all database updates to complete
+                await Promise.all(updatePromises);
 
                 // Remove from database
                 await SupabaseService.deleteColumnFormula(
@@ -2783,11 +2874,8 @@ export const AppCore = {
                     colDef.id
                 );
 
-                // Clear all cells in the column (optional)
-                // this.state.localEntries.forEach(entry => {
-                //     const cellTd = row.querySelector(`td[data-col-name="${columnName}"]`);
-                //     if (cellTd) cellTd.textContent = '';
-                // });
+                // Force clear all formula cache to ensure complete cleanup
+                this.forceClearFormulaCache();
 
                 this.showToast('Column formula removed');
             }
@@ -2795,6 +2883,25 @@ export const AppCore = {
             console.error('Failed to remove formula:', err);
             this.showToast('Failed to remove formula: ' + err.message, 'error');
         }
+    },
+
+    forceClearFormulaCache: async function () {
+        // Clear all formula-related cache and state
+        const cacheKey = `template-${this.state.currentTemplate.id}`;
+        delete this.state.cache[cacheKey];
+        
+        // Clear formula memory to prevent old formulas from persisting
+        this.state.cellFormulas = {};
+        this.state.columnFormulas = {};
+        
+        // Force reload entries from database to get fresh data
+        await this.loadEntries(this.state.currentTemplate.id);
+        
+        // Force reload formulas from database
+        await this.loadSavedFormulas();
+        
+        // Re-render table to ensure UI consistency
+        this.renderTable(this.state.localEntries);
     },
 
 
