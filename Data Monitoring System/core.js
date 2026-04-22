@@ -22,6 +22,9 @@ export const AppCore = {
         _importExcelCols:       [],   // detected Excel column names
         tableEventsInitialized: false,
         historyStack: [],
+        // AUTO-UPDATE: Track cell formulas for recalculation
+        cellFormulas:           {},             // { "entryId|columnName": "formula", ... }
+        columnFormulas:         {},             // { "columnName": "formula" } for per-row calculations
     },
 
     // ============================================================
@@ -365,6 +368,11 @@ export const AppCore = {
             }
 
             this.state.currentTemplateId = templateId;
+
+            // 🔄 AUTO-UPDATE: Clear formula state when switching templates
+            this.state.cellFormulas = {};
+            this.state.columnFormulas = {};
+
             this.updateActiveUI(templateId);
             this.renderAll();
 
@@ -395,6 +403,11 @@ export const AppCore = {
 
             // Re-render the table with the new data
             this.renderTable(this.state.localEntries);
+
+            // 🔄 AUTO-UPDATE: Recalculate column computations after loading new data
+            if (this.state.activeColumnCompute) {
+                this.updateColumnComputation();
+            }
         } catch (error) {
             console.error('Error refreshing entries:', error);
             this.showToast('Error refreshing data', 'error');
@@ -718,12 +731,15 @@ export const AppCore = {
                 e.preventDefault();
 
                 const changedEntries = new Map();
+                const changedCells = []; // Track which cells changed for auto-update
 
                 selected.forEach(td => {
                     td.textContent = ''; // clear UI
 
                     const info = this.getTableCellInfo(td);
                     if (!info) return;
+
+                    changedCells.push({ entryId: info.entryId, colName: info.colName });
 
                     if (!changedEntries.has(info.entryId)) {
                         changedEntries.set(info.entryId, {});
@@ -754,6 +770,11 @@ export const AppCore = {
                     } catch (err) {
                         this.showToast('Delete failed: ' + err.message, 'error');
                     }
+                });
+
+                // 🔄 AUTO-UPDATE - Recalculate dependent formulas for each changed cell
+                changedCells.forEach(({ entryId, colName }) => {
+                    this.autoRecalculateDependentFormulas(colName, entryId);
                 });
 
                 // AUTO UPDATE COLUMN COMPUTE
@@ -980,6 +1001,9 @@ export const AppCore = {
             this.showToast('Save failed: ' + err.message, 'error');
         }
 
+        // 🔄 AUTO UPDATE - Recalculate all dependent computations
+        this.autoRecalculateDependentFormulas(info.colName, info.entryId);
+
         // AUTO UPDATE COLUMN COMPUTE   
         if (this.state.activeColumnCompute) {
             this.updateColumnComputation();
@@ -1061,6 +1085,18 @@ export const AppCore = {
             }
         });
 
+        // 🔄 AUTO-UPDATE - Recalculate for each changed entry and column
+        changedEntries.forEach((values, entryId) => {
+            Object.keys(values).forEach(colId => {
+                const colName = this.state.currentTemplate.columns.find(
+                    c => c.encoding_columns.id === colId
+                )?.encoding_columns.column_name;
+                if (colName) {
+                    this.autoRecalculateDependentFormulas(colName, entryId);
+                }
+            });
+        });
+
         // AUTO UPDATE COLUMN COMPUTE   
         if (this.state.activeColumnCompute) {
             this.updateColumnComputation();
@@ -1140,17 +1176,7 @@ export const AppCore = {
 
             await SupabaseService.updateEntryValues(this.state.editingId, values);
 
-            const entry = this.state.localEntries.find(e => e.id === entryId);
-            if (entry) {
-                if (!entry.values) entry.values = {};
-                Object.entries(values).forEach(([colId, val]) => {
-                    const col = this.state.currentTemplate.columns
-                        .find(c => c.encoding_columns.id === colId);
-                    if (col) {
-                        entry.values[col.encoding_columns.column_name] = val;
-                    }
-                });
-            }
+            // Note: No need to update local state here since loadEntries() will refresh it
             
             this.closeEditModal();
             this.showToast('Entry updated successfully!');
@@ -1520,17 +1546,8 @@ export const AppCore = {
             if (Object.keys(values).length > 0) {
                 await SupabaseService.updateEntryValues(entry.id, values);
 
-                const entry = this.state.localEntries.find(e => e.id === entryId);
-                if (entry) {
-                    if (!entry.values) entry.values = {};
-                    Object.entries(values).forEach(([colId, val]) => {
-                        const col = this.state.currentTemplate.columns
-                            .find(c => c.encoding_columns.id === colId);
-                        if (col) {
-                            entry.values[col.encoding_columns.column_name] = val;
-                        }
-                    });
-                }
+                // Note: No need to update local state here since loadEntries() will refresh it
+                // The entry won't be in localEntries yet since it was just created
             }
 
             // 4. UI Feedback
@@ -2191,8 +2208,8 @@ export const AppCore = {
             // Reload entries
             const cacheKey = `template-${this.state.currentTemplate.id}`;
             delete this.state.cache[cacheKey];
-            this.state.localEntries = await SupabaseService.getEntries(this.state.currentTemplate.id);
-            this.renderTable(this.state.localEntries);
+            // Refresh the table with new data
+            await this.loadEntries(this.state.currentTemplate.id);
             this.closeImportModal();
             this.showToast(`${rowsWithData.length} rows imported successfully!`);
         } catch (err) {
@@ -2243,6 +2260,11 @@ export const AppCore = {
             // update UI
             this.state.localEntries = this.state.localEntries.filter(e => !checked.includes(e.id));
             this.renderTable(this.state.localEntries);
+
+            // 🔄 AUTO-UPDATE: Recalculate column computations after deletion
+            if (this.state.activeColumnCompute) {
+                this.updateColumnComputation();
+            }
 
             this.showToast(`Deleted ${checked.length} records.`);
         } catch (err) {
@@ -2611,6 +2633,10 @@ export const AppCore = {
             td.textContent = result;
             entry.values[this.state.currentColName] = result;
 
+            // 🔄 AUTO-UPDATE: Store the formula for auto-recalculation
+            const formulaKey = `${entryId}|${this.state.currentColName}`;
+            this.state.cellFormulas[formulaKey] = formula;
+
             const colDef = columns.find(c => c.encoding_columns.column_name === this.state.currentColName)?.encoding_columns;
 
             if (colDef) {
@@ -2627,6 +2653,9 @@ export const AppCore = {
 
         // WHOLE COLUMN (PER ROW COMPUTATION)
         if (mode === 'column') {
+            // 🔄 AUTO-UPDATE: Store the formula for auto-recalculation on each row
+            this.state.columnFormulas[this.state.currentColName] = formula;
+
             this.state.localEntries.forEach(entry => {
                 const result = computeRow(entry);
 
@@ -2649,7 +2678,7 @@ export const AppCore = {
             this.renderTable(this.state.localEntries);
         }
 
-        this.showToast('Computed!');
+        this.showToast('Computed! ✅ Auto-update is now active for this formula.');
     },
 
 
@@ -2914,6 +2943,164 @@ export const AppCore = {
         if (isNaN(num)) return val;
 
         return Number(num.toFixed(2)); //number pa rin, hindi string
+    },
+
+    // ============================================================
+    // AUTO-UPDATE COMPUTATION (Real-time recalculation)
+    // ============================================================
+    /**
+     * Automatically recalculate all formulas that depend on a changed column
+     * Called whenever a cell value changes
+     */
+    autoRecalculateDependentFormulas: function (changedColumnName, changedEntryId) {
+        if (!this.state.currentTemplate) return;
+
+        // 1️⃣ Recalculate cell formulas that depend on this column
+        this.recalculateCellFormulas(changedColumnName, changedEntryId);
+
+        // 2️⃣ Recalculate per-row formulas for the changed entry
+        if (this.state.columnFormulas && Object.keys(this.state.columnFormulas).length > 0) {
+            this.recalculateRowFormulas(changedEntryId);
+        }
+    },
+
+    /**
+     * Recalculate a specific cell formula when its dependency changes
+     */
+    recalculateCellFormulas: function (changedColumnName, changedEntryId) {
+        const table = document.getElementById('tableData');
+        if (!table) return;
+
+        const columns = this.state.currentTemplate?.columns || [];
+
+        // Find all cells with formulas and check if they depend on the changed column
+        Object.entries(this.state.cellFormulas || {}).forEach(([key, formula]) => {
+            const [entryId, targetColName] = key.split('|');
+            
+            // Build regex to find if this column is in the formula
+            const colNameRegex = new RegExp(`\\b${changedColumnName}\\b`);
+            
+            if (colNameRegex.test(formula)) {
+                // This formula depends on the changed column
+                // Recalculate it if it's in the same entry or if it's a global formula
+                const entry = this.state.localEntries.find(e => e.id === entryId || e.id === changedEntryId);
+                if (entry && (entryId === changedEntryId || entryId === 'GLOBAL')) {
+                    this.recalculateSingleFormula(changedEntryId, targetColName, formula);
+                }
+            }
+        });
+    },
+
+    /**
+     * Recalculate all per-row formulas for a specific entry
+     */
+    recalculateRowFormulas: function (entryId) {
+        const entry = this.state.localEntries.find(e => e.id === entryId);
+        if (!entry) return;
+
+        const columns = this.state.currentTemplate?.columns || [];
+
+        Object.entries(this.state.columnFormulas || {}).forEach(([columnName, formula]) => {
+            this.recalculateSingleFormula(entryId, columnName, formula);
+        });
+    },
+
+    /**
+     * Recalculate a single formula and update the cell UI + database
+     */
+    recalculateSingleFormula: async function (entryId, targetColumnName, formula) {
+        const entry = this.state.localEntries.find(e => e.id === entryId);
+        if (!entry) return;
+
+        const columns = this.state.currentTemplate?.columns || [];
+        const self = this; // Capture 'this' for nested functions
+
+        // Execute the formula evaluation logic (similar to applyFormula)
+        const computeRow = (entry) => {
+            let evalExpr = formula.startsWith('=') ? formula.slice(1) : formula;
+
+            columns.forEach(c => {
+                const colName = c.encoding_columns.column_name;
+                const raw = entry.values[colName] ?? '0';
+                const num = parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
+                const safeCol = colName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const regex = new RegExp(`\\b${safeCol}\\b`, 'g');
+                evalExpr = evalExpr.replace(regex, num);
+            });
+
+            // Parse functions
+            const getVal = (arg, entry) => {
+                const clean = arg.trim();
+                if (!isNaN(clean)) return parseFloat(clean);
+                const raw = entry.values[clean] ?? '0';
+                return parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
+            };
+
+            evalExpr = evalExpr.replace(/AVERAGE\((.*?)\)/gi, (_, args) => {
+                const vals = args.split(',').map(a => getVal(a, entry));
+                return vals.length ? vals.reduce((a,b)=>a+b,0) / vals.length : 0;
+            });
+
+            evalExpr = evalExpr.replace(/SUM\((.*?)\)/gi, (_, args) => {
+                const vals = args.split(',').map(a => getVal(a, entry));
+                return vals.reduce((a,b)=>a+b,0);
+            });
+
+            evalExpr = evalExpr.replace(/COUNT\((.*?)\)/gi, (_, args) => {
+                return args.split(',').length;
+            });
+
+            evalExpr = evalExpr.replace(/MAX\((.*?)\)/gi, (_, args) => {
+                const vals = args.split(',').map(a => getVal(a, entry));
+                return Math.max(...vals);
+            });
+
+            evalExpr = evalExpr.replace(/MIN\((.*?)\)/gi, (_, args) => {
+                const vals = args.split(',').map(a => getVal(a, entry));
+                return Math.min(...vals);
+            });
+
+            try {
+                const result = eval(evalExpr);
+                return self.formatNumber(result);
+            } catch {
+                return 'ERR';
+            }
+        };
+
+        const newResult = computeRow(entry);
+
+        // Find and update the cell in the table
+        const table = document.getElementById('tableData');
+        if (!table) return;
+
+        const row = table.querySelector(`tr[data-entry-id="${entryId}"]`);
+        if (!row) return;
+
+        const cells = Array.from(row.querySelectorAll('td[data-col-name]'));
+        const targetCell = cells.find(c => c.dataset.colName === targetColumnName);
+        
+        if (targetCell) {
+            targetCell.textContent = newResult;
+
+            // Update local state
+            entry.values[targetColumnName] = newResult;
+
+            // Save to database
+            try {
+                const colDef = this.state.currentTemplate.columns.find(
+                    c => c.encoding_columns.column_name === targetColumnName
+                )?.encoding_columns;
+
+                if (colDef) {
+                    const payload = {};
+                    payload[colDef.id] = newResult;
+                    await SupabaseService.updateEntryValues(entryId, payload);
+                }
+            } catch (err) {
+                console.error('Failed to save formula result:', err);
+            }
+        }
     },
 
     //-----------------------------------------------------------------------------------------
