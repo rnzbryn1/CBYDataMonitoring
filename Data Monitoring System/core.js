@@ -84,7 +84,7 @@ export const AppCore = {
 
         window.openModal         = ()          => document.getElementById('categoryModal').style.display = 'block';
         window.closeModal        = ()          => document.getElementById('categoryModal').style.display = 'none';
-        window.openColumnModal   = async ()      => this.openColumnModal();
+        window.openColumnModal   = async (groupName) => this.openColumnModal(groupName);
         window.closeColumnModal  = ()          => document.getElementById('columnModal').style.display = 'none';
 
         window.filterCategoryCards = () => this.filterCategoryCards();
@@ -150,6 +150,12 @@ export const AppCore = {
         document.getElementById('ctxColor')?.addEventListener('click', () => {
             this.openColorModal();
         });
+
+        document.getElementById('ctxAddColumnToGroup')?.addEventListener('click', () => {
+            if (this.state.currentGroupName) {
+                this.openColumnModal(this.state.currentGroupName);
+            }
+        });
     },
 
     ensureContextMenu: function () {
@@ -200,6 +206,13 @@ export const AppCore = {
             this.deleteColumnComputation();
         });
 
+        const addColToGroupBtn = document.createElement('button');
+        addColToGroupBtn.id = 'ctxAddColumnToGroup';
+        addColToGroupBtn.type = 'button';
+        addColToGroupBtn.textContent = 'Add Column to Group';
+        addColToGroupBtn.style.display = 'none';
+
+        menu.appendChild(addColToGroupBtn);
         menu.appendChild(computeColBtn);
         menu.appendChild(computeBtn);
         menu.appendChild(colorBtn);
@@ -427,7 +440,7 @@ export const AppCore = {
                 // Close previous group if exists
                 if (currentGroup && groupStartIndex !== -1) {
                     const groupLength = i - groupStartIndex;
-                    headerHTML += `<th colspan="${groupLength}" class="group-header"><span class="group-name">${currentGroup}</span></th>`;
+                    headerHTML += `<th colspan="${groupLength}" class="group-header" data-group-name="${currentGroup}"><span class="group-name">${currentGroup}</span></th>`;
                     for (let j = groupStartIndex; j < i; j++) {
                         const groupCol = columns[j];
                         const groupColDef = groupCol.encoding_columns;
@@ -486,7 +499,7 @@ export const AppCore = {
         // Close last group if exists
         if (currentGroup && groupStartIndex !== -1) {
             const groupLength = columns.length - groupStartIndex;
-            headerHTML += `<th colspan="${groupLength}" class="group-header"><span class="group-name">${currentGroup}</span></th>`;
+            headerHTML += `<th colspan="${groupLength}" class="group-header" data-group-name="${currentGroup}"><span class="group-name">${currentGroup}</span></th>`;
             for (let j = groupStartIndex; j < columns.length; j++) {
                 const groupCol = columns[j];
                 const groupColDef = groupCol.encoding_columns;
@@ -772,14 +785,32 @@ export const AppCore = {
 
             e.preventDefault();
 
-            // Show/hide delete column computation button based on active computation and column alignment
+            // Reset context menu to default state
+            const addColToGroupBtn = document.getElementById('ctxAddColumnToGroup');
+            const editBtn = document.getElementById('ctxEdit');
+            const deleteBtn = document.getElementById('ctxDelete');
+            const computeBtn = document.getElementById('ctxCompute');
+            const computeColBtn = document.getElementById('ctxComputeColumn');
+            const colorBtn = document.getElementById('ctxColor');
             const deleteCompBtn = document.getElementById('ctxDeleteComputation');
+
+            if (addColToGroupBtn) addColToGroupBtn.style.display = 'none';
+            if (editBtn) editBtn.style.display = 'flex';
+            if (deleteBtn) deleteBtn.style.display = 'flex';
+            if (computeBtn) computeBtn.style.display = 'flex';
+            if (computeColBtn) computeColBtn.style.display = 'flex';
+            if (colorBtn) colorBtn.style.display = 'flex';
+
+            // Show/hide delete column computation button based on active computation and column alignment
             if (deleteCompBtn) {
                 const clickedColName = td.dataset.colName;
-                const isComputedColumn = this.state.activeColumnCompute && 
+                const isComputedColumn = this.state.activeColumnCompute &&
                                         clickedColName === this.state.activeColumnCompute.column;
                 deleteCompBtn.style.display = isComputedColumn ? 'flex' : 'none';
             }
+
+            // Clear group name since we're not clicking on a group header
+            this.state.currentGroupName = null;
 
             // this part is for getting cell or column especially for computation
             this.state.currentCell = td;
@@ -826,6 +857,43 @@ export const AppCore = {
                     const oldName = th.dataset.colName;
 
                     await this.renameColumn(colId, oldName);
+                });
+
+                // Right-click handler for group headers
+                headerRow.addEventListener('contextmenu', (e) => {
+                    const groupHeader = e.target.closest('th.group-header');
+                    if (!groupHeader) return;
+
+                    e.preventDefault();
+
+                    const groupName = groupHeader.dataset.groupName;
+                    if (!groupName) return;
+
+                    // Store the group name
+                    this.state.currentGroupName = groupName;
+
+                    // Show only "Add Column to Group" option, hide others
+                    const addColToGroupBtn = document.getElementById('ctxAddColumnToGroup');
+                    const editBtn = document.getElementById('ctxEdit');
+                    const deleteBtn = document.getElementById('ctxDelete');
+                    const computeBtn = document.getElementById('ctxCompute');
+                    const computeColBtn = document.getElementById('ctxComputeColumn');
+                    const colorBtn = document.getElementById('ctxColor');
+                    const deleteCompBtn = document.getElementById('ctxDeleteComputation');
+
+                    if (addColToGroupBtn) addColToGroupBtn.style.display = 'flex';
+                    if (editBtn) editBtn.style.display = 'none';
+                    if (deleteBtn) deleteBtn.style.display = 'none';
+                    if (computeBtn) computeBtn.style.display = 'none';
+                    if (computeColBtn) computeColBtn.style.display = 'none';
+                    if (colorBtn) colorBtn.style.display = 'none';
+                    if (deleteCompBtn) deleteCompBtn.style.display = 'none';
+
+                    // Show menu
+                    const menu = document.getElementById('contextMenu');
+                    menu.style.display = 'block';
+                    menu.style.top = e.pageY + 'px';
+                    menu.style.left = e.pageX + 'px';
                 });
 
                 this.state.headerRenameInitialized = true;
@@ -1096,7 +1164,7 @@ export const AppCore = {
     // ============================================================
     // COLUMNS
     // ============================================================
-    openColumnModal: async function () {
+    openColumnModal: async function (groupName = null) {
         if (!this.state.currentTemplate) {
             return this.showToast('No template selected.', 'error');
         }
@@ -1137,7 +1205,7 @@ export const AppCore = {
             monitoringForm.style.display = 'none';
             document.getElementById('newColumnName').value = '';
             document.getElementById('newColumnType').value = 'text';
-            document.getElementById('columnGroup').value = '';
+            document.getElementById('columnGroup').value = groupName || '';
         }
 
         modal.style.display = 'block';
@@ -1175,6 +1243,13 @@ export const AppCore = {
                 if (existingColumn) {
                     return this.showToast('This column is already added to the template.', 'error');
                 }
+
+                // Calculate display order to add at the end
+                const existingColumns = this.state.currentTemplate.columns || [];
+                const maxDisplayOrder = existingColumns.length > 0
+                    ? Math.max(...existingColumns.map(col => col.display_order || 0))
+                    : 0;
+                var newDisplayOrder = maxDisplayOrder + 1;
             } else {
                 // For encoding templates: create new column
                 const name = document.getElementById('newColumnName').value.trim();
@@ -1183,12 +1258,30 @@ export const AppCore = {
                 
                 if (!name) return this.showToast('Column name is required.', 'error');
 
-                // Calculate display order to add column at the end
+                // Calculate display order to add column within the group or at the end
                 const existingColumns = this.state.currentTemplate.columns || [];
-                const maxDisplayOrder = existingColumns.length > 0 
-                    ? Math.max(...existingColumns.map(col => col.display_order || 0))
-                    : 0;
-                const newDisplayOrder = maxDisplayOrder + 1;
+                let newDisplayOrder;
+
+                if (groupName) {
+                    // Find the last column in the specified group
+                    const groupColumns = existingColumns.filter(col => col.encoding_columns.group_name === groupName);
+                    if (groupColumns.length > 0) {
+                        const maxGroupDisplayOrder = Math.max(...groupColumns.map(col => col.display_order || 0));
+                        newDisplayOrder = maxGroupDisplayOrder + 1;
+                    } else {
+                        // Group is empty, add at the end
+                        const maxDisplayOrder = existingColumns.length > 0
+                            ? Math.max(...existingColumns.map(col => col.display_order || 0))
+                            : 0;
+                        newDisplayOrder = maxDisplayOrder + 1;
+                    }
+                } else {
+                    // No group, add at the end
+                    const maxDisplayOrder = existingColumns.length > 0
+                        ? Math.max(...existingColumns.map(col => col.display_order || 0))
+                        : 0;
+                    newDisplayOrder = maxDisplayOrder + 1;
+                }
 
                 // Create reusable column with group name (for visual grouping only)
                 const column = await SupabaseService.createColumn(
@@ -1203,12 +1296,6 @@ export const AppCore = {
             }
 
             // Add to current template with display order to add at the end
-            const existingColumns = this.state.currentTemplate.columns || [];
-            const maxDisplayOrder = existingColumns.length > 0 
-                ? Math.max(...existingColumns.map(col => col.display_order || 0))
-                : 0;
-            const newDisplayOrder = maxDisplayOrder + 1;
-
             await SupabaseService.addColumnToTemplate(
                 this.state.currentTemplate.id,
                 columnId,
