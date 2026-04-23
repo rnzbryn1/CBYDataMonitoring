@@ -486,8 +486,7 @@ export const AppCore = {
                         secondRowHTML += `
                             <th data-col-id="${groupColDef.id}" data-col-name="${groupColDef.column_name}">
                                 <div class="th-inner">
-                                    <span class="th-text">${groupVariable}</span>
-                                    <span style="font-size: 10px; color: #666; display: block;">${groupColDef.column_name}</span>
+                                    <span class="th-text">${groupVariable} - ${groupColDef.column_name}</span>
                                     <button class="del-col-btn" title="Delete column"
                                         onclick="deleteColumn('${groupColDef.id}', '${groupColDef.column_name}')">✕</button>
                                 </div>
@@ -511,8 +510,7 @@ export const AppCore = {
                         secondRowHTML += `
                             <th data-col-id="${groupColDef.id}" data-col-name="${groupColDef.column_name}">
                                 <div class="th-inner">
-                                    <span class="th-text">${groupVariable}</span>
-                                    <span style="font-size: 10px; color: #666; display: block;">${groupColDef.column_name}</span>
+                                    <span class="th-text">${groupVariable} - ${groupColDef.column_name}</span>
                                     <button class="del-col-btn" title="Delete column"
                                         onclick="deleteColumn('${groupColDef.id}', '${groupColDef.column_name}')">✕</button>
                                 </div>
@@ -523,14 +521,12 @@ export const AppCore = {
                 currentGroup = null;
                 groupStartIndex = -1;
             }
-
             // For ungrouped columns, add header with rowspan=2
             if (!groupName) {
                 headerHTML += `
                     <th data-col-id="${colDef.id}" data-col-name="${colDef.column_name}" rowspan="2">
                         <div class="th-inner">
-                            <span class="th-text">${variable}</span>
-                            <span style="font-size: 10px; color: #666; display: block;">${colDef.column_name}</span>
+                            <span class="th-text">${variable} - ${colDef.column_name}</span>
                             <button class="del-col-btn" title="Delete column"
                                 onclick="deleteColumn('${colDef.id}', '${colDef.column_name}')">✕</button>
                         </div>
@@ -550,8 +546,7 @@ export const AppCore = {
                 secondRowHTML += `
                     <th data-col-id="${groupColDef.id}" data-col-name="${groupColDef.column_name}">
                         <div class="th-inner">
-                            <span class="th-text">${groupVariable}</span>
-                            <span style="font-size: 10px; color: #666; display: block;">${groupColDef.column_name}</span>
+                            <span class="th-text">${groupVariable} - ${groupColDef.column_name}</span>
                             <button class="del-col-btn" title="Delete column"
                                 onclick="deleteColumn('${groupColDef.id}', '${groupColDef.column_name}')">✕</button>
                         </div>
