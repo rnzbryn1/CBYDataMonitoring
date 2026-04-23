@@ -1,15 +1,8 @@
 import { supabaseClient, SupabaseService } from './supabase-service.js';
+import { requireAuth } from './auth-utils.js';
 
 // --- PROTECT THE PAGE ---
-async function checkUser() {
-    const { data: { user } } = await supabaseClient.auth.getUser();
-    
-    if (!user) {
-        // If no user is found, kick back to login
-        window.location.href = 'login.html'; 
-    }
-}
-checkUser();
+requireAuth();
 
 // --- SHOW ACCOUNT MANAGER FOR ADMIN ONLY ---
 async function showAccountManagerLink() {
@@ -21,7 +14,13 @@ async function showAccountManagerLink() {
             const accountManagerLi = document.createElement('li');
             accountManagerLi.onclick = function() { window.loadPage(this, 'accountmanager.html'); };
             accountManagerLi.textContent = 'Account Manager';
-            menu.appendChild(accountManagerLi);
+            // Insert before the logout button
+            const logoutBtn = menu.querySelector('.logout-btn');
+            if (logoutBtn) {
+                menu.insertBefore(accountManagerLi, logoutBtn);
+            } else {
+                menu.appendChild(accountManagerLi);
+            }
         }
     } catch (error) {
         console.error('Error checking admin status:', error.message);

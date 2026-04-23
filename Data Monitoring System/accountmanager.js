@@ -1,4 +1,5 @@
 import { SupabaseService, supabaseClient } from './supabase-service.js';
+import { requireAuth } from './auth-utils.js';
 
 const form = document.getElementById('createUserForm');
 const usersList = document.getElementById('usersList');
@@ -207,6 +208,7 @@ window.toggleUserStatus = async function(userId, newStatus) {
 
 // Initialize page
 async function init() {
+    await requireAuth();
     const hasAccess = await checkAdminAccess();
     if (hasAccess) {
         await Promise.all([

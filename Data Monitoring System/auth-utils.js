@@ -2,7 +2,34 @@
 // AUTH UTILITIES - Role-based access control
 // =====================================================
 
-import { SupabaseService } from './supabase-service.js';
+import { SupabaseService, supabaseClient } from './supabase-service.js';
+
+/**
+ * Check if current user is authenticated
+ * @returns {Promise<boolean>}
+ */
+export async function isAuthenticated() {
+    try {
+        const { data: { user } } = await supabaseClient.auth.getUser();
+        return !!user;
+    } catch (error) {
+        console.error('Error checking authentication:', error);
+        return false;
+    }
+}
+
+/**
+ * Redirect to login if not authenticated
+ * Call this on page load for protected pages
+ */
+export async function requireAuth() {
+    const authenticated = await isAuthenticated();
+    if (!authenticated) {
+        window.location.href = 'login.html';
+        return false;
+    }
+    return true;
+}
 
 /**
  * Check if current user is admin

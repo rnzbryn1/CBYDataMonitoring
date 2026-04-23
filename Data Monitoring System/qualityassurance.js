@@ -1,9 +1,10 @@
 import { AppCore } from './core.js';
-import { applyRoleRestrictions } from './auth-utils.js';
+import { applyRoleRestrictions, requireAuth } from './auth-utils.js';
 
 window.onload = async () => {
+    await requireAuth();
     await applyRoleRestrictions();
-    AppCore.init('QA');
+    AppCore.initModule('Quality Assurance', 3); // departmentId = 3 for QA
 };
 
 window.toggleMenu = function(event, id) {

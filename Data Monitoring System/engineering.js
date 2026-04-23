@@ -1,9 +1,9 @@
 // engineering.js
 import { AppCore } from './core.js';
-import { applyRoleRestrictions } from './auth-utils.js';
+import { applyRoleRestrictions, requireAuth } from './auth-utils.js';
 
 window.onload = async () => {
+    await requireAuth();
     await applyRoleRestrictions();
-    // Ito ang magsasabi sa database na "Engineering" data ang kargahin
-    AppCore.init('Engineering'); 
+    AppCore.initModule('Engineering', 4); // departmentId = 4 for Engineering
 };
