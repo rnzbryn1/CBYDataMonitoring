@@ -892,21 +892,32 @@ export const SupabaseService = {
 
   /**
    * Save a column formula (applied to all rows in a column)
+   * Handles both creating new and updating existing column formulas
    * @param {string} templateId
    * @param {string} columnId
    * @param {string} formula - e.g., "=Price * Quantity"
    */
   async saveColumnFormula(templateId, columnId, formula) {
+    // First, try to delete any existing column formula for this template+column
+    // This ensures we properly update when entry_id is NULL
+    await this.client
+      .from('cell_formulas')
+      .delete()
+      .eq('template_id', templateId)
+      .eq('column_id', columnId)
+      .is('entry_id', null);
+
+    // Now insert the new formula
     const { error } = await this.client
       .from('cell_formulas')
-      .upsert({
+      .insert({
         template_id: templateId,
         entry_id: null,
         column_id: columnId,
         formula: formula,
         formula_type: 'column',
         updated_at: new Date().toISOString()
-      }, { onConflict: 'template_id,entry_id,column_id' });
+      });
 
     if (error) throw error;
   },
