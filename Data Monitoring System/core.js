@@ -2351,6 +2351,16 @@ export const AppCore = {
 
             // Refresh the current template to get updated column names
             this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
+            
+            // Update cache with the refreshed template data
+            const cacheKey = `template-${this.state.currentTemplate.id}`;
+            if (this.state.cache[cacheKey]) {
+                this.state.cache[cacheKey].template = this.state.currentTemplate;
+            }
+            
+            // Regenerate variable mappings to ensure consistency
+            this.generateColumnVariables();
+            
             this.renderAll();
             this.showToast('Column renamed!');
         } catch (err) {
