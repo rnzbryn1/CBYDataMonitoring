@@ -25,6 +25,9 @@ export const AppCore = {
         // AUTO-UPDATE: Track cell formulas for recalculation
         cellFormulas:           {},             // { "entryId|columnName": "formula", ... }
         columnFormulas:         {},             // { "columnName": "formula" } for per-row calculations
+        // Variable mapping system
+        columnVariables:        {},             // { "columnName": "A", "columnName2": "B", ... }
+        variableColumns:        {},             // { "A": "columnName", "B": "columnName2", ... }
     },
 
     // ============================================================
@@ -372,6 +375,9 @@ export const AppCore = {
             // AUTO-UPDATE: Clear formula state when switching templates
             this.state.cellFormulas = {};
             this.state.columnFormulas = {};
+            // Clear variable mappings when switching templates
+            this.state.columnVariables = {};
+            this.state.variableColumns = {};
 
             this.updateActiveUI(templateId);
             this.renderAll();
@@ -452,6 +458,9 @@ export const AppCore = {
         const headers = document.getElementById('tableHeaders');
 
         // Generate header rows preserving original column order
+        // Generate column variables first
+        this.generateColumnVariables();
+        
         let headerHTML = '<tr><th><input type="checkbox" id="selectAll"></th>';
         let secondRowHTML = '';
         let needsSecondRow = false;
@@ -463,6 +472,7 @@ export const AppCore = {
             const col = columns[i];
             const colDef = col.encoding_columns;
             const groupName = colDef.group_name || null;
+            const variable = this.getColumnVariable(colDef.column_name);
 
             if (groupName && groupName !== currentGroup) {
                 // Close previous group if exists
@@ -472,10 +482,12 @@ export const AppCore = {
                     for (let j = groupStartIndex; j < i; j++) {
                         const groupCol = columns[j];
                         const groupColDef = groupCol.encoding_columns;
+                        const groupVariable = this.getColumnVariable(groupColDef.column_name);
                         secondRowHTML += `
                             <th data-col-id="${groupColDef.id}" data-col-name="${groupColDef.column_name}">
                                 <div class="th-inner">
-                                    <span class="th-text">${groupColDef.column_name}</span>
+                                    <span class="th-text">${groupVariable}</span>
+                                    <span style="font-size: 10px; color: #666; display: block;">${groupColDef.column_name}</span>
                                     <button class="del-col-btn" title="Delete column"
                                         onclick="deleteColumn('${groupColDef.id}', '${groupColDef.column_name}')">✕</button>
                                 </div>
@@ -495,10 +507,12 @@ export const AppCore = {
                     for (let j = groupStartIndex; j < i; j++) {
                         const groupCol = columns[j];
                         const groupColDef = groupCol.encoding_columns;
+                        const groupVariable = this.getColumnVariable(groupColDef.column_name);
                         secondRowHTML += `
                             <th data-col-id="${groupColDef.id}" data-col-name="${groupColDef.column_name}">
                                 <div class="th-inner">
-                                    <span class="th-text">${groupColDef.column_name}</span>
+                                    <span class="th-text">${groupVariable}</span>
+                                    <span style="font-size: 10px; color: #666; display: block;">${groupColDef.column_name}</span>
                                     <button class="del-col-btn" title="Delete column"
                                         onclick="deleteColumn('${groupColDef.id}', '${groupColDef.column_name}')">✕</button>
                                 </div>
@@ -515,7 +529,8 @@ export const AppCore = {
                 headerHTML += `
                     <th data-col-id="${colDef.id}" data-col-name="${colDef.column_name}" rowspan="2">
                         <div class="th-inner">
-                            <span class="th-text">${colDef.column_name}</span>
+                            <span class="th-text">${variable}</span>
+                            <span style="font-size: 10px; color: #666; display: block;">${colDef.column_name}</span>
                             <button class="del-col-btn" title="Delete column"
                                 onclick="deleteColumn('${colDef.id}', '${colDef.column_name}')">✕</button>
                         </div>
@@ -531,10 +546,12 @@ export const AppCore = {
             for (let j = groupStartIndex; j < columns.length; j++) {
                 const groupCol = columns[j];
                 const groupColDef = groupCol.encoding_columns;
+                const groupVariable = this.getColumnVariable(groupColDef.column_name);
                 secondRowHTML += `
                     <th data-col-id="${groupColDef.id}" data-col-name="${groupColDef.column_name}">
                         <div class="th-inner">
-                            <span class="th-text">${groupColDef.column_name}</span>
+                            <span class="th-text">${groupVariable}</span>
+                            <span style="font-size: 10px; color: #666; display: block;">${groupColDef.column_name}</span>
                             <button class="del-col-btn" title="Delete column"
                                 onclick="deleteColumn('${groupColDef.id}', '${groupColDef.column_name}')">✕</button>
                         </div>
@@ -2466,6 +2483,68 @@ export const AppCore = {
     },
 
     //-----------------------------------------------------------------------------------------
+    //------------Variable Mapping System for Columns------------------
+    //-----------------------------------------------------------------------------------------
+    generateColumnVariables: function() {
+        const columns = this.state.currentTemplate?.columns || [];
+        this.state.columnVariables = {};
+        this.state.variableColumns = {};
+        
+        columns.forEach((col, index) => {
+            const colName = col.encoding_columns.column_name;
+            // Generate Excel-style column names: A, B, C, ..., Z, AA, AB, ...
+            const variable = this.indexToColumnVariable(index);
+            this.state.columnVariables[colName] = variable;
+            this.state.variableColumns[variable] = colName;
+        });
+    },
+    
+    indexToColumnVariable: function(index) {
+        let variable = '';
+        while (index >= 0) {
+            variable = String.fromCharCode(65 + (index % 26)) + variable;
+            index = Math.floor(index / 26) - 1;
+        }
+        return variable;
+    },
+    
+    getColumnVariable: function(columnName) {
+        return this.state.columnVariables[columnName] || columnName;
+    },
+    
+    getColumnNameFromVariable: function(variable) {
+        return this.state.variableColumns[variable] || variable;
+    },
+    
+    convertFormulaToVariables: function(formula) {
+        if (!formula) return formula;
+        
+        let convertedFormula = formula;
+        Object.keys(this.state.columnVariables).forEach(colName => {
+            const variable = this.state.columnVariables[colName];
+            const safeCol = colName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const regex = new RegExp(`\\b${safeCol}\\b`, 'g');
+            convertedFormula = convertedFormula.replace(regex, variable);
+        });
+        
+        return convertedFormula;
+    },
+    
+    convertFormulaToColumnNames: function(formula) {
+        if (!formula) return formula;
+        
+        let convertedFormula = formula;
+        Object.keys(this.state.variableColumns).forEach(variable => {
+            const colName = this.state.variableColumns[variable];
+            const safeVar = variable.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const regex = new RegExp(`\\b${safeVar}\\b`, 'g');
+            convertedFormula = convertedFormula.replace(regex, colName);
+        });
+        
+        return convertedFormula;
+    },
+
+    //-----------------------------------------------------------------------------------------
     //-------------Para sa Computation ng mga cells gamit calculation types------------------
     //-----------------------------------------------------------------------------------------
     getCurrentFormula: function () {
@@ -2494,20 +2573,23 @@ export const AppCore = {
     },
 
     openComputeModal: function () {
+        // Generate column variables before opening modal
+        this.generateColumnVariables();
+        
         const modal = document.createElement('div');
         modal.className = 'compute-modal';
 
         const cols = this.state.currentTemplate?.columns || [];
         
-        // Get current formula for the selected cell/column
-        const currentFormula = this.getCurrentFormula() || '';
+        // Get current formula for the selected cell/column and convert to variables
+        const currentFormula = this.convertFormulaToVariables(this.getCurrentFormula() || '');
 
         modal.innerHTML = `
             <div class="compute-box">
                 <h3>Compute Formula</h3>
 
                 <label>Formula</label>
-                <input id="computeFormula" placeholder="=Price * Quantity" value="${currentFormula}">
+                <input id="computeFormula" placeholder="=SUM(A, B, C)" value="${currentFormula}">
 
                 <label>Apply Mode</label>
                 <select id="computeMode">
@@ -2517,8 +2599,11 @@ export const AppCore = {
 
                 <div class="compute-columns">
                     ${cols.map(c => `
-                        <button type="button" class="col-btn">
-                            ${c.encoding_columns.column_name}
+                        <button type="button" class="col-btn" data-col-name="${c.encoding_columns.column_name}">
+                            <div style="display: flex; flex-direction: column; align-items: center;">
+                                <span style="font-weight: bold; color: #2563eb; font-size: 14px;">${this.getColumnVariable(c.encoding_columns.column_name)}</span>
+                                <span style="font-size: 11px; color: #666;">${c.encoding_columns.column_name}</span>
+                            </div>
                         </button>
                     `).join('')}
                 </div>
@@ -2540,7 +2625,7 @@ export const AppCore = {
 
         document.body.appendChild(modal);
 
-        // click column → auto insert sa formula
+        // click column → auto insert sa formula (use variable name)
         const input = modal.querySelector('#computeFormula');
 
         // COLUMN BUTTONS
@@ -2549,7 +2634,9 @@ export const AppCore = {
                 const start = input.selectionStart ?? input.value.length;
                 const end = input.selectionEnd ?? input.value.length;
 
-                const text = btn.textContent.trim();
+                // Use variable name instead of column name
+                const colName = btn.dataset.colName;
+                const variable = this.getColumnVariable(colName);
 
                 const before = input.value.substring(0, start);
                 const after = input.value.substring(end);
@@ -2558,8 +2645,8 @@ export const AppCore = {
                 const insideFunc = /\w+\([^()]*$/.test(before);
 
                 const insert = insideFunc
-                    ? (before.endsWith('(') ? '' : ', ') + text
-                    : (before.trim() === '' ? '' : ' ') + text;
+                    ? (before.endsWith('(') ? '' : ', ') + variable
+                    : (before.trim() === '' ? '' : ' ') + variable;
 
                 input.value = before + insert + after;
 
@@ -2599,7 +2686,9 @@ export const AppCore = {
             const formula = modal.querySelector('#computeFormula').value;
             const mode = modal.querySelector('#computeMode').value;
 
-            this.applyFormula(formula, mode);
+            // Convert formula from variables to column names for storage
+            const convertedFormula = this.convertFormulaToColumnNames(formula);
+            this.applyFormula(convertedFormula, mode);
             modal.remove();
         };
     },
@@ -2614,14 +2703,19 @@ export const AppCore = {
             return this.showToast('Formula must start with "="', 'error');
         }
 
+        // Ensure variables are generated
+        this.generateColumnVariables();
+        
         const expr = formula.slice(1);
         const columns = this.state.currentTemplate?.columns || [];
 
         const computeRow = (entry) => {
             let evalExpr = expr;
 
+            // Convert column names to variables for evaluation
             columns.forEach(c => {
                 const colName = c.encoding_columns.column_name;
+                const variable = this.getColumnVariable(colName);
                 const raw = entry.values[colName] ?? '0';
 
                 // convert text → number
@@ -2640,8 +2734,14 @@ export const AppCore = {
                     // if number literal
                     if (!isNaN(clean)) return parseFloat(clean);
 
-                    // if column name
-                    const raw = entry.values[clean] ?? '0';
+                    // if column name or variable
+                    let colNameToUse = clean;
+                    // Check if it's a variable
+                    if (this.state.variableColumns[clean]) {
+                        colNameToUse = this.state.variableColumns[clean];
+                    }
+                    
+                    const raw = entry.values[colNameToUse] ?? '0';
                     return parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
                 };
 
