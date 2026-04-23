@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="dst.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+<script type="module" src="auth-utils.js"></script>
 </head>
 
 <body>
@@ -16,7 +17,7 @@
     <!-- HEADER -->
     <header class="header">
         <h1>Sales Order Desk</h1>
-        <button class="add-cat-btn" onclick="openModal()">+ New Category</button>
+        <button class="add-cat-btn" onclick="openModal()" data-admin-only>+ New Category</button>
     </header>
 
     <!-- CATEGORY CARDS -->
@@ -42,7 +43,7 @@
                 <button onclick="sortByDate()">Sort by Date</button>
                 <button onclick="exportToExcel()">Export Excel</button>
                 <button onclick="openImportModal()">Import Excel</button>
-                <button class="add-cat-btn" onclick="openColumnModal()">+ Add Column</button>
+                <button class="add-cat-btn" onclick="openColumnModal()" data-admin-only>+ Add Column</button>
             </div>
         </section>
 

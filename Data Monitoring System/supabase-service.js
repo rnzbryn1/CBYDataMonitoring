@@ -7,11 +7,21 @@ import { SUPABASE_CONFIG } from './config.js';
 
 const { createClient } = supabase;
 const supabaseClient = createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
+const supabaseAdminClient = createClient(
+  SUPABASE_CONFIG.url,
+  SUPABASE_CONFIG.serviceRoleKey,
+  {
+    auth: {
+      storageKey: 'supabase-admin-auth-token'
+    }
+  }
+);
 
 export { supabaseClient };
 
 export const SupabaseService = {
   client: supabaseClient,
+  adminClient: supabaseAdminClient,
 
   // =====================================================
   // ENCODING TEMPLATES
@@ -1257,5 +1267,269 @@ export const SupabaseService = {
     
     if (error) throw error;
     return count;
+  },
+
+  // =====================================================
+  // USER & ROLE MANAGEMENT
+  // =====================================================
+
+  /**
+   * Get current user's profile with role
+   * @returns {Promise<Object>} User profile with role information
+   */
+  async getCurrentUserProfile() {
+    const { data: { user } } = await this.client.auth.getUser();
+
+    if (!user) return null;
+
+    // First try to get profile without joins
+    const { data: profile, error } = await this.client
+      .from('profiles')
+      .select('*')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Error fetching profile:', error);
+      throw error;
+    }
+
+    if (!profile) {
+      console.log('No profile found for user:', user.id);
+      return null;
+    }
+
+    // If profile exists, try to get role and department separately
+    try {
+      const [roleData, deptData] = await Promise.all([
+        profile.role_id ? this.client.from('roles').select('*').eq('id', profile.role_id).single() : Promise.resolve({ data: null }),
+        profile.department_id ? this.client.from('departments').select('*').eq('id', profile.department_id).single() : Promise.resolve({ data: null })
+      ]);
+
+      return {
+        ...profile,
+        roles: roleData.data,
+        departments: deptData.data
+      };
+    } catch (joinError) {
+      console.error('Error fetching joins:', joinError);
+      // Return profile without joins if joins fail
+      return profile;
+    }
+  },
+
+  /**
+   * Check if current user is admin
+   * @returns {Promise<boolean>} True if user is admin
+   */
+  async isAdmin() {
+    const profile = await this.getCurrentUserProfile();
+    return profile && profile.roles && profile.roles.role_name === 'admin';
+  },
+
+  /**
+   * Get all roles
+   * @returns {Promise<Array>} Array of roles
+   */
+  async getRoles() {
+    const { data, error } = await this.client
+      .from('roles')
+      .select('*')
+      .order('role_name', { ascending: true });
+    
+    if (error) throw error;
+    return data;
+  },
+
+  /**
+   * Get all users with their profiles and roles
+   * @returns {Promise<Array>} Array of users with profiles
+   */
+  async getAllUsers() {
+    const { data, error } = await this.client
+      .from('profiles')
+      .select(`
+        *,
+        roles (*),
+        departments (*)
+      `)
+      .order('created_at', { ascending: false });
+    
+    if (error) throw error;
+    return data;
+  },
+
+  /**
+   * Create a new user with profile
+   * @param {string} email - User email
+   * @param {string} password - User password
+   * @param {string} username - Username (will use email instead)
+   * @param {number} departmentId - Department ID
+   * @param {number} roleId - Role ID (default: user role)
+   * @returns {Promise<Object>} Created user data
+   */
+  async createUser(email, password, username, departmentId, roleId = null) {
+    // Get user role ID if not provided
+    if (!roleId) {
+      const { data: roleData } = await this.client
+        .from('roles')
+        .select('id')
+        .eq('role_name', 'user')
+        .single();
+      
+      if (!roleData) {
+        throw new Error('User role not found. Please run seed_roles.sql first.');
+      }
+      roleId = roleData.id;
+    }
+
+    // Use email as username
+    const finalUsername = email;
+
+    // Check if user already exists in auth by email
+    const { data: existingUsers, error: listError } = await this.adminClient.auth.admin.listUsers();
+    if (listError) throw listError;
+
+    const existingUser = existingUsers.users.find(u => u.email === email);
+
+    let authData;
+    let authError;
+
+    if (existingUser) {
+      // User already exists, just use existing auth data
+      authData = { user: existingUser };
+      authError = null;
+    } else {
+      // Create new user in auth using admin client (bypasses email confirmation)
+      const result = await this.adminClient.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: {
+          username: finalUsername
+        }
+      });
+      authData = result.data;
+      authError = result.error;
+    }
+
+    if (authError) throw authError;
+
+    // Check if profile already exists by user ID
+    const { data: existingProfileById } = await this.client
+      .from('profiles')
+      .select('*')
+      .eq('id', authData.user.id)
+      .maybeSingle();
+
+    // Check if profile already exists by username (email)
+    const { data: existingProfileByUsername } = await this.client
+      .from('profiles')
+      .select('*')
+      .eq('username', finalUsername)
+      .maybeSingle();
+
+    let profile;
+    let profileError;
+
+    if (existingProfileById) {
+      // Update existing profile by user ID
+      const result = await this.client
+        .from('profiles')
+        .update({
+          username: finalUsername,
+          department_id: departmentId,
+          role_id: roleId,
+          status: 'active'
+        })
+        .eq('id', authData.user.id)
+        .select()
+        .single();
+      profile = result.data;
+      profileError = result.error;
+    } else if (existingProfileByUsername) {
+      // Update existing profile by username (this is the user's profile)
+      const result = await this.client
+        .from('profiles')
+        .update({
+          department_id: departmentId,
+          role_id: roleId,
+          status: 'active'
+        })
+        .eq('username', finalUsername)
+        .select()
+        .single();
+      profile = result.data;
+      profileError = result.error;
+    } else {
+      // Create new profile
+      const result = await this.client
+        .from('profiles')
+        .insert([{
+          id: authData.user.id,
+          username: finalUsername,
+          department_id: departmentId,
+          role_id: roleId,
+          status: 'active'
+        }])
+        .select()
+        .single();
+      profile = result.data;
+      profileError = result.error;
+    }
+
+    if (profileError) throw profileError;
+
+    return {
+      user: authData.user,
+      profile
+    };
+  },
+
+  /**
+   * Update user profile
+   * @param {string} userId - User ID
+   * @param {Object} updates - Fields to update (username, department_id, role_id, status)
+   * @returns {Promise<Object>} Updated profile
+   */
+  async updateUserProfile(userId, updates) {
+    // Use admin client to bypass RLS for admin operations
+    const { data, error } = await this.adminClient
+      .from('profiles')
+      .update(updates)
+      .eq('id', userId)
+      .select()
+      .single();
+    
+    if (error) throw error;
+    return data;
+  },
+
+  /**
+   * Delete user profile (requires admin to delete from auth separately)
+   * @param {string} userId - User ID
+   * @returns {Promise<void>}
+   */
+  async deleteUserProfile(userId) {
+    const { error } = await this.client
+      .from('profiles')
+      .delete()
+      .eq('id', userId);
+    
+    if (error) throw error;
+  },
+
+  /**
+   * Get all departments
+   * @returns {Promise<Array>} Array of departments
+   */
+  async getDepartments() {
+    const { data, error } = await this.client
+      .from('departments')
+      .select('*')
+      .order('name', { ascending: true });
+    
+    if (error) throw error;
+    return data;
   }
 };

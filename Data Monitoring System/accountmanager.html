@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <meta charset="UTF-8">
+    <title>Account Manager - Data Monitoring System</title>
+    <link rel="stylesheet" href="accountmanager.css">
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <h1>Account Manager</h1>
+        <button id="toggleCreateForm" class="btn btn-primary">+ Create New User</button>
+    </div>
+
+    <!-- Create User Form (Hidden by default) -->
+    <div class="card" id="createUserCard" style="display: none;">
+        <h2>Create New User</h2>
+        <form id="createUserForm" autocomplete="off">
+            <div class="form-group">
+                <label for="email">Email *</label>
+                <input type="email" id="email" required autocomplete="off">
+            </div>
+
+            <div class="form-group">
+                <label for="password">Password *</label>
+                <input type="password" id="password" required minlength="6" autocomplete="new-password">
+            </div>
+
+            <div class="form-group">
+                <label for="department">Department *</label>
+                <select id="department" required autocomplete="off">
+                    <option value="">Select Department</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="role">Role *</label>
+                <select id="role" required autocomplete="off">
+                    <option value="">Select Role</option>
+                </select>
+            </div>
+
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">Create User</button>
+                <button type="button" class="btn btn-secondary" id="cancelCreate">Cancel</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Users List -->
+    <div class="table-section">
+        <h2>Existing Users</h2>
+        <div id="usersList">
+            <p>Loading users...</p>
+        </div>
+    </div>
+</div>
+
+<script type="module" src="accountmanager.js"></script>
+</body>
+</html>
