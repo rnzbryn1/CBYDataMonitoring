@@ -2478,6 +2478,59 @@ export const AppCore = {
     },
 
     //-----------------------------------------------------------------------------------------
+    //------------Formula Conflict Management------------------
+    //-----------------------------------------------------------------------------------------
+    removeColumnFormula: async function(columnName) {
+        // Remove from state
+        delete this.state.columnFormulas[columnName];
+        
+        // Remove from database
+        const colDef = this.state.currentTemplate?.columns?.find(c => c.encoding_columns.column_name === columnName)?.encoding_columns;
+        if (colDef) {
+            try {
+                await SupabaseService.deleteColumnFormula(this.state.currentTemplate.id, colDef.id);
+            } catch (err) {
+                console.error('Failed to delete column formula:', err);
+            }
+        }
+    },
+    
+    removeAllCellFormulasForColumn: async function(columnName) {
+        const formulasToRemove = [];
+        
+        // Find all cell formulas for this column
+        Object.keys(this.state.cellFormulas).forEach(key => {
+            const [entryId, colName] = key.split('|');
+            if (colName === columnName) {
+                formulasToRemove.push({ entryId, key });
+            }
+        });
+        
+        // Remove from state
+        formulasToRemove.forEach(({ key }) => {
+            delete this.state.cellFormulas[key];
+        });
+        
+        // Remove from database
+        const colDef = this.state.currentTemplate?.columns?.find(c => c.encoding_columns.column_name === columnName)?.encoding_columns;
+        if (colDef) {
+            try {
+                await Promise.all(
+                    formulasToRemove.map(({ entryId }) => 
+                        SupabaseService.deleteCellFormula(
+                            this.state.currentTemplate.id,
+                            entryId,
+                            colDef.id
+                        )
+                    )
+                );
+            } catch (err) {
+                console.error('Failed to delete cell formulas:', err);
+            }
+        }
+    },
+
+    //-----------------------------------------------------------------------------------------
     //------------Variable Mapping System for Columns------------------
     //-----------------------------------------------------------------------------------------
     generateColumnVariables: function() {
@@ -2701,6 +2754,37 @@ export const AppCore = {
         // Ensure variables are generated
         this.generateColumnVariables();
         
+        const columnName = this.state.currentColName;
+        if (!columnName) {
+            return this.showToast('No column selected', 'error');
+        }
+
+        // Check for formula conflicts
+        if (mode === 'cell') {
+            // Check if there's an existing column formula for this column
+            if (this.state.columnFormulas[columnName]) {
+                return this.showToast('Cannot apply cell formula: This column already has a whole column formula applied. To update, you must use "Whole Column" mode or remove the existing column formula first.', 'error');
+            }
+        } else if (mode === 'column') {
+            // Check if there are existing cell formulas for this column
+            const existingCellFormulas = [];
+            Object.keys(this.state.cellFormulas).forEach(key => {
+                const [entryId, colName] = key.split('|');
+                if (colName === columnName) {
+                    existingCellFormulas.push({ entryId, formula: this.state.cellFormulas[key] });
+                }
+            });
+
+            if (existingCellFormulas.length > 0) {
+                const confirmReplace = confirm(`Found ${existingCellFormulas.length} cell formula(s) in this column that will be replaced:\n\n${existingCellFormulas.slice(0, 3).map(f => `Row ${f.entryId.substring(0, 8)}: ${f.formula}`).join('\n')}${existingCellFormulas.length > 3 ? '\n...' : ''}\n\nDo you want to replace these cell formulas with the new column formula?`);
+                if (!confirmReplace) {
+                    return; // User cancelled
+                }
+                // Remove all existing cell formulas for this column
+                await this.removeAllCellFormulasForColumn(columnName);
+            }
+        }
+        
         const expr = formula.slice(1);
         const columns = this.state.currentTemplate?.columns || [];
 
@@ -2890,6 +2974,14 @@ export const AppCore = {
 
         if (!entryId || !columnName || !colDef) {
             return this.showToast('Invalid selection', 'error');
+        }
+
+        // Check for formula conflicts when removing
+        if (mode === 'cell') {
+            // Check if there's an existing column formula for this column
+            if (this.state.columnFormulas[columnName]) {
+                return this.showToast('Cannot remove cell formula: This column has a whole column formula applied. To remove formulas, you must use "Whole Column" mode to remove the column formula.', 'error');
+            }
         }
 
         try {

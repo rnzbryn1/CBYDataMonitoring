@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Formula Conflict Prevention Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ccc; border-radius: 5px; }
+        .success { color: green; }
+        .error { color: red; }
+        .info { color: blue; }
+        .warning { color: orange; }
+        .scenario { background: #f9f9f9; padding: 10px; margin: 10px 0; border-left: 4px solid #007bff; }
+        .expected { background: #e8f5e8; padding: 10px; margin: 10px 0; border-left: 4px solid #28a745; }
+    </style>
+</head>
+<body>
+    <h1>Formula Conflict Prevention System</h1>
+    
+    <div class="test-section">
+        <h2>✅ Implementation Complete</h2>
+        <p class="success">Formula conflict prevention system has been successfully implemented!</p>
+        <p class="info">The system now prevents overlapping formulas between cell and column modes.</p>
+    </div>
+
+    <div class="test-section">
+        <h2>🧪 Test Scenarios</h2>
+        
+        <div class="scenario">
+            <h3>Scenario 1: Cell Formula → Column Formula Conflict</h3>
+            <ol>
+                <li>Select a cell and apply a formula in "Selected Cell" mode (e.g., "=A * B")</li>
+                <li>Right-click the same column and select "Compute" again</li>
+                <li>Change mode to "Whole Column" and try to apply a different formula</li>
+                <li><strong>Expected:</strong> Confirmation dialog appears asking to replace existing cell formulas</li>
+                <li>If confirmed, all cell formulas in that column are removed and replaced with column formula</li>
+            </ol>
+        </div>
+
+        <div class="scenario">
+            <h3>Scenario 2: Column Formula → Cell Formula Conflict</h3>
+            <ol>
+                <li>Apply a formula to an entire column in "Whole Column" mode</li>
+                <li>Right-click a specific cell in that same column</li>
+                <li>Try to apply a different formula in "Selected Cell" mode</li>
+                <li><strong>Expected:</strong> Error message appears preventing cell formula application</li>
+                <li><strong>Message:</strong> "Cannot apply cell formula: This column already has a whole column formula applied. To update, you must use 'Whole Column' mode or remove the existing column formula first."</li>
+                <li>Cell formula is NOT applied - user must use column mode instead</li>
+            </ol>
+        </div>
+
+        <div class="scenario">
+            <h3>Scenario 3: Multiple Cell Formulas → Column Formula</h3>
+            <ol>
+                <li>Apply cell formulas to multiple cells in the same column</li>
+                <li>Right-click any cell in that column</li>
+                <li>Try to apply a "Whole Column" formula</li>
+                <li><strong>Expected:</strong> Dialog shows count of existing cell formulas and asks for confirmation</li>
+                <li>If confirmed, all cell formulas are replaced with the column formula</li>
+            </ol>
+        </div>
+
+        <div class="scenario">
+            <h3>Scenario 4: Remove Cell Formula with Column Formula Present</h3>
+            <ol>
+                <li>Apply a formula to an entire column in "Whole Column" mode</li>
+                <li>Right-click a specific cell in that same column</li>
+                <li>Try to remove the formula (clear the formula input and apply)</li>
+                <li><strong>Expected:</strong> Error message appears preventing cell formula removal</li>
+                <li><strong>Message:</strong> "Cannot remove cell formula: This column has a whole column formula applied. To remove formulas, you must use 'Whole Column' mode to remove the column formula."</li>
+                <li>Cell formula is NOT removed - user must use column mode instead</li>
+            </ol>
+        </div>
+    </div>
+
+    <div class="test-section">
+        <h2>🔧 Implementation Details</h2>
+        
+        <h3>New Functions Added:</h3>
+        <ul>
+            <li><strong>removeColumnFormula(columnName)</strong> - Removes column formula from state and database</li>
+            <li><strong>removeAllCellFormulasForColumn(columnName)</strong> - Removes all cell formulas for a column</li>
+        </ul>
+
+        <h3>Conflict Detection Logic:</h3>
+        <ul>
+            <li>When applying cell formula: Checks for existing column formula</li>
+            <li>When applying column formula: Checks for existing cell formulas</li>
+            <li>Shows confirmation dialog with details of existing formulas</li>
+            <li>Only proceeds with user confirmation</li>
+            <li>Automatically cleans up conflicting formulas</li>
+        </ul>
+
+        <h3>User Experience:</h3>
+        <ul>
+            <li>Clear confirmation messages explaining the conflict</li>
+            <li>Shows existing formulas that will be replaced</li>
+            <li>User can cancel to avoid unwanted changes</li>
+            <li>Automatic cleanup when confirmed</li>
+        </ul>
+    </div>
+
+    <div class="test-section">
+        <h2>📋 Expected Confirmation Messages</h2>
+        
+        <div class="expected">
+            <h3>Cell → Column Conflict:</h3>
+            <p><em>"Found 3 cell formula(s) in this column that will be replaced:<br>
+            Row abc12345: =A * B<br>
+            Row def67890: =A + C<br>
+            Row ghi13579: =B / 2<br>
+            <br>
+            Do you want to replace these cell formulas with the new column formula?"</em></p>
+        </div>
+
+        <div class="expected">
+            <h3>Column → Cell Conflict (Error Message):</h3>
+            <p><em>"Cannot apply cell formula: This column already has a whole column formula applied. To update, you must use 'Whole Column' mode or remove the existing column formula first."</em></p>
+        </div>
+
+        <div class="expected">
+            <h3>Remove Cell Formula with Column Formula Present (Error Message):</h3>
+            <p><em>"Cannot remove cell formula: This column has a whole column formula applied. To remove formulas, you must use 'Whole Column' mode to remove the column formula."</em></p>
+        </div>
+    </div>
+
+    <div class="test-section">
+        <h2>✨ Benefits</h2>
+        <ul>
+            <li class="success">✅ Prevents formula conflicts and overlapping calculations</li>
+            <li class="success">✅ Clear user confirmation before making changes</li>
+            <li class="success">✅ Automatic cleanup of conflicting formulas</li>
+            <li class="success">✅ Maintains data integrity</li>
+            <li class="success">✅ User-friendly conflict resolution</li>
+        </ul>
+    </div>
+
+    <div class="test-section">
+        <h2>🚀 How to Test</h2>
+        <ol>
+            <li>Open the main application (any HTML file)</li>
+            <li>Select a template with data</li>
+            <li>Try the scenarios described above</li>
+            <li>Verify confirmation dialogs appear</li>
+            <li>Test both "OK" and "Cancel" options</li>
+            <li>Check that formulas are properly replaced or preserved</li>
+        </ol>
+    </div>
+
+    <script>
+        console.log('Formula Conflict Prevention System - Ready for testing');
+        console.log('Open the main application to test the conflict prevention functionality');
+    </script>
+</body>
+</html>
