@@ -11,7 +11,8 @@ const EditableTable = ({
   onEditEntry,
   onCompute,
   onDeleteColumn,
-  getColumnVariable 
+  getColumnVariable,
+  readOnly = false
 }) => {
   const [selectedCells, setSelectedCells] = useState(new Set());
   const [isSelecting, setIsSelecting] = useState(false);
@@ -601,7 +602,7 @@ const EditableTable = ({
                   <td
                     key={col.id}
                     data-column-id={col.encoding_columns.id}
-                    contentEditable
+                    contentEditable={!readOnly}
                     suppressContentEditableWarning
                     className={`${isSelected ? 'cell-selected' : ''} ${isHighlighted ? 'cell-highlighted' : ''}`}
                     style={{
