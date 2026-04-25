@@ -446,7 +446,8 @@ export const SupabaseService = {
         template_id: monitoringTemplateId,
         department_id: departmentId,
         status: 'draft',
-        created_at: encEntry.created_at
+        created_at: encEntry.created_at,
+        reference_number: encEntry.id
       }));
 
       const { data: newEntries, error: createError } = await this.client
@@ -736,6 +737,24 @@ export const SupabaseService = {
       .select()
       .single();
     
+    if (error) throw error;
+    return data;
+  },
+
+  /**
+   * Get a monitoring entry by reference number (encoding entry id)
+   * @param {string} templateId
+   * @param {string} referenceNumber
+   * @returns {Promise<Object|null>} Entry or null
+   */
+  async getMonitoringEntryByReferenceNumber(templateId, referenceNumber) {
+    const { data, error } = await this.client
+      .from('encoding_entries')
+      .select('*')
+      .eq('template_id', templateId)
+      .eq('reference_number', referenceNumber)
+      .maybeSingle();
+
     if (error) throw error;
     return data;
   },

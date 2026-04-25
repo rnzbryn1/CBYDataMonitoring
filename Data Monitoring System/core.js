@@ -791,6 +791,15 @@ export const AppCore = {
                     this.updateColumnComputation();
                 }
 
+                // 🔄 AUTO-UPDATE MONITORING TEMPLATES
+                changedCells.forEach(async ({ entryId, colName }) => {
+                    await this.autoUpdateMonitoring({ 
+                        values: {},
+                        entryId: entryId,
+                        columnName: colName
+                    }, 'update');
+                });
+
                 this.showToast(`Cleared ${selected.length} cell(s)`);
                 return;
             }
@@ -1033,6 +1042,13 @@ export const AppCore = {
             if (this.state.activeColumnCompute) {
                 this.updateColumnComputation();
             }
+
+            // 🔄 AUTO-UPDATE MONITORING TEMPLATES
+            await this.autoUpdateMonitoring({ 
+                values: { [colId]: newValue },
+                entryId: info.entryId,
+                columnName: info.colName
+            }, 'update');
         }
     },
 
@@ -1127,6 +1143,14 @@ export const AppCore = {
         if (this.state.activeColumnCompute) {
             this.updateColumnComputation();
         }
+
+        // 🔄 AUTO-UPDATE MONITORING TEMPLATES
+        changedEntries.forEach(async (values, entryId) => {
+            await this.autoUpdateMonitoring({ 
+                values: values,
+                entryId: entryId
+            }, 'update');
+        });
     },
 
     saveEntryField: async function (entryId, values) {
@@ -1602,6 +1626,9 @@ export const AppCore = {
             // 5. Refresh Table using the now-defined function
             await core.loadEntries(core.state.currentTemplateId);
 
+            // 6. AUTO-UPDATE MONITORING TEMPLATES
+            await core.autoUpdateMonitoring({ entryId: entry.id, values: values }, 'create');
+
         } catch (error) {
             console.error('Error saving data:', error);
             core.showToast('Error saving data: ' + error.message, 'error');
@@ -1624,6 +1651,12 @@ export const AppCore = {
             if (this.state.activeColumnCompute) {
                 this.updateColumnComputation();
             }
+
+            // 🔄 AUTO-UPDATE MONITORING TEMPLATES
+            await this.autoUpdateMonitoring({ 
+                entryId: id,
+                operation: 'delete'
+            }, 'delete');
         } catch (error) {
             this.showToast('Failed to delete: ' + error.message, 'error');
         }
@@ -3716,6 +3749,324 @@ export const AppCore = {
         });
 
         this.state.paletteInitialized = true;
+    },
+
+    //-----------------------------------------------------------------------------------------
+    //------------AUTO-UPDATE MONITORING FROM ENCODING------------------
+    //-----------------------------------------------------------------------------------------
+
+    /**
+     * Find related monitoring templates for the current encoding template
+     * @returns {Promise<Array>} Array of monitoring template objects
+     */
+    findRelatedMonitoringTemplates: async function () {
+        if (!this.state.currentTemplate || this.state.currentTemplate.module !== 'encoding') {
+            return [];
+        }
+
+        try {
+            // Get all templates for the current department
+            const allTemplates = await SupabaseService.getTemplates(this.state.departmentId);
+            
+            // Find monitoring templates that might be related
+            // Strategy: Look for monitoring templates with similar names or that share columns
+            const monitoringTemplates = allTemplates.filter(template => 
+                template.module === 'monitoring'
+            );
+
+            // For now, return all monitoring templates in the same department
+            // In the future, you could implement more sophisticated matching logic
+            return monitoringTemplates;
+        } catch (error) {
+            console.error('Error finding monitoring templates:', error);
+            return [];
+        }
+    },
+
+    /**
+     * Auto-update monitoring templates when encoding data changes
+     * @param {Object} changedData - Object containing the changed entry data
+     * @param {string} operation - 'create', 'update', or 'delete'
+     */
+    autoUpdateMonitoring: async function (changedData, operation = 'update') {
+        if (!this.state.currentTemplate || this.state.currentTemplate.module !== 'encoding') {
+            return; // Only auto-update from encoding templates
+        }
+
+        try {
+            const monitoringTemplates = await this.findRelatedMonitoringTemplates();
+            
+            if (monitoringTemplates.length === 0) {
+                console.log('No monitoring templates found for auto-update');
+                return;
+            }
+
+            console.log(`Auto-updating ${monitoringTemplates.length} monitoring templates...`);
+
+            for (const monitoringTemplate of monitoringTemplates) {
+                await this.syncDataToMonitoringTemplate(monitoringTemplate, changedData, operation);
+                const monitoringCacheKey = `template-${monitoringTemplate.id}`;
+                delete this.state.cache[monitoringCacheKey];
+            }
+
+            this.showToast(`Updated ${monitoringTemplates.length} monitoring template(s)`, 'success');
+        } catch (error) {
+            console.error('Error in auto-update monitoring:', error);
+            this.showToast('Auto-update failed: ' + error.message, 'error');
+        }
+    },
+
+    /**
+     * Sync data from encoding to a specific monitoring template
+     * @param {Object} monitoringTemplate - The monitoring template to update
+     * @param {Object} changedData - The changed entry data
+     * @param {string} operation - 'create', 'update', or 'delete'
+     */
+    syncDataToMonitoringTemplate: async function (monitoringTemplate, changedData, operation) {
+        try {
+            // Get monitoring template columns to find matching columns
+            const monitoringTemplateWithColumns = await SupabaseService.getTemplate(monitoringTemplate.id);
+            const monitoringColumns = monitoringTemplateWithColumns.columns || [];
+            
+            // Get encoding template columns for reference
+            const encodingColumns = this.state.currentTemplate.columns || [];
+
+            // Find matching columns between encoding and monitoring templates
+            const columnMappings = this.findColumnMappings(encodingColumns, monitoringColumns);
+
+            if (columnMappings.length === 0) {
+                console.log(`No matching columns found for monitoring template: ${monitoringTemplate.name}`);
+                return;
+            }
+
+            // Handle different operations
+            switch (operation) {
+                case 'create':
+                    await this.createMonitoringEntry(monitoringTemplate, changedData, columnMappings);
+                    break;
+                case 'update':
+                    await this.updateMonitoringEntry(monitoringTemplate, changedData, columnMappings);
+                    break;
+                case 'delete':
+                    await this.deleteMonitoringEntry(monitoringTemplate, changedData);
+                    break;
+            }
+        } catch (error) {
+            console.error(`Error syncing to monitoring template ${monitoringTemplate.name}:`, error);
+        }
+    },
+
+    /**
+     * Find matching columns between encoding and monitoring templates
+     * @param {Array} encodingColumns - Encoding template columns
+     * @param {Array} monitoringColumns - Monitoring template columns
+     * @returns {Array} Array of column mappings
+     */
+    findColumnMappings: function (encodingColumns, monitoringColumns) {
+        const mappings = [];
+
+        encodingColumns.forEach(encCol => {
+            const encColName = encCol.encoding_columns.column_name;
+            
+            // Find matching column in monitoring template (exact match first, then partial)
+            const matchingMonCol = monitoringColumns.find(monCol => {
+                const monColName = monCol.encoding_columns.column_name;
+                return monColName === encColName || 
+                       monColName.toLowerCase().includes(encColName.toLowerCase()) ||
+                       encColName.toLowerCase().includes(monColName.toLowerCase());
+            });
+
+            if (matchingMonCol) {
+                mappings.push({
+                    encodingColumn: encCol,
+                    monitoringColumn: matchingMonCol
+                });
+            }
+        });
+
+        return mappings;
+    },
+
+    /**
+     * Create a new entry in monitoring template based on encoding data
+     */
+    createMonitoringEntry: async function (monitoringTemplate, changedData, columnMappings) {
+        try {
+            // Create new entry in monitoring template and preserve a reference to the encoding entry
+            const monitoringEntry = await SupabaseService.createEntry(
+                monitoringTemplate.id,
+                this.state.departmentId,
+                changedData.entryId
+            );
+
+            // Map values from encoding to monitoring
+            const monitoringValues = {};
+            
+            columnMappings.forEach(mapping => {
+                const encodingColId = mapping.encodingColumn.encoding_columns.id;
+                const monitoringColId = mapping.monitoringColumn.encoding_columns.id;
+                
+                // Get the value from changed data
+                const value = changedData.values?.[encodingColId];
+                if (value !== undefined && value !== null && value !== '') {
+                    monitoringValues[monitoringColId] = value;
+                }
+            });
+
+            // Save the mapped values
+            if (Object.keys(monitoringValues).length > 0) {
+                await SupabaseService.updateEntryValues(monitoringEntry.id, monitoringValues);
+                console.log(`Created monitoring entry ${monitoringEntry.id} in template ${monitoringTemplate.name}`);
+            }
+        } catch (error) {
+            console.error('Error creating monitoring entry:', error);
+        }
+    },
+
+    /**
+     * Update existing entry in monitoring template
+     */
+    updateMonitoringEntry: async function (monitoringTemplate, changedData, columnMappings) {
+        try {
+            // Find corresponding monitoring entry for encoding entry
+            const targetMonitoringEntry = await this.findCorrespondingMonitoringEntry(
+                monitoringTemplate, 
+                changedData.entryId, 
+                columnMappings
+            );
+
+            if (!targetMonitoringEntry) {
+                console.log(`No corresponding monitoring entry found for encoding entry ${changedData.entryId}`);
+                // If no corresponding entry exists, create one
+                await this.createMonitoringEntry(monitoringTemplate, changedData, columnMappings);
+                return;
+            }
+
+            const monitoringValues = {};
+            
+            columnMappings.forEach(mapping => {
+                const encodingColId = mapping.encodingColumn.encoding_columns.id;
+                const monitoringColId = mapping.monitoringColumn.encoding_columns.id;
+                
+                // Get value from changed data
+                const value = changedData.values?.[encodingColId];
+                if (value !== undefined && value !== null && value !== '') {
+                    monitoringValues[monitoringColId] = value;
+                }
+            });
+
+            // Save mapped values
+            if (Object.keys(monitoringValues).length > 0) {
+                await SupabaseService.updateEntryValues(targetMonitoringEntry.id, monitoringValues);
+                console.log(`Updated monitoring entry ${targetMonitoringEntry.id} in template ${monitoringTemplate.name}`);
+            }
+        } catch (error) {
+            console.error('Error updating monitoring entry:', error);
+        }
+    },
+
+    /**
+     * Find corresponding monitoring entry for an encoding entry
+     * Uses row index matching as primary strategy
+     */
+    findCorrespondingMonitoringEntry: async function (monitoringTemplate, encodingEntryId, columnMappings) {
+        try {
+            // First try direct reference matching using the source encoding entry id
+            const referencedMonitoringEntry = await SupabaseService.getMonitoringEntryByReferenceNumber(
+                monitoringTemplate.id,
+                encodingEntryId
+            );
+
+            if (referencedMonitoringEntry) {
+                console.log(`Found corresponding monitoring entry ${referencedMonitoringEntry.id} by reference number`);
+                return referencedMonitoringEntry;
+            }
+
+            // Get all entries from both templates
+            const encodingEntries = await SupabaseService.getEntries(this.state.currentTemplate.id);
+            const monitoringEntries = await SupabaseService.getEntries(monitoringTemplate.id);
+
+            // Find index of the encoding entry
+            const encodingEntryIndex = encodingEntries.findIndex(entry => entry.id === encodingEntryId);
+            
+            if (encodingEntryIndex === -1) {
+                console.log(`Encoding entry ${encodingEntryId} not found`);
+                return null;
+            }
+
+            // Match by row index (same position in both templates)
+            const correspondingMonitoringEntry = monitoringEntries[encodingEntryIndex];
+            
+            if (correspondingMonitoringEntry) {
+                console.log(`Found corresponding monitoring entry ${correspondingMonitoringEntry.id} at index ${encodingEntryIndex}`);
+                return correspondingMonitoringEntry;
+            }
+
+            // If no exact index match, try to find by matching key column values
+            return await this.findMonitoringEntryByMatchingValues(monitoringTemplate, encodingEntryId, columnMappings);
+        } catch (error) {
+            console.error('Error finding corresponding monitoring entry:', error);
+            return null;
+        }
+    },
+
+    /**
+     * Find monitoring entry by matching key column values
+     * Fallback method when index matching doesn't work
+     */
+    findMonitoringEntryByMatchingValues: async function (monitoringTemplate, encodingEntryId, columnMappings) {
+        try {
+            // Get encoding entry details
+            const encodingEntries = await SupabaseService.getEntries(this.state.currentTemplate.id);
+            const encodingEntry = encodingEntries.find(entry => entry.id === encodingEntryId);
+            
+            if (!encodingEntry) return null;
+
+            const monitoringEntries = await SupabaseService.getEntries(monitoringTemplate.id);
+
+            // Try to find a monitoring entry with matching key values
+            for (const monitoringEntry of monitoringEntries) {
+                let matchCount = 0;
+                let totalMatches = 0;
+
+                columnMappings.forEach(mapping => {
+                    const encodingColName = mapping.encodingColumn.encoding_columns.column_name;
+                    const monitoringColName = mapping.monitoringColumn.encoding_columns.column_name;
+                    
+                    const encodingValue = encodingEntry.values?.[encodingColName];
+                    const monitoringValue = monitoringEntry.values?.[monitoringColName];
+                    
+                    totalMatches++;
+                    if (encodingValue === monitoringValue) {
+                        matchCount++;
+                    }
+                });
+
+                // If most values match, consider this the corresponding entry
+                if (totalMatches > 0 && matchCount / totalMatches >= 0.7) {
+                    console.log(`Found monitoring entry ${monitoringEntry.id} by value matching (${matchCount}/${totalMatches} matches)`);
+                    return monitoringEntry;
+                }
+            }
+
+            return null;
+        } catch (error) {
+            console.error('Error finding monitoring entry by matching values:', error);
+            return null;
+        }
+    },
+
+    /**
+     * Delete corresponding entry in monitoring template
+     */
+    deleteMonitoringEntry: async function (monitoringTemplate, changedData) {
+        try {
+            // For now, we'll skip deletion to avoid accidental data loss
+            // In a more sophisticated implementation, you might want to delete specific entries
+            console.log(`Deletion operation skipped for monitoring template ${monitoringTemplate.name} (to prevent data loss)`);
+        } catch (error) {
+            console.error('Error deleting monitoring entry:', error);
+        }
     },
 
     //-----------------------------------------------------------------------------------------
