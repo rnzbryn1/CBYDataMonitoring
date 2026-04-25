@@ -52,9 +52,11 @@ export const DataService = {
     
     if (columnError) throw columnError;
 
+    // Map module field to type for consistency
     return {
       ...template,
-      columns: columns
+      type: template.module === 'monitoring' ? 'monitoring' : 'encoding',
+      columns: columns || []
     };
   },
 
@@ -220,6 +222,50 @@ export const DataService = {
       .eq('column_id', columnId);
     
     if (error) throw error;
+  },
+
+  async getOrphanedColumns(departmentId) {
+    // Get all columns in the department
+    const { data: allColumns, error: columnsError } = await supabaseClient
+      .from('encoding_columns')
+      .select('id, column_name')
+      .eq('department_id', departmentId);
+    
+    if (columnsError) throw columnsError;
+
+    // Get all column IDs that are used in templates
+    const { data: templateColumns, error: templateError } = await supabaseClient
+      .from('encoding_template_columns')
+      .select('column_id');
+    
+    if (templateError) throw templateError;
+
+    const usedColumnIds = new Set(templateColumns?.map(tc => tc.column_id) || []);
+
+    // Find orphaned columns (not used in any template)
+    const orphanedColumns = allColumns?.filter(col => !usedColumnIds.has(col.id)) || [];
+
+    return orphanedColumns;
+  },
+
+  async deleteOrphanedColumns(departmentId) {
+    const orphanedColumns = await this.getOrphanedColumns(departmentId);
+    
+    if (orphanedColumns.length === 0) {
+      return { deleted: 0, columns: [] };
+    }
+
+    const columnIds = orphanedColumns.map(col => col.id);
+
+    // Delete orphaned columns
+    const { error } = await supabaseClient
+      .from('encoding_columns')
+      .delete()
+      .in('id', columnIds);
+
+    if (error) throw error;
+
+    return { deleted: columnIds.length, columns: orphanedColumns };
   },
 
   // =====================================================
