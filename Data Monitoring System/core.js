@@ -4051,7 +4051,7 @@ export const AppCore = {
 
             return null;
         } catch (error) {
-            console.error('Error finding monitoring entry by matching values:', error);
+            console.error('Error finding monitoring entry by matching values:', error); 
             return null;
         }
     },
