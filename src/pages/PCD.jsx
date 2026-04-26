@@ -212,48 +212,84 @@ const PCD = () => {
 
   // Add column mutation
   const addColumnMutation = useMutation({
-    mutationFn: async ({ name, type, group, existingColumnId, templateType, selectedColumns, formulaType }) => {
-      if (templateType === 'monitoring') {
-        // For monitoring: create new computed column
-        if (!name) throw new Error('Please enter a column name');
-        if (!selectedColumns || selectedColumns.length === 0) throw new Error('Please select at least one column');
-        
-        // Create the new column
-        const newColumn = await DataService.createColumn(departmentId, name, 'number', null, false, group);
-        
-        // Build formula based on selected columns and formula type
-        const selectedColumnNames = selectedColumns.map(colId => {
-          const col = encodingColumns.find(c => c.id === colId);
-          return col ? col.column_name : '';
-        }).filter(name => name);
+    mutationFn: async ({ name, type, group, existingColumnId, templateType }) => {
+      if (!currentTemplate) throw new Error('No template selected');
 
-        let formula = '';
-        if (formulaType === 'SUM') {
-          formula = `=SUM(${selectedColumnNames.join(',')})`;
-        } else if (formulaType === 'AVERAGE') {
-          formula = `=AVERAGE(${selectedColumnNames.join(',')})`;
-        } else if (formulaType === 'COUNT') {
-          formula = `=COUNT(${selectedColumnNames.join(',')})`;
-        } else if (formulaType === 'MIN') {
-          formula = `=MIN(${selectedColumnNames.join(',')})`;
-        } else if (formulaType === 'MAX') {
-          formula = `=MAX(${selectedColumnNames.join(',')})`;
+      let columnId;
+      let newDisplayOrder;
+
+      if (templateType === 'monitoring') {
+        // For monitoring templates: select existing column from encoding
+        if (!existingColumnId) throw new Error('Please select a column from encoding templates');
+
+        // Check if column already exists in current template
+        const existingColumn = currentTemplate.columns?.find(
+          col => col.encoding_columns.id === existingColumnId
+        );
+        if (existingColumn) {
+          throw new Error('This column is already added to the template');
         }
 
-        return { id: newColumn.id, formula, isExisting: false };
+        // Calculate display order to add at the end
+        const existingColumns = currentTemplate.columns || [];
+        const maxDisplayOrder = existingColumns.length > 0
+          ? Math.max(...existingColumns.map(col => col.display_order || 0))
+          : 0;
+        newDisplayOrder = maxDisplayOrder + 1;
+        columnId = existingColumnId;
       } else {
-        // For encoding: create new column
-        return await DataService.createColumn(departmentId, name, type, null, false, group);
+        // For encoding templates: create new column
+        if (!name) throw new Error('Column name is required');
+
+        // Calculate display order to add column within the group or at the end
+        const existingColumns = currentTemplate.columns || [];
+
+        if (group) {
+          // Find the last column in the specified group
+          const groupColumns = existingColumns.filter(col => col.encoding_columns.group_name === group);
+          if (groupColumns.length > 0) {
+            const maxGroupDisplayOrder = Math.max(...groupColumns.map(col => col.display_order || 0));
+            newDisplayOrder = maxGroupDisplayOrder + 1;
+          } else {
+            // Group is empty, add at the end
+            const maxDisplayOrder = existingColumns.length > 0
+              ? Math.max(...existingColumns.map(col => col.display_order || 0))
+              : 0;
+            newDisplayOrder = maxDisplayOrder + 1;
+          }
+        } else {
+          // No group, add at the end
+          const maxDisplayOrder = existingColumns.length > 0
+            ? Math.max(...existingColumns.map(col => col.display_order || 0))
+            : 0;
+          newDisplayOrder = maxDisplayOrder + 1;
+        }
+
+        // Create reusable column with group name (for visual grouping only)
+        const column = await DataService.createColumn(
+          departmentId,
+          name,
+          type,
+          newDisplayOrder,
+          false, // isRequired
+          group // Use group name instead of parent_column_id
+        );
+        columnId = column.id;
       }
+
+      // Add to current template with display order
+      await DataService.addColumnToTemplate(
+        currentTemplate.id,
+        columnId,
+        newDisplayOrder
+      );
+
+      return { success: true };
     },
     onSuccess: async (data, variables) => {
-      if (selectedTemplateId && data) {
-        // Add column to template
-        await DataService.addColumnToTemplate(selectedTemplateId, data.id);
-        
-        // Invalidate queries to refresh columns
-        queryClient.invalidateQueries({ queryKey: ['template', selectedTemplateId] });
-      }
+      // Invalidate queries to refresh columns
+      queryClient.invalidateQueries({ queryKey: ['template', selectedTemplateId] });
+      
       setColumnModal({ visible: false, name: '', type: 'text', group: '', existingColumnId: '', selectedColumns: [], formulaType: 'SUM' });
       if (window.showToast) {
         window.showToast('Column added successfully', 'success');
@@ -726,84 +762,35 @@ const PCD = () => {
                 </div>
               </>
             ) : (
-              /* Monitoring Form - Computed Column */
+              /* Monitoring Form - Select Existing Column */
               <>
-                <input
-                  type="text"
-                  placeholder="Column name (e.g., Average, Total)"
-                  value={columnModal.name}
-                  onChange={(e) => setColumnModal({ ...columnModal, name: e.target.value })}
-                  style={{ width: '100%', padding: '10px', marginBottom: '10px', border: '1px solid #ddd', borderRadius: '5px' }}
-                />
-                
-                <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Formula Type</label>
+                <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Select Column from Encoding Templates</label>
                 <select
-                  value={columnModal.formulaType}
-                  onChange={(e) => setColumnModal({ ...columnModal, formulaType: e.target.value })}
+                  value={columnModal.existingColumnId}
+                  onChange={(e) => setColumnModal({ ...columnModal, existingColumnId: e.target.value })}
                   style={{ width: '100%', padding: '10px', marginBottom: '10px', border: '1px solid #ddd', borderRadius: '5px' }}
                 >
-                  <option value="SUM">SUM (Add all values)</option>
-                  <option value="AVERAGE">AVERAGE (Mean)</option>
-                  <option value="COUNT">COUNT (Count non-empty)</option>
-                  <option value="MIN">MIN (Minimum value)</option>
-                  <option value="MAX">MAX (Maximum value)</option>
+                  <option value="">-- Select a column --</option>
+                  {encodingColumns.map(col => (
+                    <option key={col.id} value={col.id}>
+                      {col.column_name} ({col.column_type})
+                    </option>
+                  ))}
                 </select>
 
-                <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Select Columns to Include</label>
-                <div style={{ 
-                  maxHeight: '150px', 
-                  overflowY: 'auto', 
-                  border: '1px solid #ddd', 
-                  borderRadius: '5px', 
-                  padding: '10px', 
-                  marginBottom: '10px',
-                  backgroundColor: '#f9fafb'
-                }}>
-                  {encodingColumns.length === 0 ? (
-                    <p style={{ color: '#ef4444', fontSize: '14px' }}>
-                      No columns found in encoding templates. Please create encoding templates first.
-                    </p>
-                  ) : (
-                    encodingColumns.map(col => (
-                      <div key={col.id} style={{ marginBottom: '8px' }}>
-                        <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
-                          <input
-                            type="checkbox"
-                            checked={columnModal.selectedColumns.includes(col.id)}
-                            onChange={(e) => {
-                              if (e.target.checked) {
-                                setColumnModal({ 
-                                  ...columnModal, 
-                                  selectedColumns: [...columnModal.selectedColumns, col.id] 
-                                });
-                              } else {
-                                setColumnModal({ 
-                                  ...columnModal, 
-                                  selectedColumns: columnModal.selectedColumns.filter(id => id !== col.id) 
-                                });
-                              }
-                            }}
-                            style={{ marginRight: '8px' }}
-                          />
-                          <span>{col.column_name} ({col.column_type})</span>
-                        </label>
-                      </div>
-                    ))
-                  )}
-                </div>
+                {encodingColumns.length === 0 && (
+                  <p style={{ color: '#ef4444', fontSize: '14px', marginBottom: '10px' }}>
+                    No columns found in encoding templates. Please create encoding templates first.
+                  </p>
+                )}
+
                 <div className="modal-actions">
-                  <button onClick={() => setColumnModal({ visible: false, name: '', type: 'text', group: '', existingColumnId: '', selectedColumns: [], formulaType: 'SUM' })}>Cancel</button>
+                  <button onClick={() => setColumnModal({ visible: false, name: '', type: 'text', group: '', existingColumnId: '' })}>Cancel</button>
                   <button 
                     onClick={() => addColumnMutation.mutate({ 
-                      name: columnModal.name,
-                      templateType: 'monitoring',
-                      selectedColumns: columnModal.selectedColumns,
-                      formulaType: columnModal.formulaType
-                    })}
-                    disabled={!columnModal.name || columnModal.selectedColumns.length === 0}
-                  >
-                    Add
-                  </button>
+                      existingColumnId: columnModal.existingColumnId,
+                      templateType: 'monitoring'
+                    })}>Add</button>
                 </div>
               </>
             )}
