@@ -226,6 +226,20 @@ h3 {
     box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
 }
 
+.input-box input[type="date"] {
+    cursor: pointer;
+    font-family: inherit;
+}
+
+.input-box input[type="date"]::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    opacity: 0.6;
+}
+
+.input-box input[type="date"]::-webkit-calendar-picker-indicator:hover {
+    opacity: 1;
+}
+
 /* --- SAVE BUTTON --- */
 .save-btn {
     height: 36px;

@@ -464,10 +464,11 @@ export const AppCore = {
         
         form.innerHTML = columns.map(col => {
             const colDef = col.encoding_columns; // join from template_columns
+            const inputType = colDef.column_type === 'date' ? 'date' : 'text';
             return `
                 <div class="input-box">
                     <label>${colDef.column_name}</label>
-                    <input type="text"
+                    <input type="${inputType}"
                         id="input_${colDef.id}"
                         data-column-id="${colDef.id}"
                         data-column-name="${colDef.column_name}"
@@ -645,16 +646,69 @@ export const AppCore = {
                 const colDef = col.encoding_columns;
                 const val = valueMap[colDef.id] || '';
                 const cellColor = colorMap[colDef.id] || '';
+                const isDateType = colDef.column_type === 'date';
                 
-                const td = document.createElement('td');
-                td.contentEditable = 'true';
-                td.setAttribute('data-col-id', colDef.id);
-                td.setAttribute('data-col-name', colDef.column_name);
-                if (cellColor) {
-                    td.style.backgroundColor = cellColor;
+                if (isDateType) {
+                    // Render date input for date type columns
+                    const td = document.createElement('td');
+                    td.setAttribute('data-col-id', colDef.id);
+                    td.setAttribute('data-col-name', colDef.column_name);
+                    if (cellColor) {
+                        td.style.backgroundColor = cellColor;
+                    }
+                    
+                    const dateInput = document.createElement('input');
+                    dateInput.type = 'date';
+                    dateInput.value = val || '';
+                    dateInput.style.cssText = `
+                        width: 100%;
+                        border: none;
+                        background: transparent;
+                        padding: 8px;
+                        font-family: inherit;
+                        font-size: inherit;
+                    `;
+                    
+                    // Handle date input change
+                    dateInput.addEventListener('change', async (e) => {
+                        const td = e.target.parentElement;
+                        const entryId = td.closest('tr').getAttribute('data-entry-id');
+                        const colId = colDef.id;
+                        const colName = colDef.column_name;
+                        
+                        try {
+                            await SupabaseService.updateEntryValues(entryId, {
+                                [colId]: e.target.value
+                            });
+                            
+                            // Update local state
+                            const entry = this.state.localEntries.find(e => e.id === entryId);
+                            if (entry && entry.valueDetails) {
+                                const valueDetail = entry.valueDetails.find(v => v.column_id === colId);
+                                if (valueDetail) {
+                                    valueDetail.value = e.target.value;
+                                }
+                            }
+                        } catch (error) {
+                            console.error('Error saving date:', error);
+                            this.showToast('Error saving date', 'error');
+                        }
+                    });
+                    
+                    td.appendChild(dateInput);
+                    tr.appendChild(td);
+                } else {
+                    // Render contenteditable cell for non-date columns
+                    const td = document.createElement('td');
+                    td.contentEditable = 'true';
+                    td.setAttribute('data-col-id', colDef.id);
+                    td.setAttribute('data-col-name', colDef.column_name);
+                    if (cellColor) {
+                        td.style.backgroundColor = cellColor;
+                    }
+                    td.textContent = val;
+                    tr.appendChild(td);
                 }
-                td.textContent = val;
-                tr.appendChild(td);
             });
 
             fragment.appendChild(tr);

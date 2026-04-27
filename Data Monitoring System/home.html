@@ -16,14 +16,9 @@
     </div>
 
     <ul class="menu">
-        <li class="active" onclick="loadPage(this, 'dashboard.html')">Dashboard</li>
-        <li onclick="loadPage(this, 'salesdesk.html')">Sales Desk</li>
-        <li onclick="loadPage(this, 'qualityassurance.html')">Quality Assurance</li>
-        <li onclick="loadPage(this, 'pcd.html')">PCD</li>
+        <li class="active" onclick="loadPage(this, 'pcd.html')">PCD</li>
         <li onclick="loadPage(this, 'dst.html')">DST</li>
-        <li onclick="loadPage(this, 'engineering.html')">Engineering</li>
-        <li onclick="loadPage(this, 'delivery.html')">Delivery</li>
-        <!-- <li onclick="loadPage(this, 'salesorder.html')">Sales Order</li> -->
+        <li onclick="loadPage(this, 'salesdesk.html')">Sales Desk</li>
     </ul>
 
     <button onclick="logout()" class="logout-btn">Logout</button>
@@ -31,7 +26,7 @@
 
 <!-- MAIN CONTENT -->
 <div class="main-content">
-    <iframe id="contentFrame" src="dashboard.html"></iframe>
+    <iframe id="contentFrame" src="pcd.html"></iframe>
 </div>
 
 <script type="module" src="home.js"></script>
