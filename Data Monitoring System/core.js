@@ -624,7 +624,9 @@ export const AppCore = {
             const colorMap = {};
             if (entry.valueDetails) {
                 entry.valueDetails.forEach(v => {
-                    valueMap[v.column_id] = v.value || v.value_number || '';
+                    // Handle null values and the string "null" - display as blank
+                    const val = v.value || v.value_number;
+                    valueMap[v.column_id] = (val === null || val === undefined || val === 'null') ? '' : val;
                     colorMap[v.column_id] = v.cell_color || null;
                 });
             }
@@ -2801,7 +2803,7 @@ export const AppCore = {
     removeAllCellFormulasForColumn: async function(columnName) {
         const formulasToRemove = [];
         
-        // Find all cell formulas for this column
+        // Find all cell formulas for this column (including broken formulas with undefined entryId)
         Object.keys(this.state.cellFormulas).forEach(key => {
             const [entryId, colName] = key.split('|');
             if (colName === columnName) {
@@ -2912,10 +2914,16 @@ export const AppCore = {
 
         if (!entryId || !columnName) return null;
 
-        // Check for cell-specific formula first
+        // Check for cell-specific formula first (including broken formulas with undefined entryId)
         const cellFormulaKey = `${entryId}|${columnName}`;
+        const brokenFormulaKey = `undefined|${columnName}`;
+        
         if (this.state.cellFormulas[cellFormulaKey]) {
             return this.state.cellFormulas[cellFormulaKey];
+        }
+        
+        if (this.state.cellFormulas[brokenFormulaKey]) {
+            return this.state.cellFormulas[brokenFormulaKey];
         }
 
         // Check for column formula
@@ -3045,8 +3053,23 @@ export const AppCore = {
         modal.querySelector('#closeCompute').onclick = () => modal.remove();
 
         modal.querySelector('#removeCompute').onclick = () => {
-            const mode = modal.querySelector('#computeMode').value;
-            this.removeFormula(mode);
+            const currentFormula = this.getCurrentFormula();
+            const columnName = this.state.currentColName;
+            
+            // Auto-detect which type of formula exists and remove it
+            if (this.state.columnFormulas[columnName]) {
+                // Column formula exists - remove it
+                this.removeFormula('column');
+            } else if (currentFormula) {
+                // Cell formula exists - remove it
+                this.removeFormula('cell');
+            } else {
+                // No formula exists
+                this.showToast('No formula to remove', 'error');
+                modal.remove();
+                return;
+            }
+            
             modal.remove();
         };
 
@@ -3219,27 +3242,27 @@ export const AppCore = {
             };
 
             // Process aggregate functions - ONLY if they are explicitly called
-            // Use lookbehind to ensure function is at start or after operator/space
-            evalExpr = evalExpr.replace(/(?<=^|\s|\(|[,+\-*/])AVERAGE\((.*?)\)/gi, (_, args) => {
+            // Use word boundary to ensure we don't match inside other words
+            evalExpr = evalExpr.replace(/\bAVERAGE\((.*?)\)/gi, (_, args) => {
                 const vals = args.split(',').map(a => getVal(a, entry));
                 return vals.length ? vals.reduce((a,b)=>a+b,0) / vals.length : 0;
             });
 
-            evalExpr = evalExpr.replace(/(?<=^|\s|\(|[,+\-*/])SUM\((.*?)\)/gi, (_, args) => {
+            evalExpr = evalExpr.replace(/\bSUM\((.*?)\)/gi, (_, args) => {
                 const vals = args.split(',').map(a => getVal(a, entry));
                 return vals.reduce((a,b)=>a+b,0);
             });
 
-            evalExpr = evalExpr.replace(/(?<=^|\s|\(|[,+\-*/])COUNT\((.*?)\)/gi, (_, args) => {
+            evalExpr = evalExpr.replace(/\bCOUNT\((.*?)\)/gi, (_, args) => {
                 return args.split(',').length;
             });
 
-            evalExpr = evalExpr.replace(/(?<=^|\s|\(|[,+\-*/])MAX\((.*?)\)/gi, (_, args) => {
+            evalExpr = evalExpr.replace(/\bMAX\((.*?)\)/gi, (_, args) => {
                 const vals = args.split(',').map(a => getVal(a, entry));
                 return Math.max(...vals);
             });
 
-            evalExpr = evalExpr.replace(/(?<=^|\s|\(|[,+\-*/])MIN\((.*?)\)/gi, (_, args) => {
+            evalExpr = evalExpr.replace(/\bMIN\((.*?)\)/gi, (_, args) => {
                 const vals = args.split(',').map(a => getVal(a, entry));
                 return Math.min(...vals);
             });
@@ -3422,10 +3445,12 @@ export const AppCore = {
             if (mode === 'cell') {
                 // Remove cell-specific formula
                 const formulaKey = `${entryId}|${columnName}`;
+                const brokenFormulaKey = `undefined|${columnName}`;
                 console.log('Removing cell formula:', formulaKey);
                 
-                // Remove from memory first
+                // Remove from memory first (including broken formulas)
                 delete this.state.cellFormulas[formulaKey];
+                delete this.state.cellFormulas[brokenFormulaKey];
 
                 // Clear the cell value and reset to original
                 const entry = this.state.localEntries.find(e => e.id === entryId);
@@ -4084,27 +4109,27 @@ export const AppCore = {
             };
 
             // Process aggregate functions - ONLY if they are explicitly called
-            // Use lookbehind to ensure function is at start or after operator/space
-            evalExpr = evalExpr.replace(/(?<=^|\s|\(|[,+\-*/])AVERAGE\((.*?)\)/gi, (_, args) => {
+            // Use word boundary to ensure we don't match inside other words
+            evalExpr = evalExpr.replace(/\bAVERAGE\((.*?)\)/gi, (_, args) => {
                 const vals = args.split(',').map(a => getVal(a, entry));
                 return vals.length ? vals.reduce((a,b)=>a+b,0) / vals.length : 0;
             });
 
-            evalExpr = evalExpr.replace(/(?<=^|\s|\(|[,+\-*/])SUM\((.*?)\)/gi, (_, args) => {
+            evalExpr = evalExpr.replace(/\bSUM\((.*?)\)/gi, (_, args) => {
                 const vals = args.split(',').map(a => getVal(a, entry));
                 return vals.reduce((a,b)=>a+b,0);
             });
 
-            evalExpr = evalExpr.replace(/(?<=^|\s|\(|[,+\-*/])COUNT\((.*?)\)/gi, (_, args) => {
+            evalExpr = evalExpr.replace(/\bCOUNT\((.*?)\)/gi, (_, args) => {
                 return args.split(',').length;
             });
 
-            evalExpr = evalExpr.replace(/(?<=^|\s|\(|[,+\-*/])MAX\((.*?)\)/gi, (_, args) => {
+            evalExpr = evalExpr.replace(/\bMAX\((.*?)\)/gi, (_, args) => {
                 const vals = args.split(',').map(a => getVal(a, entry));
                 return Math.max(...vals);
             });
 
-            evalExpr = evalExpr.replace(/(?<=^|\s|\(|[,+\-*/])MIN\((.*?)\)/gi, (_, args) => {
+            evalExpr = evalExpr.replace(/\bMIN\((.*?)\)/gi, (_, args) => {
                 const vals = args.split(',').map(a => getVal(a, entry));
                 return Math.min(...vals);
             });
