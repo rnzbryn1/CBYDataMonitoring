@@ -681,6 +681,8 @@ export const AppCore = {
                         const colId = colDef.id;
                         const colName = colDef.column_name;
                         
+                        console.log('Date input changed:', colName, '=', e.target.value, 'for entry:', entryId);
+                        
                         try {
                             await SupabaseService.updateEntryValues(entryId, {
                                 [colId]: e.target.value
@@ -703,13 +705,21 @@ export const AppCore = {
                             const cacheKey = `template-${this.state.currentTemplate.id}`;
                             delete this.state.cache[cacheKey];
 
-                            // 🔄 AUTO UPDATE - Recalculate all dependent computations
+                            console.log('Calling autoRecalculateDependentFormulas for:', colName, entryId);
+                            // AUTO UPDATE - Recalculate all dependent computations (same as regular cells)
                             this.autoRecalculateDependentFormulas(colName, entryId);
 
                             // AUTO UPDATE COLUMN COMPUTE
                             if (this.state.activeColumnCompute) {
                                 this.updateColumnComputation();
                             }
+
+                            // 🔄 AUTO-UPDATE MONITORING TEMPLATES
+                            await this.autoUpdateMonitoring({ 
+                                values: { [colId]: e.target.value },
+                                entryId: entryId,
+                                columnName: colName
+                            }, 'update');
                         } catch (error) {
                             console.error('Error saving date:', error);
                             this.showToast('Error saving date', 'error');
@@ -2804,19 +2814,22 @@ export const AppCore = {
             delete this.state.cellFormulas[key];
         });
         
-        // Remove from database
+        // Remove from database - only delete formulas with valid entryIds
         const colDef = this.state.currentTemplate?.columns?.find(c => c.encoding_columns.column_name === columnName)?.encoding_columns;
         if (colDef) {
             try {
-                await Promise.all(
-                    formulasToRemove.map(({ entryId }) => 
-                        SupabaseService.deleteCellFormula(
-                            this.state.currentTemplate.id,
-                            entryId,
-                            colDef.id
+                const validFormulas = formulasToRemove.filter(({ entryId }) => entryId && entryId !== 'undefined');
+                if (validFormulas.length > 0) {
+                    await Promise.all(
+                        validFormulas.map(({ entryId }) => 
+                            SupabaseService.deleteCellFormula(
+                                this.state.currentTemplate.id,
+                                entryId,
+                                colDef.id
+                            )
                         )
-                    )
-                );
+                    );
+                }
             } catch (err) {
                 console.error('Failed to delete cell formulas:', err);
             }
@@ -2966,6 +2979,7 @@ export const AppCore = {
 
                 <div class="compute-actions">
                     <button id="runCompute">Apply</button>
+                    <button id="removeCompute" style="background-color: #dc2626;">Remove</button>
                     <button id="closeCompute">Cancel</button>
                 </div>
             </div>
@@ -3029,6 +3043,12 @@ export const AppCore = {
         });
 
         modal.querySelector('#closeCompute').onclick = () => modal.remove();
+
+        modal.querySelector('#removeCompute').onclick = () => {
+            const mode = modal.querySelector('#computeMode').value;
+            this.removeFormula(mode);
+            modal.remove();
+        };
 
         modal.querySelector('#runCompute').onclick = () => {
             const formula = modal.querySelector('#computeFormula').value;
@@ -3098,7 +3118,7 @@ export const AppCore = {
                 
                 // Check if it's a variable
                 let colNameToUse = clean;
-                if (this.state.variableColumns[clean]) {
+                if (this.state.variableColumns && this.state.variableColumns[clean]) {
                     colNameToUse = this.state.variableColumns[clean];
                 }
                 
@@ -3109,6 +3129,14 @@ export const AppCore = {
                         const parts = raw.split('/');
                         if (parts.length === 3) {
                             const [day, month, year] = parts.map(p => parseInt(p, 10));
+                            return new Date(year, month - 1, day);
+                        }
+                    }
+                    // Handle MM/DD/YYYY format (try both)
+                    if (raw.includes('-')) {
+                        const parts = raw.split('-');
+                        if (parts.length === 3) {
+                            const [year, month, day] = parts.map(p => parseInt(p, 10));
                             return new Date(year, month - 1, day);
                         }
                     }
@@ -3182,7 +3210,7 @@ export const AppCore = {
                 // if column name or variable
                 let colNameToUse = clean;
                 // Check if it's a variable
-                if (this.state.variableColumns[clean]) {
+                if (this.state.variableColumns && this.state.variableColumns[clean]) {
                     colNameToUse = this.state.variableColumns[clean];
                 }
                 
@@ -3190,27 +3218,28 @@ export const AppCore = {
                 return parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
             };
 
-            // Process aggregate functions
-            evalExpr = evalExpr.replace(/AVERAGE\((.*?)\)/gi, (_, args) => {
+            // Process aggregate functions - ONLY if they are explicitly called
+            // Use lookbehind to ensure function is at start or after operator/space
+            evalExpr = evalExpr.replace(/(?<=^|\s|\(|[,+\-*/])AVERAGE\((.*?)\)/gi, (_, args) => {
                 const vals = args.split(',').map(a => getVal(a, entry));
                 return vals.length ? vals.reduce((a,b)=>a+b,0) / vals.length : 0;
             });
 
-            evalExpr = evalExpr.replace(/SUM\((.*?)\)/gi, (_, args) => {
+            evalExpr = evalExpr.replace(/(?<=^|\s|\(|[,+\-*/])SUM\((.*?)\)/gi, (_, args) => {
                 const vals = args.split(',').map(a => getVal(a, entry));
                 return vals.reduce((a,b)=>a+b,0);
             });
 
-            evalExpr = evalExpr.replace(/COUNT\((.*?)\)/gi, (_, args) => {
+            evalExpr = evalExpr.replace(/(?<=^|\s|\(|[,+\-*/])COUNT\((.*?)\)/gi, (_, args) => {
                 return args.split(',').length;
             });
 
-            evalExpr = evalExpr.replace(/MAX\((.*?)\)/gi, (_, args) => {
+            evalExpr = evalExpr.replace(/(?<=^|\s|\(|[,+\-*/])MAX\((.*?)\)/gi, (_, args) => {
                 const vals = args.split(',').map(a => getVal(a, entry));
                 return Math.max(...vals);
             });
 
-            evalExpr = evalExpr.replace(/MIN\((.*?)\)/gi, (_, args) => {
+            evalExpr = evalExpr.replace(/(?<=^|\s|\(|[,+\-*/])MIN\((.*?)\)/gi, (_, args) => {
                 const vals = args.split(',').map(a => getVal(a, entry));
                 return Math.min(...vals);
             });
@@ -3272,6 +3301,8 @@ export const AppCore = {
             const row = td.closest('tr');
             const entryId = row.dataset.entryId;
 
+            console.log('Saving single cell formula for entryId:', entryId, 'column:', this.state.currentColName);
+
             const entry = this.state.localEntries.find(e => e.id === entryId);
             if (!entry) return;
 
@@ -3282,6 +3313,7 @@ export const AppCore = {
 
             // 🔄 AUTO-UPDATE: Store the formula for auto-recalculation
             const formulaKey = `${entryId}|${this.state.currentColName}`;
+            console.log('Storing cell formula with key:', formulaKey);
             this.state.cellFormulas[formulaKey] = formula;
 
             // 💾 SAVE TO DATABASE: Persist cell formula
@@ -3686,6 +3718,9 @@ export const AppCore = {
             const formulas = await SupabaseService.getFormulas(this.state.currentTemplate.id);
             const columns = this.state.currentTemplate.columns || [];
 
+            let loadedCount = 0;
+            let skippedCount = 0;
+
             formulas.forEach(formula => {
                 const colDef = columns.find(c => c.encoding_columns.id === formula.column_id);
                 if (!colDef) return;
@@ -3696,13 +3731,21 @@ export const AppCore = {
                     // Cell formula: for a specific entry
                     const formulaKey = `${formula.entryId}|${columnName}`;
                     this.state.cellFormulas[formulaKey] = formula.formula;
+                    loadedCount++;
                 } else if (formula.formula_type === 'column') {
                     // Column formula: for all rows in a column
                     this.state.columnFormulas[columnName] = formula.formula;
+                    loadedCount++;
+                } else if (formula.formula_type === 'cell' && !formula.entry_id) {
+                    // Cell formula with no entry_id - skip it (broken formula)
+                    console.log('Skipping broken cell formula without entry_id for:', columnName);
+                    skippedCount++;
                 }
             });
 
-            console.log(`Loaded ${formulas.length} formulas`);
+            console.log(`Loaded ${loadedCount} formulas, skipped ${skippedCount} broken formulas`);
+            console.log('Column formulas:', Object.keys(this.state.columnFormulas));
+            console.log('Cell formulas:', Object.keys(this.state.cellFormulas));
             // Skip automatic formula recalculation on initial load for performance
             // Formulas will be recalculated when user edits data
             console.log('Skipping automatic formula recalculation for performance');
@@ -3811,6 +3854,9 @@ export const AppCore = {
         const num = parseFloat(val);
         if (isNaN(num)) return val;
 
+        // If it's an integer, return as is (for date arithmetic results like DAYS)
+        if (Number.isInteger(num)) return num;
+
         return Number(num.toFixed(2)); //number pa rin, hindi string
     },
 
@@ -3824,11 +3870,27 @@ export const AppCore = {
     autoRecalculateDependentFormulas: function (changedColumnName, changedEntryId) {
         if (!this.state.currentTemplate) return;
 
-        // 1️⃣ Recalculate cell formulas that depend on this column
-        this.recalculateCellFormulas(changedColumnName, changedEntryId);
+        console.log('autoRecalculateDependentFormulas called for:', changedColumnName, changedEntryId);
+        console.log('Cell formulas:', Object.keys(this.state.cellFormulas || {}));
+        console.log('Column formulas:', Object.keys(this.state.columnFormulas || {}));
 
-        // 2️⃣ Recalculate per-row formulas for the changed entry
+        // Recalculate ALL cell formulas for this entry (match by column name like column formulas)
+        let cellFormulaCount = 0;
+        Object.entries(this.state.cellFormulas || {}).forEach(([key, formula]) => {
+            const [entryId, targetColName] = key.split('|');
+            // Match by column name regardless of entryId (like column formulas work)
+            // This handles broken formulas with undefined entryIds
+            if (targetColName === changedColumnName || entryId === changedEntryId || entryId === 'undefined') {
+                console.log('Recalculating cell formula:', targetColName, formula);
+                this.recalculateSingleFormula(changedEntryId, targetColName, formula);
+                cellFormulaCount++;
+            }
+        });
+        console.log('Recalculated', cellFormulaCount, 'cell formulas for entry:', changedEntryId);
+
+        // Recalculate all column formulas for this entry
         if (this.state.columnFormulas && Object.keys(this.state.columnFormulas).length > 0) {
+            console.log('Recalculating column formulas for entry:', changedEntryId);
             this.recalculateRowFormulas(changedEntryId);
         }
     },
@@ -3842,14 +3904,29 @@ export const AppCore = {
 
         const columns = this.state.currentTemplate?.columns || [];
 
+        // Escape special regex characters in column name
+        const escapedColName = changedColumnName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+        // Also check for variable name (in case formula uses variables)
+        const variableName = Object.keys(this.state.variableColumns || {}).find(v => this.state.variableColumns[v] === changedColumnName);
+        const escapedVarName = variableName ? variableName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : null;
+
         // Find all cells with formulas and check if they depend on the changed column
         Object.entries(this.state.cellFormulas || {}).forEach(([key, formula]) => {
             const [entryId, targetColName] = key.split('|');
             
             // Build regex to find if this column is in the formula
-            const colNameRegex = new RegExp(`\\b${changedColumnName}\\b`);
+            // Match column name or variable name anywhere in the formula (case-insensitive)
+            const colNameRegex = new RegExp(escapedColName, 'i');
+            const dependsOnColumn = colNameRegex.test(formula);
             
-            if (colNameRegex.test(formula)) {
+            let dependsOnVariable = false;
+            if (escapedVarName) {
+                const varNameRegex = new RegExp(escapedVarName, 'i');
+                dependsOnVariable = varNameRegex.test(formula);
+            }
+            
+            if (dependsOnColumn || dependsOnVariable) {
                 // This formula depends on the changed column
                 // Recalculate it if it's in the same entry or if it's a global formula
                 const entry = this.state.localEntries.find(e => e.id === entryId || e.id === changedEntryId);
@@ -3893,13 +3970,27 @@ export const AppCore = {
                 const clean = arg.trim();
                 if (!isNaN(clean)) return new Date(clean);
                 
-                const raw = entry.values[clean];
+                // Check if it's a variable name and convert to column name
+                let colNameToUse = clean;
+                if (this.state.variableColumns && this.state.variableColumns[clean]) {
+                    colNameToUse = this.state.variableColumns[clean];
+                }
+                
+                const raw = entry.values[colNameToUse];
                 if (raw) {
                     // Handle DD/MM/YYYY format
                     if (raw.includes('/')) {
                         const parts = raw.split('/');
                         if (parts.length === 3) {
                             const [day, month, year] = parts.map(p => parseInt(p, 10));
+                            return new Date(year, month - 1, day);
+                        }
+                    }
+                    // Handle YYYY-MM-DD format
+                    if (raw.includes('-')) {
+                        const parts = raw.split('-');
+                        if (parts.length === 3) {
+                            const [year, month, day] = parts.map(p => parseInt(p, 10));
                             return new Date(year, month - 1, day);
                         }
                     }
@@ -3981,31 +4072,39 @@ export const AppCore = {
             const getVal = (arg, entry) => {
                 const clean = arg.trim();
                 if (!isNaN(clean)) return parseFloat(clean);
-                const raw = entry.values[clean] ?? '0';
+                
+                // Check if it's a variable name and convert to column name
+                let colNameToUse = clean;
+                if (this.state.variableColumns && this.state.variableColumns[clean]) {
+                    colNameToUse = this.state.variableColumns[clean];
+                }
+                
+                const raw = entry.values[colNameToUse] ?? '0';
                 return parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
             };
 
-            // Process aggregate functions
-            evalExpr = evalExpr.replace(/AVERAGE\((.*?)\)/gi, (_, args) => {
+            // Process aggregate functions - ONLY if they are explicitly called
+            // Use lookbehind to ensure function is at start or after operator/space
+            evalExpr = evalExpr.replace(/(?<=^|\s|\(|[,+\-*/])AVERAGE\((.*?)\)/gi, (_, args) => {
                 const vals = args.split(',').map(a => getVal(a, entry));
                 return vals.length ? vals.reduce((a,b)=>a+b,0) / vals.length : 0;
             });
 
-            evalExpr = evalExpr.replace(/SUM\((.*?)\)/gi, (_, args) => {
+            evalExpr = evalExpr.replace(/(?<=^|\s|\(|[,+\-*/])SUM\((.*?)\)/gi, (_, args) => {
                 const vals = args.split(',').map(a => getVal(a, entry));
                 return vals.reduce((a,b)=>a+b,0);
             });
 
-            evalExpr = evalExpr.replace(/COUNT\((.*?)\)/gi, (_, args) => {
+            evalExpr = evalExpr.replace(/(?<=^|\s|\(|[,+\-*/])COUNT\((.*?)\)/gi, (_, args) => {
                 return args.split(',').length;
             });
 
-            evalExpr = evalExpr.replace(/MAX\((.*?)\)/gi, (_, args) => {
+            evalExpr = evalExpr.replace(/(?<=^|\s|\(|[,+\-*/])MAX\((.*?)\)/gi, (_, args) => {
                 const vals = args.split(',').map(a => getVal(a, entry));
                 return Math.max(...vals);
             });
 
-            evalExpr = evalExpr.replace(/MIN\((.*?)\)/gi, (_, args) => {
+            evalExpr = evalExpr.replace(/(?<=^|\s|\(|[,+\-*/])MIN\((.*?)\)/gi, (_, args) => {
                 const vals = args.split(',').map(a => getVal(a, entry));
                 return Math.min(...vals);
             });
