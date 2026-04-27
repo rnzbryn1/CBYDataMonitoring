@@ -4,3 +4,4 @@ node_modules/
 # Project specific
 Data Monitoring System/config.js
 Data Monitoring System/confiig.js
+.env
