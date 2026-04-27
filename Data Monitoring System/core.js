@@ -3456,6 +3456,7 @@ export const AppCore = {
         if (!this.state.currentTemplate || !this.state.currentTemplate.id) return;
 
         try {
+            console.log('Loading saved formulas...');
             const formulas = await SupabaseService.getFormulas(this.state.currentTemplate.id);
             const columns = this.state.currentTemplate.columns || [];
 
@@ -3467,7 +3468,7 @@ export const AppCore = {
 
                 if (formula.formula_type === 'cell' && formula.entry_id) {
                     // Cell formula: for a specific entry
-                    const formulaKey = `${formula.entry_id}|${columnName}`;
+                    const formulaKey = `${formula.entryId}|${columnName}`;
                     this.state.cellFormulas[formulaKey] = formula.formula;
                 } else if (formula.formula_type === 'column') {
                     // Column formula: for all rows in a column
@@ -3475,8 +3476,10 @@ export const AppCore = {
                 }
             });
 
-            // Apply loaded formulas to recalculate values
-            await this.applyLoadedFormulas();
+            console.log(`Loaded ${formulas.length} formulas`);
+            // Skip automatic formula recalculation on initial load for performance
+            // Formulas will be recalculated when user edits data
+            console.log('Skipping automatic formula recalculation for performance');
         } catch (err) {
             console.error('Failed to load saved formulas:', err);
         }
