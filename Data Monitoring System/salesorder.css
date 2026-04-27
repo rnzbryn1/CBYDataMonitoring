@@ -210,9 +210,9 @@ h3 {
 }
 
 table {
-    width: 100%;
+    width: auto;
     min-width: 100%;
-    table-layout: fixed;
+    table-layout: auto;
     border-collapse: collapse;
     font-size: 13px;
 }
@@ -245,6 +245,8 @@ tbody td:not(:first-child) {
     padding: 11px 14px;
     color: #1e293b;
     vertical-align: middle;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
 }
 
 /* Inline editable cell */

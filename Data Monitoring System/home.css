@@ -144,6 +144,8 @@ thead {
 th, td {
     padding: 10px;
     text-align: left;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
 }
 
 tbody tr:nth-child(even) {
