@@ -237,8 +237,21 @@ export const AppCore = {
             }
         });
 
+        const deleteColumnBtn = document.createElement('button');
+        deleteColumnBtn.id = 'ctxDeleteColumn';
+        deleteColumnBtn.type = 'button';
+        deleteColumnBtn.textContent = 'Delete Column';
+        deleteColumnBtn.className = 'delete';
+        deleteColumnBtn.style.display = 'none';
+        deleteColumnBtn.addEventListener('click', () => {
+            if (this.state.currentColId && this.state.currentColName) {
+                this.deleteColumn(this.state.currentColId, this.state.currentColName);
+            }
+        });
+
         menu.appendChild(addColToGroupBtn);
         menu.appendChild(renameGroupBtn);
+        menu.appendChild(deleteColumnBtn);
         menu.appendChild(computeColBtn);
         menu.appendChild(computeBtn);
         menu.appendChild(colorBtn);
@@ -509,8 +522,6 @@ export const AppCore = {
                             <th data-col-id="${groupColDef.id}" data-col-name="${groupColDef.column_name}">
                                 <div class="th-inner">
                                     <span class="th-text">${groupVariable} - ${groupColDef.column_name}</span>
-                                    <button class="del-col-btn" title="Delete column"
-                                        onclick="deleteColumn('${groupColDef.id}', '${groupColDef.column_name}')">✕</button>
                                 </div>
                             </th>
                         `;
@@ -533,8 +544,6 @@ export const AppCore = {
                             <th data-col-id="${groupColDef.id}" data-col-name="${groupColDef.column_name}">
                                 <div class="th-inner">
                                     <span class="th-text">${groupVariable} - ${groupColDef.column_name}</span>
-                                    <button class="del-col-btn" title="Delete column"
-                                        onclick="deleteColumn('${groupColDef.id}', '${groupColDef.column_name}')">✕</button>
                                 </div>
                             </th>
                         `;
@@ -549,8 +558,6 @@ export const AppCore = {
                     <th data-col-id="${colDef.id}" data-col-name="${colDef.column_name}" rowspan="2">
                         <div class="th-inner">
                             <span class="th-text">${variable} - ${colDef.column_name}</span>
-                            <button class="del-col-btn" title="Delete column"
-                                onclick="deleteColumn('${colDef.id}', '${colDef.column_name}')">✕</button>
                         </div>
                     </th>
                 `;
@@ -569,8 +576,6 @@ export const AppCore = {
                     <th data-col-id="${groupColDef.id}" data-col-name="${groupColDef.column_name}">
                         <div class="th-inner">
                             <span class="th-text">${groupVariable} - ${groupColDef.column_name}</span>
-                            <button class="del-col-btn" title="Delete column"
-                                onclick="deleteColumn('${groupColDef.id}', '${groupColDef.column_name}')">✕</button>
                         </div>
                     </th>
                 `;
@@ -1118,43 +1123,85 @@ export const AppCore = {
                     await this.renameColumn(colId, oldName);
                 });
 
-                // Right-click handler for group headers
+                // Right-click handler for column headers
                 headerRow.addEventListener('contextmenu', (e) => {
                     const groupHeader = e.target.closest('th.group-header');
-                    if (!groupHeader) return;
+                    const columnHeader = e.target.closest('th[data-col-id]');
+                    
+                    if (groupHeader) {
+                        e.preventDefault();
 
-                    e.preventDefault();
+                        const groupName = groupHeader.dataset.groupName;
+                        if (!groupName) return;
 
-                    const groupName = groupHeader.dataset.groupName;
-                    if (!groupName) return;
+                        // Store the group name
+                        this.state.currentGroupName = groupName;
 
-                    // Store the group name
-                    this.state.currentGroupName = groupName;
+                        // Show "Add Column to Group" and "Rename Group" options, hide others
+                        const addColToGroupBtn = document.getElementById('ctxAddColumnToGroup');
+                        const renameGroupBtn = document.getElementById('ctxRenameGroup');
+                        const editBtn = document.getElementById('ctxEdit');
+                        const deleteBtn = document.getElementById('ctxDelete');
+                        const deleteColumnBtn = document.getElementById('ctxDeleteColumn');
+                        const computeBtn = document.getElementById('ctxCompute');
+                        const computeColBtn = document.getElementById('ctxComputeColumn');
+                        const colorBtn = document.getElementById('ctxColor');
+                        const deleteCompBtn = document.getElementById('ctxDeleteComputation');
 
-                    // Show "Add Column to Group" and "Rename Group" options, hide others
-                    const addColToGroupBtn = document.getElementById('ctxAddColumnToGroup');
-                    const renameGroupBtn = document.getElementById('ctxRenameGroup');
-                    const editBtn = document.getElementById('ctxEdit');
-                    const deleteBtn = document.getElementById('ctxDelete');
-                    const computeBtn = document.getElementById('ctxCompute');
-                    const computeColBtn = document.getElementById('ctxComputeColumn');
-                    const colorBtn = document.getElementById('ctxColor');
-                    const deleteCompBtn = document.getElementById('ctxDeleteComputation');
+                        if (addColToGroupBtn) addColToGroupBtn.style.display = 'flex';
+                        if (renameGroupBtn) renameGroupBtn.style.display = 'flex';
+                        if (editBtn) editBtn.style.display = 'none';
+                        if (deleteBtn) deleteBtn.style.display = 'none';
+                        if (deleteColumnBtn) deleteColumnBtn.style.display = 'none';
+                        if (computeBtn) computeBtn.style.display = 'none';
+                        if (computeColBtn) computeColBtn.style.display = 'none';
+                        if (colorBtn) colorBtn.style.display = 'none';
+                        if (deleteCompBtn) deleteCompBtn.style.display = 'none';
 
-                    if (addColToGroupBtn) addColToGroupBtn.style.display = 'flex';
-                    if (renameGroupBtn) renameGroupBtn.style.display = 'flex';
-                    if (editBtn) editBtn.style.display = 'none';
-                    if (deleteBtn) deleteBtn.style.display = 'none';
-                    if (computeBtn) computeBtn.style.display = 'none';
-                    if (computeColBtn) computeColBtn.style.display = 'none';
-                    if (colorBtn) colorBtn.style.display = 'none';
-                    if (deleteCompBtn) deleteCompBtn.style.display = 'none';
+                        // Show menu
+                        const menu = document.getElementById('contextMenu');
+                        menu.style.display = 'block';
+                        menu.style.top = e.pageY + 'px';
+                        menu.style.left = e.pageX + 'px';
+                    } else if (columnHeader) {
+                        e.preventDefault();
 
-                    // Show menu
-                    const menu = document.getElementById('contextMenu');
-                    menu.style.display = 'block';
-                    menu.style.top = e.pageY + 'px';
-                    menu.style.left = e.pageX + 'px';
+                        const colId = columnHeader.dataset.colId;
+                        const colName = columnHeader.dataset.colName;
+                        
+                        if (!colId || !colName) return;
+
+                        // Store column info
+                        this.state.currentColId = colId;
+                        this.state.currentColName = colName;
+
+                        // Show "Delete Column" option, hide others
+                        const addColToGroupBtn = document.getElementById('ctxAddColumnToGroup');
+                        const renameGroupBtn = document.getElementById('ctxRenameGroup');
+                        const editBtn = document.getElementById('ctxEdit');
+                        const deleteBtn = document.getElementById('ctxDelete');
+                        const deleteColumnBtn = document.getElementById('ctxDeleteColumn');
+                        const computeBtn = document.getElementById('ctxCompute');
+                        const computeColBtn = document.getElementById('ctxComputeColumn');
+                        const colorBtn = document.getElementById('ctxColor');
+                        const deleteCompBtn = document.getElementById('ctxDeleteComputation');
+
+                        if (addColToGroupBtn) addColToGroupBtn.style.display = 'none';
+                        if (renameGroupBtn) renameGroupBtn.style.display = 'none';
+                        if (editBtn) editBtn.style.display = 'none';
+                        if (deleteBtn) deleteBtn.style.display = 'none';
+                        if (deleteColumnBtn) deleteColumnBtn.style.display = 'flex';
+                        if (computeBtn) computeBtn.style.display = 'none';
+                        if (computeColBtn) computeColBtn.style.display = 'none';
+                        if (colorBtn) colorBtn.style.display = 'none';
+                        if (deleteCompBtn) deleteCompBtn.style.display = 'none';
+
+                        // Show menu
+                        const menu = document.getElementById('contextMenu');
+                        menu.style.display = 'block';
+                        menu.style.top = e.pageY + 'px';
+                        menu.style.left = e.pageX + 'px';
+                    }
                 });
 
                 this.state.headerRenameInitialized = true;
