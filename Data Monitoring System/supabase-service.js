@@ -594,12 +594,89 @@ export const SupabaseService = {
   // =====================================================
 
   /**
-   * Get all entries for a template WITH their values
+   * Get entries for a template with pagination
    * @param {string} templateId
-   * @param {string} status - 'draft', 'submitted', 'verified', 'archived'
+   * @param {string|null} status - Optional status filter
+   * @param {number} page - Page number (1-based)
+   * @param {number} pageSize - Number of entries per page
    * @returns {Promise<Array>} Array of entries with values
    */
-  async getEntries(templateId, status = null) {
+  async getEntries(templateId, status = null, page = 1, pageSize = 100) {
+    // Get paginated entries
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+    
+    let query = this.client
+      .from('encoding_entries')
+      .select('*', { count: 'exact' })
+      .eq('template_id', templateId)
+      .range(from, to);
+    
+    if (status) {
+      query = query.eq('status', status);
+    }
+    
+    const { data: entries, error, count } = await query.order('created_at', { ascending: false });
+    
+    if (error) throw error;
+    
+    if (entries.length === 0) return { entries: [], totalCount: 0 };
+
+    // Fetch values for the current page only
+    const entryIds = entries.map(e => e.id);
+    const { data: allValues, error: valuesError } = await this.client
+      .from('encoding_entry_values')
+      .select(`
+        id,
+        entry_id,
+        column_id,
+        value,
+        value_number,
+        cell_color,
+        encoding_columns (
+          id,
+          column_name,
+          column_type
+        )
+      `)
+      .in('entry_id', entryIds);
+    
+    if (valuesError) throw valuesError;
+
+    // Group values by entry_id for fast lookup
+    const valuesByEntry = {};
+    allValues.forEach(v => {
+      if (!valuesByEntry[v.entry_id]) {
+        valuesByEntry[v.entry_id] = [];
+      }
+      valuesByEntry[v.entry_id].push(v);
+    });
+
+    // Enrich entries with their values
+    const enrichedEntries = entries.map(entry => {
+      const values = valuesByEntry[entry.id] || [];
+      const valueObj = {};
+      values.forEach(v => {
+        valueObj[v.encoding_columns.column_name] = v.value || v.value_number;
+      });
+      
+      return {
+        ...entry,
+        values: valueObj,
+        valueDetails: values
+      };
+    });
+    
+    return { entries: enrichedEntries, totalCount: count || 0 };
+  },
+
+  /**
+   * Get all entries for a template with their values (legacy, for operations that need all data)
+   * @param {string} templateId
+   * @param {string|null} status - Optional status filter
+   * @returns {Promise<Array>} Array of entries with values
+   */
+  async getAllEntries(templateId, status = null) {
     // Get all entries
     let query = this.client
       .from('encoding_entries')

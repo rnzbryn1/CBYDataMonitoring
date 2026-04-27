@@ -28,6 +28,10 @@ export const AppCore = {
         // Variable mapping system
         columnVariables:        {},             // { "columnName": "A", "columnName2": "B", ... }
         variableColumns:        {},             // { "A": "columnName", "B": "columnName2", ... }
+        // Pagination for performance
+        currentPage:            1,
+        pageSize:               100,            // Number of rows per page
+        totalCount:             0,              // Total entries from server
     },
 
     // ============================================================
@@ -86,6 +90,7 @@ export const AppCore = {
         window.searchData        = ()          => this.searchData();
         window.sortByDate        = ()          => this.sortByDate();
         window.exportToExcel     = ()          => this.exportToExcel();
+        window.AppCore = this;
 
 
         window.openModal         = ()          => document.getElementById('categoryModal').style.display = 'block';
@@ -346,31 +351,21 @@ export const AppCore = {
         if (this.state.isLoading) return;
 
         const workspace = document.getElementById('moduleWorkspace');
+        if (!workspace) {
+            console.error('Workspace not found');
+            return;
+        }
+
         workspace.style.display = 'block';
         workspace.style.opacity = '0.4';
         workspace.style.pointerEvents = 'none';
         this.state.isLoading = true;
 
         try {
-            const cacheKey = `template-${templateId}`;
-
-            if (this.state.cache[cacheKey]) {
-                // Use cached data
-                this.state.currentTemplate = this.state.cache[cacheKey].template;
-                this.state.localEntries = this.state.cache[cacheKey].entries;
-            } else {
-                // Load from Supabase
-                this.state.currentTemplate = await SupabaseService.getTemplate(templateId);
-                this.state.localEntries = await SupabaseService.getEntries(templateId);
-
-                // Cache it
-                this.state.cache[cacheKey] = {
-                    template: this.state.currentTemplate,
-                    entries: this.state.localEntries
-                };
-            }
-
-            this.state.currentTemplateId = templateId;
+            console.log('Switching to template:', templateId);
+            
+            // Reset pagination when switching templates
+            this.state.currentPage = 1;
 
             // AUTO-UPDATE: Clear formula state when switching templates
             this.state.cellFormulas = {};
@@ -378,6 +373,25 @@ export const AppCore = {
             // Clear variable mappings when switching templates
             this.state.columnVariables = {};
             this.state.variableColumns = {};
+
+            // Load from Supabase with pagination
+            console.log('Fetching template...');
+            this.state.currentTemplate = await SupabaseService.getTemplate(templateId);
+            console.log('Template loaded:', this.state.currentTemplate.name);
+            
+            // Load first page with server-side pagination
+            console.log('Fetching entries with pagination...');
+            const result = await SupabaseService.getEntries(
+                templateId, 
+                null, 
+                this.state.currentPage, 
+                this.state.pageSize
+            );
+            
+            console.log(`Loaded ${result.entries.length} entries, total: ${result.totalCount}`);
+            this.state.localEntries = result.entries;
+            this.state.totalCount = result.totalCount;
+            this.state.currentTemplateId = templateId;
 
             this.updateActiveUI(templateId);
             this.renderAll();
@@ -387,12 +401,16 @@ export const AppCore = {
 
             // Load saved column computations
             await this.loadColumnComputations();
+            
+            console.log('Template switch complete');
         } catch (error) {
             this.showToast('Switch failed: ' + error.message, 'error');
+            console.error('Switch template error:', error);
         } finally {
             workspace.style.opacity = '1';
             workspace.style.pointerEvents = 'auto';
             this.state.isLoading = false;
+            console.log('Loading state reset');
         }
     },
 
@@ -404,13 +422,16 @@ export const AppCore = {
 
     loadEntries: async function (templateId) {
         try {
-            const entries = await SupabaseService.getEntries(templateId);
-            this.state.localEntries = entries;
-
-            const cacheKey = `template-${templateId}`;
-            if (this.state.cache[cacheKey]) {
-                this.state.cache[cacheKey].entries = entries;
-            }
+            console.log(`Loading page ${this.state.currentPage} for template ${templateId}`);
+            const result = await SupabaseService.getEntries(
+                templateId, 
+                null, 
+                this.state.currentPage, 
+                this.state.pageSize
+            );
+            console.log(`Loaded ${result.entries.length} entries, total: ${result.totalCount}`);
+            this.state.localEntries = result.entries;
+            this.state.totalCount = result.totalCount;
 
             this.renderTable(this.state.localEntries);
 
@@ -573,26 +594,25 @@ export const AppCore = {
         const body = document.getElementById('tableData');
         if (!body) return;
 
-        // Count and log empty entries
-        const emptyEntries = entries.filter(e => !e.valueDetails || e.valueDetails.length === 0);
-        if (emptyEntries.length > 0) {
-            console.warn(`⚠️ FOUND ${emptyEntries.length} completely EMPTY entries in database!`);
-            console.warn('Empty entry IDs:', emptyEntries.slice(0, 10).map(e => e.id.substring(0, 8)));
-            console.log('Delete these empty entries? They shouldnt be imported.');
-        }
-
-        console.log(`Rendering ${entries.length} entries... (${emptyEntries.length} are empty)`);
+        // Clear table immediately to show responsiveness
+        body.innerHTML = '';
 
         if (!entries.length) {
             const columns = this.state.currentTemplate.columns || [];
             const colSpan = columns.length + 1; // +1 for checkbox column
             body.innerHTML = `<tr><td colspan="${colSpan}" class="no-data">No records found.</td></tr>`;
+            this.renderPaginationControls(0);
             return;
         }
 
         const columns = this.state.currentTemplate.columns || [];
 
-        body.innerHTML = entries.map(entry => {
+        console.log(`Rendering page ${this.state.currentPage}: ${entries.length} entries (total: ${this.state.totalCount})`);
+
+        // Use DocumentFragment for efficient DOM manipulation
+        const fragment = document.createDocumentFragment();
+
+        entries.forEach(entry => {
             // For each entry, we need to get the values from valueDetails
             const valueMap = {};
             const colorMap = {};
@@ -605,24 +625,133 @@ export const AppCore = {
             
             const isEmpty = !entry.valueDetails || entry.valueDetails.length === 0;
 
-            return `
-                <tr data-entry-id="${entry.id}" style="${isEmpty ? 'background-color: #ffffff;' : ''}">
-                    <td><input type="checkbox" class="rowCheckbox" data-id="${entry.id}"></td>
-                    ${columns.map(col => {
-                        const colDef = col.encoding_columns;
-                        const val = valueMap[colDef.id] || '';
-                        const cellColor = colorMap[colDef.id] || '';
-                        const styleAttr = cellColor ? `style="background-color: ${cellColor};"` : '';
-                        return `
-                            <td contenteditable="true" 
-                                data-col-id="${colDef.id}" 
-                                data-col-name="${colDef.column_name}"
-                                ${styleAttr}>${val}</td>
-                        `;
-                    }).join('')}
-                </tr>
+            const tr = document.createElement('tr');
+            tr.setAttribute('data-entry-id', entry.id);
+            if (isEmpty) {
+                tr.style.backgroundColor = '#ffffff';
+            }
+
+            // Checkbox cell
+            const checkboxTd = document.createElement('td');
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.className = 'rowCheckbox';
+            checkbox.setAttribute('data-id', entry.id);
+            checkboxTd.appendChild(checkbox);
+            tr.appendChild(checkboxTd);
+
+            // Column cells
+            columns.forEach(col => {
+                const colDef = col.encoding_columns;
+                const val = valueMap[colDef.id] || '';
+                const cellColor = colorMap[colDef.id] || '';
+                
+                const td = document.createElement('td');
+                td.contentEditable = 'true';
+                td.setAttribute('data-col-id', colDef.id);
+                td.setAttribute('data-col-name', colDef.column_name);
+                if (cellColor) {
+                    td.style.backgroundColor = cellColor;
+                }
+                td.textContent = val;
+                tr.appendChild(td);
+            });
+
+            fragment.appendChild(tr);
+        });
+
+        body.appendChild(fragment);
+
+        // Render pagination controls using totalCount from server
+        this.renderPaginationControls(this.state.totalCount);
+    },
+
+    renderPaginationControls: function (totalEntries) {
+        const totalPages = Math.ceil(totalEntries / this.state.pageSize);
+        const container = document.getElementById('paginationControls');
+        
+        if (!container) {
+            // Create pagination container if it doesn't exist
+            const tableContainer = document.getElementById('moduleWorkspace');
+            if (!tableContainer) return;
+            
+            const paginationDiv = document.createElement('div');
+            paginationDiv.id = 'paginationControls';
+            paginationDiv.style.cssText = `
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                gap: 10px;
+                margin: 20px auto;
+                padding: 15px;
+                background: #ffffff;
+                border-radius: 8px;
+                border: 1px solid #ddd;
+                max-width: fit-content;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
             `;
-        }).join('');
+            tableContainer.appendChild(paginationDiv);
+        }
+        
+        const controls = document.getElementById('paginationControls');
+        
+        if (totalPages <= 1) {
+            controls.style.display = 'none';
+            return;
+        }
+        
+        controls.style.display = 'flex';
+        
+        const startEntry = (this.state.currentPage - 1) * this.state.pageSize + 1;
+        const endEntry = Math.min(this.state.currentPage * this.state.pageSize, totalEntries);
+        
+        controls.innerHTML = `
+            <span style="color: #666; font-size: 14px; margin-right: 10px;">
+                Showing ${startEntry}-${endEntry} of ${totalEntries} entries
+            </span>
+            <button onclick="AppCore.goToPage(1)" 
+                ${this.state.currentPage === 1 ? 'disabled' : ''}
+                style="padding: 8px 16px; border: 1px solid #ddd; background: white; border-radius: 6px; cursor: pointer; font-size: 14px;">
+                First
+            </button>
+            <button onclick="AppCore.prevPage()" 
+                ${this.state.currentPage === 1 ? 'disabled' : ''}
+                style="padding: 8px 16px; border: 1px solid #ddd; background: white; border-radius: 6px; cursor: pointer; font-size: 14px;">
+                Previous
+            </button>
+            <span style="font-weight: bold; color: #333; margin: 0 10px; font-size: 14px;">
+                Page ${this.state.currentPage} of ${totalPages}
+            </span>
+            <button onclick="AppCore.nextPage(${totalPages})" 
+                ${this.state.currentPage === totalPages ? 'disabled' : ''}
+                style="padding: 8px 16px; border: 1px solid #ddd; background: white; border-radius: 6px; cursor: pointer; font-size: 14px;">
+                Next
+            </button>
+            <button onclick="AppCore.goToPage(${totalPages})" 
+                ${this.state.currentPage === totalPages ? 'disabled' : ''}
+                style="padding: 8px 16px; border: 1px solid #ddd; background: white; border-radius: 6px; cursor: pointer; font-size: 14px;">
+                Last
+            </button>
+        `;
+    },
+
+    goToPage: async function (page) {
+        this.state.currentPage = page;
+        await this.loadEntries(this.state.currentTemplateId);
+    },
+
+    nextPage: async function (totalPages) {
+        if (this.state.currentPage < totalPages) {
+            this.state.currentPage++;
+            await this.loadEntries(this.state.currentTemplateId);
+        }
+    },
+
+    prevPage: async function () {
+        if (this.state.currentPage > 1) {
+            this.state.currentPage--;
+            await this.loadEntries(this.state.currentTemplateId);
+        }
     },
 
     formatDisplayValue: function (raw, colType) {
@@ -1644,7 +1773,7 @@ export const AppCore = {
 
             const cacheKey = `template-${this.state.currentTemplate.id}`;
             delete this.state.cache[cacheKey];
-            this.state.localEntries = await SupabaseService.getEntries(this.state.currentTemplate.id);
+            this.state.localEntries = await SupabaseService.getAllEntries(this.state.currentTemplate.id);
             this.renderTable(this.state.localEntries);
 
             // AUTO UPDATE COLUMN COMPUTE   
@@ -1674,6 +1803,8 @@ export const AppCore = {
                 String(v.value || v.value_number || '').toLowerCase().includes(term)
             );
         });
+        // Reset pagination when searching
+        this.state.currentPage = 1;
         this.renderTable(filtered);
     },
 
@@ -1692,6 +1823,8 @@ export const AppCore = {
             return this.state.dateSortAsc ? d1 - d2 : d2 - d1;
         });
         this.state.dateSortAsc = !this.state.dateSortAsc;
+        // Reset pagination when sorting
+        this.state.currentPage = 1;
         this.renderTable(this.state.localEntries);
     },
 
