@@ -694,6 +694,22 @@ export const AppCore = {
                                     valueDetail.value = e.target.value;
                                 }
                             }
+                            if (entry) {
+                                if (!entry.values) entry.values = {};
+                                entry.values[colName] = e.target.value;
+                            }
+
+                            // Update cache
+                            const cacheKey = `template-${this.state.currentTemplate.id}`;
+                            delete this.state.cache[cacheKey];
+
+                            // 🔄 AUTO UPDATE - Recalculate all dependent computations
+                            this.autoRecalculateDependentFormulas(colName, entryId);
+
+                            // AUTO UPDATE COLUMN COMPUTE
+                            if (this.state.activeColumnCompute) {
+                                this.updateColumnComputation();
+                            }
                         } catch (error) {
                             console.error('Error saving date:', error);
                             this.showToast('Error saving date', 'error');
@@ -2939,6 +2955,13 @@ export const AppCore = {
                     <button type="button" class="func-btn">=COUNT()</button>
                     <button type="button" class="func-btn">=MAX()</button>
                     <button type="button" class="func-btn">=MIN()</button>
+                    <button type="button" class="func-btn">=TODAY()</button>
+                    <button type="button" class="func-btn">=NOW()</button>
+                    <button type="button" class="func-btn">=YEAR()</button>
+                    <button type="button" class="func-btn">=MONTH()</button>
+                    <button type="button" class="func-btn">=DAY()</button>
+                    <button type="button" class="func-btn">=DAYS()</button>
+                    <button type="button" class="func-btn">=DATEDIF()</button>
                 </div>
 
                 <div class="compute-actions">
@@ -3068,67 +3091,169 @@ export const AppCore = {
         const computeRow = (entry) => {
             let evalExpr = expr;
 
+            // Helper: parse date from column name or value
+            const parseDate = (arg) => {
+                const clean = arg.trim();
+                if (!isNaN(clean)) return new Date(clean);
+                
+                // Check if it's a variable
+                let colNameToUse = clean;
+                if (this.state.variableColumns[clean]) {
+                    colNameToUse = this.state.variableColumns[clean];
+                }
+                
+                const raw = entry.values[colNameToUse];
+                if (raw) {
+                    // Handle DD/MM/YYYY format
+                    if (raw.includes('/')) {
+                        const parts = raw.split('/');
+                        if (parts.length === 3) {
+                            const [day, month, year] = parts.map(p => parseInt(p, 10));
+                            return new Date(year, month - 1, day);
+                        }
+                    }
+                    return new Date(raw);
+                }
+                return new Date(clean);
+            };
+
+            // Process date functions FIRST (before column name replacement)
+            evalExpr = evalExpr.replace(/TODAY\(\)/gi, () => {
+                const today = new Date();
+                return today.toISOString().split('T')[0];
+            });
+
+            evalExpr = evalExpr.replace(/NOW\(\)/gi, () => {
+                return new Date().toISOString();
+            });
+
+            evalExpr = evalExpr.replace(/YEAR\((.*?)\)/gi, (_, args) => {
+                const date = parseDate(args);
+                return date.getFullYear();
+            });
+
+            evalExpr = evalExpr.replace(/MONTH\((.*?)\)/gi, (_, args) => {
+                const date = parseDate(args);
+                return date.getMonth() + 1;
+            });
+
+            evalExpr = evalExpr.replace(/DAY\((.*?)\)/gi, (_, args) => {
+                const date = parseDate(args);
+                return date.getDate();
+            });
+
+            evalExpr = evalExpr.replace(/WEEKDAY\((.*?)\)/gi, (_, args) => {
+                const date = parseDate(args);
+                return date.getDay();
+            });
+
+            evalExpr = evalExpr.replace(/DAYS\((.*?)\)/gi, (_, args) => {
+                const [end, start] = args.split(',').map(a => parseDate(a));
+                const diffTime = end - start;
+                return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            });
+
+            evalExpr = evalExpr.replace(/DATEDIF\((.*?)\)/gi, (_, args) => {
+                const parts = args.split(',').map(a => a.trim());
+                const start = parts[0];
+                const end = parts[1];
+                const unit = parts[2] || 'D'; // Default to days if unit not provided
+                
+                const startDate = parseDate(start);
+                const endDate = parseDate(end);
+                const diffTime = endDate - startDate;
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                
+                switch(unit.toUpperCase()) {
+                    case 'D': return diffDays;
+                    case 'M': return (endDate.getFullYear() - startDate.getFullYear()) * 12 + (endDate.getMonth() - startDate.getMonth());
+                    case 'Y': return endDate.getFullYear() - startDate.getFullYear();
+                    default: return diffDays;
+                }
+            });
+
+            // Helper: convert argument → number for aggregate functions
+            const getVal = (arg, entry) => {
+                const clean = arg.trim();
+
+                // if number literal
+                if (!isNaN(clean)) return parseFloat(clean);
+
+                // if column name or variable
+                let colNameToUse = clean;
+                // Check if it's a variable
+                if (this.state.variableColumns[clean]) {
+                    colNameToUse = this.state.variableColumns[clean];
+                }
+                
+                const raw = entry.values[colNameToUse] ?? '0';
+                return parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
+            };
+
+            // Process aggregate functions
+            evalExpr = evalExpr.replace(/AVERAGE\((.*?)\)/gi, (_, args) => {
+                const vals = args.split(',').map(a => getVal(a, entry));
+                return vals.length ? vals.reduce((a,b)=>a+b,0) / vals.length : 0;
+            });
+
+            evalExpr = evalExpr.replace(/SUM\((.*?)\)/gi, (_, args) => {
+                const vals = args.split(',').map(a => getVal(a, entry));
+                return vals.reduce((a,b)=>a+b,0);
+            });
+
+            evalExpr = evalExpr.replace(/COUNT\((.*?)\)/gi, (_, args) => {
+                return args.split(',').length;
+            });
+
+            evalExpr = evalExpr.replace(/MAX\((.*?)\)/gi, (_, args) => {
+                const vals = args.split(',').map(a => getVal(a, entry));
+                return Math.max(...vals);
+            });
+
+            evalExpr = evalExpr.replace(/MIN\((.*?)\)/gi, (_, args) => {
+                const vals = args.split(',').map(a => getVal(a, entry));
+                return Math.min(...vals);
+            });
+
             // Convert column names to variables for evaluation
             columns.forEach(c => {
                 const colName = c.encoding_columns.column_name;
                 const variable = this.getColumnVariable(colName);
                 const raw = entry.values[colName] ?? '0';
+                const colType = c.encoding_columns.column_type;
 
-                // convert text → number
-                const num = parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
+                let num;
+                // Handle date columns differently - convert to days for arithmetic
+                if (colType === 'date' && raw) {
+                    // Parse date - handle DD/MM/YYYY format
+                    let date;
+                    if (raw.includes('/')) {
+                        const parts = raw.split('/');
+                        if (parts.length === 3) {
+                            // Assume DD/MM/YYYY format
+                            const [day, month, year] = parts.map(p => parseInt(p, 10));
+                            date = new Date(year, month - 1, day);
+                        } else {
+                            date = new Date(raw);
+                        }
+                    } else {
+                        date = new Date(raw);
+                    }
+                    
+                    if (!isNaN(date.getTime())) {
+                        num = date.getTime() / (1000 * 60 * 60 * 24); // Convert to days
+                    } else {
+                        num = 0;
+                    }
+                } else {
+                    // convert text → number
+                    num = parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
+                }
 
                 const safeCol = colName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
                 const regex = new RegExp(`\\b${safeCol}\\b`, 'g');
 
                 evalExpr = evalExpr.replace(regex, num);
-
-                // SUPPORT Excel-like functions
-                // helper: convert argument → number
-                const getVal = (arg, entry) => {
-                    const clean = arg.trim();
-
-                    // if number literal
-                    if (!isNaN(clean)) return parseFloat(clean);
-
-                    // if column name or variable
-                    let colNameToUse = clean;
-                    // Check if it's a variable
-                    if (this.state.variableColumns[clean]) {
-                        colNameToUse = this.state.variableColumns[clean];
-                    }
-                    
-                    const raw = entry.values[colNameToUse] ?? '0';
-                    return parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
-                };
-
-                // AVERAGE(...)
-                evalExpr = evalExpr.replace(/AVERAGE\((.*?)\)/gi, (_, args) => {
-                    const vals = args.split(',').map(a => getVal(a, entry));
-                    return vals.length ? vals.reduce((a,b)=>a+b,0) / vals.length : 0;
-                });
-
-                // SUM(...)
-                evalExpr = evalExpr.replace(/SUM\((.*?)\)/gi, (_, args) => {
-                    const vals = args.split(',').map(a => getVal(a, entry));
-                    return vals.reduce((a,b)=>a+b,0);
-                });
-
-                // COUNT(...)
-                evalExpr = evalExpr.replace(/COUNT\((.*?)\)/gi, (_, args) => {
-                    return args.split(',').length;
-                });
-
-                // MAX(...)
-                evalExpr = evalExpr.replace(/MAX\((.*?)\)/gi, (_, args) => {
-                    const vals = args.split(',').map(a => getVal(a, entry));
-                    return Math.max(...vals);
-                });
-
-                // MIN(...)
-                evalExpr = evalExpr.replace(/MIN\((.*?)\)/gi, (_, args) => {
-                    const vals = args.split(',').map(a => getVal(a, entry));
-                    return Math.min(...vals);
-                });
             });
 
             try {
@@ -3763,16 +3888,96 @@ export const AppCore = {
         const computeRow = (entry) => {
             let evalExpr = formula.startsWith('=') ? formula.slice(1) : formula;
 
-            columns.forEach(c => {
-                const colName = c.encoding_columns.column_name;
-                const raw = entry.values[colName] ?? '0';
-                const num = parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
-                const safeCol = colName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                const regex = new RegExp(`\\b${safeCol}\\b`, 'g');
-                evalExpr = evalExpr.replace(regex, num);
+            // Helper: parse date from column name or value
+            const parseDate = (arg) => {
+                const clean = arg.trim();
+                if (!isNaN(clean)) return new Date(clean);
+                
+                const raw = entry.values[clean];
+                if (raw) {
+                    // Handle DD/MM/YYYY format
+                    if (raw.includes('/')) {
+                        const parts = raw.split('/');
+                        if (parts.length === 3) {
+                            const [day, month, year] = parts.map(p => parseInt(p, 10));
+                            return new Date(year, month - 1, day);
+                        }
+                    }
+                    return new Date(raw);
+                }
+                return new Date(clean);
+            };
+
+            // Process date functions FIRST (before column name replacement)
+            evalExpr = evalExpr.replace(/TODAY\(\)/gi, () => {
+                const today = new Date();
+                return today.toISOString().split('T')[0];
             });
 
-            // Parse functions
+            evalExpr = evalExpr.replace(/NOW\(\)/gi, () => {
+                return new Date().toISOString();
+            });
+
+            evalExpr = evalExpr.replace(/YEAR\((.*?)\)/gi, (_, args) => {
+                const date = parseDate(args);
+                return date.getFullYear();
+            });
+
+            evalExpr = evalExpr.replace(/MONTH\((.*?)\)/gi, (_, args) => {
+                const date = parseDate(args);
+                return date.getMonth() + 1;
+            });
+
+            evalExpr = evalExpr.replace(/DAY\((.*?)\)/gi, (_, args) => {
+                const date = parseDate(args);
+                return date.getDate();
+            });
+
+            evalExpr = evalExpr.replace(/WEEKDAY\((.*?)\)/gi, (_, args) => {
+                const date = parseDate(args);
+                return date.getDay();
+            });
+
+            evalExpr = evalExpr.replace(/DAYS\((.*?)\)/gi, (_, args) => {
+                const [end, start] = args.split(',').map(a => parseDate(a));
+                const diffTime = end - start;
+                return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            });
+
+            evalExpr = evalExpr.replace(/DATEDIF\((.*?)\)/gi, (_, args) => {
+                const parts = args.split(',').map(a => a.trim());
+                const start = parts[0];
+                const end = parts[1];
+                const unit = parts[2] || 'D'; // Default to days if unit not provided
+                
+                const startDate = parseDate(start);
+                const endDate = parseDate(end);
+                const diffTime = endDate - startDate;
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                
+                switch(unit.toUpperCase()) {
+                    case 'D': return diffDays;
+                    case 'M': return (endDate.getFullYear() - startDate.getFullYear()) * 12 + (endDate.getMonth() - startDate.getMonth());
+                    case 'Y': return endDate.getFullYear() - startDate.getFullYear();
+                    default: return diffDays;
+                }
+            });
+
+            evalExpr = evalExpr.replace(/DATE\((.*?)\)/gi, (_, args) => {
+                const [year, month, day] = args.split(',').map(a => parseFloat(a.trim()));
+                const date = new Date(year, month - 1, day);
+                return date.toISOString().split('T')[0];
+            });
+
+            evalExpr = evalExpr.replace(/EDATE\((.*?)\)/gi, (_, args) => {
+                const [dateStr, months] = args.split(',').map(a => a.trim());
+                const date = parseDate(dateStr);
+                const monthsToAdd = parseFloat(months);
+                date.setMonth(date.getMonth() + monthsToAdd);
+                return date.toISOString().split('T')[0];
+            });
+
+            // Helper: convert argument → number for aggregate functions
             const getVal = (arg, entry) => {
                 const clean = arg.trim();
                 if (!isNaN(clean)) return parseFloat(clean);
@@ -3780,6 +3985,7 @@ export const AppCore = {
                 return parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
             };
 
+            // Process aggregate functions
             evalExpr = evalExpr.replace(/AVERAGE\((.*?)\)/gi, (_, args) => {
                 const vals = args.split(',').map(a => getVal(a, entry));
                 return vals.length ? vals.reduce((a,b)=>a+b,0) / vals.length : 0;
@@ -3802,6 +4008,45 @@ export const AppCore = {
             evalExpr = evalExpr.replace(/MIN\((.*?)\)/gi, (_, args) => {
                 const vals = args.split(',').map(a => getVal(a, entry));
                 return Math.min(...vals);
+            });
+
+            // Convert column names to numbers for evaluation
+            columns.forEach(c => {
+                const colName = c.encoding_columns.column_name;
+                const raw = entry.values[colName] ?? '0';
+                const colType = c.encoding_columns.column_type;
+
+                let num;
+                // Handle date columns differently - convert to days for arithmetic
+                if (colType === 'date' && raw) {
+                    // Parse date - handle DD/MM/YYYY format
+                    let date;
+                    if (raw.includes('/')) {
+                        const parts = raw.split('/');
+                        if (parts.length === 3) {
+                            // Assume DD/MM/YYYY format
+                            const [day, month, year] = parts.map(p => parseInt(p, 10));
+                            date = new Date(year, month - 1, day);
+                        } else {
+                            date = new Date(raw);
+                        }
+                    } else {
+                        date = new Date(raw);
+                    }
+                    
+                    if (!isNaN(date.getTime())) {
+                        num = date.getTime() / (1000 * 60 * 60 * 24); // Convert to days
+                    } else {
+                        num = 0;
+                    }
+                } else {
+                    // convert text → number
+                    num = parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
+                }
+
+                const safeCol = colName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const regex = new RegExp(`\\b${safeCol}\\b`, 'g');
+                evalExpr = evalExpr.replace(regex, num);
             });
 
             try {
