@@ -338,6 +338,28 @@ export const AppCore = {
             tr.row-selected {
                 box-shadow: 0 0 0 2px #3b82f6;
             }
+
+            /* Hide date input placeholder for empty dates but keep calendar picker */
+            input[type="date"].empty-date::-webkit-datetime-edit-text {
+                color: transparent;
+            }
+            input[type="date"].empty-date::-webkit-datetime-edit-month-field {
+                color: transparent;
+            }
+            input[type="date"].empty-date::-webkit-datetime-edit-day-field {
+                color: transparent;
+            }
+            input[type="date"].empty-date::-webkit-datetime-edit-year-field {
+                color: transparent;
+            }
+            input[type="date"].empty-date::-webkit-inner-spin-button {
+                opacity: 0;
+            }
+            /* Keep calendar picker visible */
+            input[type="date"].empty-date::-webkit-calendar-picker-indicator {
+                opacity: 1;
+                cursor: pointer;
+            }
         `;
 
         document.head.appendChild(style);
@@ -703,7 +725,14 @@ export const AppCore = {
                             dateValue = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                         }
                     }
+                    
+                    // Set the date value
                     dateInput.value = dateValue;
+                    
+                    // Add empty-date class only when there's no date value
+                    if (!dateValue) {
+                        dateInput.classList.add('empty-date');
+                    }
                     dateInput.style.cssText = `
                         width: 100%;
                         border: none;
@@ -719,6 +748,13 @@ export const AppCore = {
                         const entryId = td.closest('tr').getAttribute('data-entry-id');
                         const colId = colDef.id;
                         const colName = colDef.column_name;
+                        
+                        // Remove empty-date class when date is selected
+                        if (e.target.value) {
+                            e.target.classList.remove('empty-date');
+                        } else {
+                            e.target.classList.add('empty-date');
+                        }
                         
                         console.log('Date input changed:', colName, '=', e.target.value, 'for entry:', entryId);
                         
@@ -882,6 +918,10 @@ export const AppCore = {
         if (colType === 'date') {
             if (raw instanceof Date && !isNaN(raw.getTime())) {
                 return this.formatDateDisplay(raw);
+            }
+            // Return empty string for empty/null date columns
+            if (raw === null || raw === undefined || raw === '' || (typeof raw === 'string' && raw.trim() === '')) {
+                return '';
             }
             return String(raw ?? '');
         }
