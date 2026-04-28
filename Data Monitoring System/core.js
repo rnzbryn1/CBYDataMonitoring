@@ -412,6 +412,9 @@ export const AppCore = {
             // LOAD SAVED FORMULAS: Load cell and column formulas from database
             await this.loadSavedFormulas();
 
+            // Re-render headers to show formula indicators after formulas are loaded
+            this.renderHeaders();
+
             // Load saved column computations
             await this.loadColumnComputations();
             
@@ -460,6 +463,128 @@ export const AppCore = {
     // ============================================================
     // RENDER
     // ============================================================
+    renderHeaders: function () {
+        const headers = document.getElementById('tableHeaders');
+        if (!headers) return;
+
+        const columns = this.state.currentTemplate.columns || [];
+        
+        // Generate column variables first
+        this.generateColumnVariables();
+        
+        // First, build the variable row (A, B, C, etc.)
+        let variableRowHTML = '<tr><th></th>'; // Empty cell for checkbox column
+        columns.forEach(col => {
+            const colDef = col.encoding_columns;
+            const variable = this.getColumnVariable(colDef.column_name);
+            const hasColumnFormula = this.state.columnFormulas[colDef.column_name];
+            const formulaIndicator = hasColumnFormula ? 
+                '<span style="background-color: #3b82f6; color: white; font-size: 10px; padding: 2px 6px; border-radius: 3px; margin-left: 5px;">fx</span>' : '';
+            
+            variableRowHTML += `
+                <th data-col-id="${colDef.id}" data-col-name="${colDef.column_name}" style="background-color: #f8f9fa; font-size: 11px; font-weight: 600; color: #6c757d; border-bottom: 1px solid #dee2e6;">
+                    ${variable}${formulaIndicator}
+                </th>
+            `;
+        });
+        variableRowHTML += '</tr>';
+        
+        let headerHTML = '<tr><th><input type="checkbox" id="selectAll"></th>';
+        let secondRowHTML = '';
+        let needsSecondRow = false;
+
+        let currentGroup = null;
+        let groupStartIndex = -1;
+
+        for (let i = 0; i < columns.length; i++) {
+            const col = columns[i];
+            const colDef = col.encoding_columns;
+            const groupName = colDef.group_name || null;
+            const variable = this.getColumnVariable(colDef.column_name);
+
+            if (groupName && groupName !== currentGroup) {
+                // Close previous group if exists
+                if (currentGroup && groupStartIndex !== -1) {
+                    const groupLength = i - groupStartIndex;
+                    headerHTML += `<th colspan="${groupLength}" class="group-header" data-group-name="${currentGroup}"><span class="group-name">${currentGroup}</span></th>`;
+                    for (let j = groupStartIndex; j < i; j++) {
+                        const groupCol = columns[j];
+                        const groupColDef = groupCol.encoding_columns;
+                        secondRowHTML += `
+                            <th data-col-id="${groupColDef.id}" data-col-name="${groupColDef.column_name}">
+                                <div class="th-inner">
+                                    <span class="th-text">${groupColDef.column_name}</span>
+                                </div>
+                            </th>
+                        `;
+                    }
+                }
+                // Start new group
+                currentGroup = groupName;
+                groupStartIndex = i;
+                needsSecondRow = true;
+            } else if (!groupName && currentGroup) {
+                // Close previous group when hitting ungrouped column
+                if (groupStartIndex !== -1) {
+                    const groupLength = i - groupStartIndex;
+                    headerHTML += `<th colspan="${groupLength}" class="group-header" data-group-name="${currentGroup}"><span class="group-name">${currentGroup}</span></th>`;
+                    for (let j = groupStartIndex; j < i; j++) {
+                        const groupCol = columns[j];
+                        const groupColDef = groupCol.encoding_columns;
+                        secondRowHTML += `
+                            <th data-col-id="${groupColDef.id}" data-col-name="${groupColDef.column_name}">
+                                <div class="th-inner">
+                                    <span class="th-text">${groupColDef.column_name}</span>
+                                </div>
+                            </th>
+                        `;
+                    }
+                }
+                currentGroup = null;
+                groupStartIndex = -1;
+            }
+            // For ungrouped columns, add header with rowspan=2
+            if (!groupName) {
+                headerHTML += `
+                    <th data-col-id="${colDef.id}" data-col-name="${colDef.column_name}" rowspan="2">
+                        <div class="th-inner">
+                            <span class="th-text">${colDef.column_name}</span>
+                        </div>
+                    </th>
+                `;
+            }
+        }
+
+        // Close last group if exists
+        if (currentGroup && groupStartIndex !== -1) {
+            const groupLength = columns.length - groupStartIndex;
+            headerHTML += `<th colspan="${groupLength}" class="group-header" data-group-name="${currentGroup}"><span class="group-name">${currentGroup}</span></th>`;
+            for (let j = groupStartIndex; j < columns.length; j++) {
+                const groupCol = columns[j];
+                const groupColDef = groupCol.encoding_columns;
+                secondRowHTML += `
+                    <th data-col-id="${groupColDef.id}" data-col-name="${groupColDef.column_name}">
+                        <div class="th-inner">
+                            <span class="th-text">${groupColDef.column_name}</span>
+                        </div>
+                    </th>
+                `;
+            }
+        }
+
+        headerHTML += '</tr>';
+
+        // Add second row if needed
+        if (needsSecondRow) {
+            headerHTML += '<tr><th></th>' + secondRowHTML + '</tr>';
+        }
+
+        // Add variable row at the very top (Excel-style column letters with formula indicators)
+        headerHTML = variableRowHTML + headerHTML;
+
+        headers.innerHTML = headerHTML;
+    },
+
     renderAll: function () {
         const form = document.getElementById('dynamicForm');
         if (!form) return;
@@ -490,106 +615,8 @@ export const AppCore = {
             `;
         }).join('') + `<button onclick="saveData()" class="save-btn" id="mainSaveBtn">Save Record</button>`;
 
-        const headers = document.getElementById('tableHeaders');
-
-        // Generate header rows preserving original column order
-        // Generate column variables first
-        this.generateColumnVariables();
-        
-        let headerHTML = '<tr><th><input type="checkbox" id="selectAll"></th>';
-        let secondRowHTML = '';
-        let needsSecondRow = false;
-
-        let currentGroup = null;
-        let groupStartIndex = -1;
-
-        for (let i = 0; i < columns.length; i++) {
-            const col = columns[i];
-            const colDef = col.encoding_columns;
-            const groupName = colDef.group_name || null;
-            const variable = this.getColumnVariable(colDef.column_name);
-
-            if (groupName && groupName !== currentGroup) {
-                // Close previous group if exists
-                if (currentGroup && groupStartIndex !== -1) {
-                    const groupLength = i - groupStartIndex;
-                    headerHTML += `<th colspan="${groupLength}" class="group-header" data-group-name="${currentGroup}"><span class="group-name">${currentGroup}</span></th>`;
-                    for (let j = groupStartIndex; j < i; j++) {
-                        const groupCol = columns[j];
-                        const groupColDef = groupCol.encoding_columns;
-                        const groupVariable = this.getColumnVariable(groupColDef.column_name);
-                        secondRowHTML += `
-                            <th data-col-id="${groupColDef.id}" data-col-name="${groupColDef.column_name}">
-                                <div class="th-inner">
-                                    <span class="th-text">${groupVariable} - ${groupColDef.column_name}</span>
-                                </div>
-                            </th>
-                        `;
-                    }
-                }
-                // Start new group
-                currentGroup = groupName;
-                groupStartIndex = i;
-                needsSecondRow = true;
-            } else if (!groupName && currentGroup) {
-                // Close previous group when hitting ungrouped column
-                if (groupStartIndex !== -1) {
-                    const groupLength = i - groupStartIndex;
-                    headerHTML += `<th colspan="${groupLength}" class="group-header" data-group-name="${currentGroup}"><span class="group-name">${currentGroup}</span></th>`;
-                    for (let j = groupStartIndex; j < i; j++) {
-                        const groupCol = columns[j];
-                        const groupColDef = groupCol.encoding_columns;
-                        const groupVariable = this.getColumnVariable(groupColDef.column_name);
-                        secondRowHTML += `
-                            <th data-col-id="${groupColDef.id}" data-col-name="${groupColDef.column_name}">
-                                <div class="th-inner">
-                                    <span class="th-text">${groupVariable} - ${groupColDef.column_name}</span>
-                                </div>
-                            </th>
-                        `;
-                    }
-                }
-                currentGroup = null;
-                groupStartIndex = -1;
-            }
-            // For ungrouped columns, add header with rowspan=2
-            if (!groupName) {
-                headerHTML += `
-                    <th data-col-id="${colDef.id}" data-col-name="${colDef.column_name}" rowspan="2">
-                        <div class="th-inner">
-                            <span class="th-text">${variable} - ${colDef.column_name}</span>
-                        </div>
-                    </th>
-                `;
-            }
-        }
-
-        // Close last group if exists
-        if (currentGroup && groupStartIndex !== -1) {
-            const groupLength = columns.length - groupStartIndex;
-            headerHTML += `<th colspan="${groupLength}" class="group-header" data-group-name="${currentGroup}"><span class="group-name">${currentGroup}</span></th>`;
-            for (let j = groupStartIndex; j < columns.length; j++) {
-                const groupCol = columns[j];
-                const groupColDef = groupCol.encoding_columns;
-                const groupVariable = this.getColumnVariable(groupColDef.column_name);
-                secondRowHTML += `
-                    <th data-col-id="${groupColDef.id}" data-col-name="${groupColDef.column_name}">
-                        <div class="th-inner">
-                            <span class="th-text">${groupVariable} - ${groupColDef.column_name}</span>
-                        </div>
-                    </th>
-                `;
-            }
-        }
-
-        headerHTML += '</tr>';
-
-        // Add second row if needed
-        if (needsSecondRow) {
-            headerHTML += '<tr><th></th>' + secondRowHTML + '</tr>';
-        }
-
-        headers.innerHTML = headerHTML;
+        // Render headers using the new renderHeaders function
+        this.renderHeaders();
 
         this.renderTable(this.state.localEntries);
         this.setupTableEditing();
@@ -3056,20 +3083,31 @@ export const AppCore = {
             const currentFormula = this.getCurrentFormula();
             const columnName = this.state.currentColName;
             
-            // Auto-detect which type of formula exists and remove it
-            if (this.state.columnFormulas[columnName]) {
-                // Column formula exists - remove it
-                this.removeFormula('column');
-            } else if (currentFormula) {
-                // Cell formula exists - remove it
-                this.removeFormula('cell');
-            } else {
+            if (!currentFormula) {
                 // No formula exists
                 this.showToast('No formula to remove', 'error');
                 modal.remove();
                 return;
             }
             
+            // Check what types of formulas exist
+            const hasColumnFormula = this.state.columnFormulas[columnName];
+            const hasCellFormula = currentFormula && !hasColumnFormula;
+            
+            let mode;
+            if (hasColumnFormula && hasCellFormula) {
+                // Both exist - ask user which to remove
+                const choice = confirm('Remove formula:\n\nClick OK to remove Whole Column formula\nClick Cancel to remove Single Cell formula');
+                mode = choice ? 'column' : 'cell';
+            } else if (hasColumnFormula) {
+                // Only column formula exists
+                mode = 'column';
+            } else {
+                // Only cell formula exists
+                mode = 'cell';
+            }
+            
+            this.removeFormula(mode);
             modal.remove();
         };
 
@@ -3349,6 +3387,9 @@ export const AppCore = {
                         colDef.id,
                         formula
                     );
+                    
+                    // Re-render headers only to update formula indicator immediately
+                    this.renderHeaders();
                 } catch (err) {
                     console.error('Failed to save cell formula:', err);
                 }
@@ -3376,28 +3417,48 @@ export const AppCore = {
 
             const colDef = columns.find(c => c.encoding_columns.column_name === this.state.currentColName)?.encoding_columns;
 
-            // Process all entries and save to database
-            const updatePromises = this.state.localEntries.map(async (entry) => {
+            // Show loading indicator
+            this.showToast('Computing values...', 'info');
+            // OPTIMIZATION: Compute all values first and update UI immediately
+            const computedResults = this.state.localEntries.map(entry => {
                 const result = computeRow(entry);
-
-                // Update entry in memory
                 entry.values[this.state.currentColName] = result;
-
-                if (colDef) {
-                    // Update valueDetails
-                    let detail = entry.valueDetails.find(v => v.column_id === colDef.id);
-                    if (detail) detail.value = String(result);
-                    else entry.valueDetails.push({ column_id: colDef.id, value: String(result) });
-
-                    // Save to database
-                    const payload = {};
-                    payload[colDef.id] = result;
-                    await this.saveEntryField(entry.id, payload);
+                
+                // Update valueDetails immediately for UI display
+                if (!entry.valueDetails) entry.valueDetails = [];
+                entry.valueDetails = entry.valueDetails.filter(v => v.column_id !== colDef.id);
+                if (result !== '' && result !== null && result !== undefined) {
+                    entry.valueDetails.push({
+                        column_id: colDef.id,
+                        value: String(result)
+                    });
                 }
+                
+                return { entry, result };
             });
 
-            // Wait for all updates to complete
-            await Promise.all(updatePromises);
+            // Update table UI immediately
+            this.renderTable(this.state.localEntries);
+
+            // Then batch save to database in background
+            const batchSize = 50; // Process 50 entries at a time
+            for (let i = 0; i < computedResults.length; i += batchSize) {
+                const batch = computedResults.slice(i, i + batchSize);
+                const batchPromises = batch.map(({ entry, result }) => {
+                    if (colDef) {
+                        // Update valueDetails
+                        let detail = entry.valueDetails.find(v => v.column_id === colDef.id);
+                        if (detail) detail.value = String(result);
+                        else entry.valueDetails.push({ column_id: colDef.id, value: String(result) });
+
+                        const payload = {};
+                        payload[colDef.id] = result;
+                        return this.saveEntryField(entry.id, payload);
+                    }
+                    return Promise.resolve();
+                });
+                await Promise.all(batchPromises);
+            }
 
             // Save formula to database after all values are updated
             if (colDef) {
@@ -3408,15 +3469,18 @@ export const AppCore = {
                         formula
                     );
                     
-                    // Force clear all formula cache to ensure complete synchronization
-                    await this.forceClearFormulaCache();
+                    // Store in state immediately for instant indicator update
+                    this.state.columnFormulas[colDef.column_name] = formula;
+                    
+                    // Re-render headers only to update formula indicator immediately
+                    this.renderHeaders();
                 } catch (err) {
                     console.error('Failed to save column formula:', err);
                 }
             }
-        }
 
-        this.showToast('Computed! Auto-update is now active for this formula.');
+            this.showToast('Computed! Auto-update is now active for this formula.');
+        }
     },
 
     removeFormula: async function (mode) {
@@ -3480,8 +3544,8 @@ export const AppCore = {
                     colDef.id
                 );
 
-                // Force clear all formula cache to ensure complete cleanup
-                this.forceClearFormulaCache();
+                // Re-render headers only to update formula indicator immediately
+                this.renderHeaders();
 
                 this.showToast('Cell formula removed');
             } else if (mode === 'column') {
@@ -3520,8 +3584,11 @@ export const AppCore = {
                     colDef.id
                 );
 
-                // Force clear all formula cache to ensure complete cleanup
-                this.forceClearFormulaCache();
+                // Re-render headers only to update formula indicator immediately
+                this.renderHeaders();
+                
+                // Re-render table to show cleared values
+                this.renderTable(this.state.localEntries);
 
                 this.showToast('Column formula removed');
             }
@@ -3782,14 +3849,36 @@ export const AppCore = {
     applyLoadedFormulas: async function () {
         const columns = this.state.currentTemplate?.columns || [];
 
-        // Apply column formulas to all entries
+        // Apply column formulas to all entries (optimized batch approach)
         for (const [columnName, formula] of Object.entries(this.state.columnFormulas || {})) {
             const colDef = columns.find(c => c.encoding_columns.column_name === columnName);
             if (!colDef) continue;
 
-            // Apply formula to each entry
-            for (const entry of this.state.localEntries) {
-                await this.recalculateSingleFormula(entry.id, columnName, formula);
+            // Compute all values first and update UI immediately
+            const computedResults = this.state.localEntries.map(entry => {
+                const result = this.computeFormulaForEntry(entry, formula, columns);
+                entry.values[columnName] = result;
+                return { entry, result };
+            });
+
+            // Update table UI immediately
+            this.renderTable(this.state.localEntries);
+
+            // Then batch save to database in background
+            const batchSize = 50;
+            for (let i = 0; i < computedResults.length; i += batchSize) {
+                const batch = computedResults.slice(i, i + batchSize);
+                const batchPromises = batch.map(({ entry, result }) => {
+                    // Update valueDetails
+                    let detail = entry.valueDetails.find(v => v.column_id === colDef.id);
+                    if (detail) detail.value = String(result);
+                    else entry.valueDetails.push({ column_id: colDef.id, value: String(result) });
+
+                    const payload = {};
+                    payload[colDef.id] = result;
+                    return this.saveEntryField(entry.id, payload);
+                });
+                await Promise.all(batchPromises);
             }
         }
 
@@ -3801,6 +3890,178 @@ export const AppCore = {
 
         // Re-render table to show updated values
         this.renderTable(this.state.localEntries);
+    },
+
+    computeFormulaForEntry: function (entry, formula, columns) {
+        let evalExpr = formula.startsWith('=') ? formula.slice(1) : formula;
+
+        // Helper: parse date from column name or value
+        const parseDate = (arg) => {
+            const clean = arg.trim();
+            if (!isNaN(clean)) return new Date(clean);
+            
+            // Check if it's a variable name and convert to column name
+            let colNameToUse = clean;
+            if (this.state.variableColumns && this.state.variableColumns[clean]) {
+                colNameToUse = this.state.variableColumns[clean];
+            }
+            
+            const raw = entry.values[colNameToUse];
+            if (raw) {
+                // Handle DD/MM/YYYY format
+                if (raw.includes('/')) {
+                    const parts = raw.split('/');
+                    if (parts.length === 3) {
+                        const [day, month, year] = parts.map(p => parseInt(p, 10));
+                        return new Date(year, month - 1, day);
+                    }
+                }
+                // Handle YYYY-MM-DD format
+                if (raw.includes('-')) {
+                    const parts = raw.split('-');
+                    if (parts.length === 3) {
+                        const [year, month, day] = parts.map(p => parseInt(p, 10));
+                        return new Date(year, month - 1, day);
+                    }
+                }
+                return new Date(raw);
+            }
+            return new Date(clean);
+        };
+
+        // Process date functions FIRST
+        evalExpr = evalExpr.replace(/TODAY\(\)/gi, () => {
+            const today = new Date();
+            return today.toISOString().split('T')[0];
+        });
+
+        evalExpr = evalExpr.replace(/NOW\(\)/gi, () => {
+            return new Date().toISOString();
+        });
+
+        evalExpr = evalExpr.replace(/YEAR\((.*?)\)/gi, (_, args) => {
+            const date = parseDate(args);
+            return date.getFullYear();
+        });
+
+        evalExpr = evalExpr.replace(/MONTH\((.*?)\)/gi, (_, args) => {
+            const date = parseDate(args);
+            return date.getMonth() + 1;
+        });
+
+        evalExpr = evalExpr.replace(/DAY\((.*?)\)/gi, (_, args) => {
+            const date = parseDate(args);
+            return date.getDate();
+        });
+
+        evalExpr = evalExpr.replace(/WEEKDAY\((.*?)\)/gi, (_, args) => {
+            const date = parseDate(args);
+            return date.getDay();
+        });
+
+        evalExpr = evalExpr.replace(/DAYS\((.*?)\)/gi, (_, args) => {
+            const [end, start] = args.split(',').map(a => parseDate(a));
+            const diffTime = end - start;
+            return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        });
+
+        evalExpr = evalExpr.replace(/DATEDIF\((.*?)\)/gi, (_, args) => {
+            const parts = args.split(',').map(a => a.trim());
+            const start = parts[0];
+            const end = parts[1];
+            const unit = parts[2] || 'D';
+            
+            const startDate = parseDate(start);
+            const endDate = parseDate(end);
+            const diffTime = endDate - startDate;
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            
+            switch(unit.toUpperCase()) {
+                case 'D': return diffDays;
+                case 'M': return Math.floor(diffDays / 30);
+                case 'Y': return Math.floor(diffDays / 365);
+                default: return diffDays;
+            }
+        });
+
+        // Process aggregate functions
+        const getVal = (colName, entry) => {
+            const clean = colName.trim();
+            let colNameToUse = clean;
+            if (this.state.variableColumns && this.state.variableColumns[clean]) {
+                colNameToUse = this.state.variableColumns[clean];
+            }
+            
+            const raw = entry.values[colNameToUse] ?? '0';
+            return parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
+        };
+
+        evalExpr = evalExpr.replace(/\bAVERAGE\((.*?)\)/gi, (_, args) => {
+            const vals = args.split(',').map(a => getVal(a, entry));
+            return vals.length ? vals.reduce((a,b)=>a+b,0) / vals.length : 0;
+        });
+
+        evalExpr = evalExpr.replace(/\bSUM\((.*?)\)/gi, (_, args) => {
+            const vals = args.split(',').map(a => getVal(a, entry));
+            return vals.reduce((a,b)=>a+b,0);
+        });
+
+        evalExpr = evalExpr.replace(/\bCOUNT\((.*?)\)/gi, (_, args) => {
+            return args.split(',').length;
+        });
+
+        evalExpr = evalExpr.replace(/\bMAX\((.*?)\)/gi, (_, args) => {
+            const vals = args.split(',').map(a => getVal(a, entry));
+            return Math.max(...vals);
+        });
+
+        evalExpr = evalExpr.replace(/\bMIN\((.*?)\)/gi, (_, args) => {
+            const vals = args.split(',').map(a => getVal(a, entry));
+            return Math.min(...vals);
+        });
+
+        // Convert column names to variables for evaluation
+        columns.forEach(c => {
+            const colName = c.encoding_columns.column_name;
+            const variable = this.getColumnVariable(colName);
+            const raw = entry.values[colName] ?? '0';
+            const colType = c.encoding_columns.column_type;
+
+            let num;
+            if (colType === 'date' && raw) {
+                let date;
+                if (raw.includes('/')) {
+                    const parts = raw.split('/');
+                    if (parts.length === 3) {
+                        const [day, month, year] = parts.map(p => parseInt(p, 10));
+                        date = new Date(year, month - 1, day);
+                    } else {
+                        date = new Date(raw);
+                    }
+                } else {
+                    date = new Date(raw);
+                }
+                
+                if (!isNaN(date.getTime())) {
+                    num = date.getTime() / (1000 * 60 * 60 * 24);
+                } else {
+                    num = 0;
+                }
+            } else {
+                num = parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
+            }
+
+            const safeCol = colName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const regex = new RegExp(`\\b${safeCol}\\b`, 'g');
+            evalExpr = evalExpr.replace(regex, num);
+        });
+
+        try {
+            const result = eval(evalExpr);
+            return this.formatNumber(result);
+        } catch {
+            return 'ERR';
+        }
     },
 
     toggleColumnComputationPosition: async function () {
