@@ -32,6 +32,9 @@ export const AppCore = {
         currentPage:            1,
         pageSize:               100,            // Number of rows per page
         totalCount:             0,              // Total entries from server
+        // Query caching for performance
+        queryCache:             new Map(),      // Cache recent queries
+        cacheTimeout:           300000,         // 5 minutes cache timeout
     },
 
     // ============================================================
@@ -458,16 +461,158 @@ export const AppCore = {
         if (activeCard) activeCard.classList.add('active');
     },
 
+    // ============================================================
+    // PERFORMANCE TESTING
+    // ============================================================
+    testPaginationPerformance: async function() {
+        console.log('🚀 Testing pagination performance...');
+        
+        const testCases = [
+            { page: 1, description: 'First page' },
+            { page: 2, description: 'Page 2' },
+            { page: 3, description: 'Page 3' },
+            { page: 1, description: 'First page (cached)' }
+        ];
+        
+        for (const testCase of testCases) {
+            const startTime = performance.now();
+            
+            try {
+                const result = await SupabaseService.getEntries(
+                    this.state.currentTemplateId,
+                    null,
+                    testCase.page,
+                    100
+                );
+                
+                const endTime = performance.now();
+                const duration = endTime - startTime;
+                
+                console.log(`✅ ${testCase.description}: ${duration.toFixed(2)}ms - ${result.entries.length} entries`);
+            } catch (error) {
+                console.error(`❌ ${testCase.description}:`, error.message);
+            }
+        }
+    },
+
+    testSearchPerformance: async function() {
+        console.log('🔍 Testing search performance...');
+        
+        const startTime = performance.now();
+        
+        try {
+            const result = await SupabaseService.getEntries(
+                this.state.currentTemplateId,
+                null,
+                1,
+                100
+            );
+            
+            const endTime = performance.now();
+            const duration = endTime - startTime;
+            
+            console.log(`✅ Search query: ${duration.toFixed(2)}ms`);
+            console.log(`📊 Total entries: ${result.totalCount}`);
+            console.log(`📄 Page size: ${result.entries.length}`);
+            
+            // Calculate performance metrics
+            const entriesPerMs = result.entries.length / duration;
+            console.log(`⚡ Performance: ${entriesPerMs.toFixed(2)} entries/ms`);
+            
+        } catch (error) {
+            console.error('❌ Search test failed:', error.message);
+        }
+    },
+
+    // ============================================================
+    // QUERY CACHING
+    // ============================================================
+    getCacheKey: function(templateId, page, pageSize) {
+        return `${templateId}-${page}-${pageSize}`;
+    },
+
+    isCacheValid: function(cachedItem) {
+        return Date.now() - cachedItem.timestamp < this.state.cacheTimeout;
+    },
+
+    getCachedResult: function(templateId, page, pageSize) {
+        const cacheKey = this.getCacheKey(templateId, page, pageSize);
+        const cached = this.state.queryCache.get(cacheKey);
+        
+        if (cached && this.isCacheValid(cached)) {
+            console.log(`🎯 Cache hit for page ${page}`);
+            return cached.result;
+        }
+        
+        return null;
+    },
+
+    setCachedResult: function(templateId, page, pageSize, result) {
+        const cacheKey = this.getCacheKey(templateId, page, pageSize);
+        this.state.queryCache.set(cacheKey, {
+            result: result,
+            timestamp: Date.now()
+        });
+        
+        // Clean old cache entries (keep only last 20)
+        if (this.state.queryCache.size > 20) {
+            const entries = Array.from(this.state.queryCache.entries());
+            entries.sort((a, b) => a[1].timestamp - b[1].timestamp);
+            const toDelete = entries.slice(0, 5);
+            toDelete.forEach(([key]) => this.state.queryCache.delete(key));
+        }
+    },
+
+    clearCache: function(templateId = null) {
+        if (templateId) {
+            // Clear cache for specific template
+            const keysToDelete = [];
+            for (const key of this.state.queryCache.keys()) {
+                if (key.startsWith(`${templateId}-`)) {
+                    keysToDelete.push(key);
+                }
+            }
+            keysToDelete.forEach(key => this.state.queryCache.delete(key));
+        } else {
+            // Clear all cache
+            this.state.queryCache.clear();
+        }
+        console.log('🗑️ Cache cleared');
+    },
+
     loadEntries: async function (templateId) {
         try {
             console.log(`Loading page ${this.state.currentPage} for template ${templateId}`);
+            
+            // Check cache first
+            const cachedResult = this.getCachedResult(templateId, this.state.currentPage, this.state.pageSize);
+            if (cachedResult) {
+                this.state.localEntries = cachedResult.entries;
+                this.state.totalCount = cachedResult.totalCount;
+                this.renderTable(this.state.localEntries);
+                
+                if (this.state.activeColumnCompute) {
+                    this.updateColumnComputation();
+                }
+                this.renderPaginationControls(this.state.totalCount);
+                return;
+            }
+            
+            // Cache miss - fetch from server
+            const startTime = performance.now();
             const result = await SupabaseService.getEntries(
                 templateId, 
                 null, 
                 this.state.currentPage, 
                 this.state.pageSize
             );
-            console.log(`Loaded ${result.entries.length} entries, total: ${result.totalCount}`);
+            const queryTime = performance.now() - startTime;
+            
+            console.log(`📊 Query time: ${queryTime.toFixed(2)}ms | Loaded ${result.entries.length} entries, total: ${result.totalCount}`);
+            
+            // Cache the result
+            this.setCachedResult(templateId, this.state.currentPage, this.state.pageSize, result);
+            
             this.state.localEntries = result.entries;
             this.state.totalCount = result.totalCount;
 
@@ -759,6 +904,9 @@ export const AppCore = {
                         console.log('Date input changed:', colName, '=', e.target.value, 'for entry:', entryId);
                         
                         try {
+                            // Clear cache when entry is updated
+                            this.clearCache(this.state.currentTemplateId);
+                            
                             await SupabaseService.updateEntryValues(entryId, {
                                 [colId]: e.target.value
                             });
@@ -1925,9 +2073,12 @@ export const AppCore = {
         const core = AppCore;
 
         if (!core.state.currentTemplateId) {
-            core.showToast('Please select a template first', 'error');
+            core.showToast('No template selected', 'error');
             return;
         }
+        
+        // Clear cache when new data is saved
+        this.clearCache(this.state.currentTemplateId);
 
         try {
             // 1. Create the base entry record
@@ -1976,6 +2127,9 @@ export const AppCore = {
         try {
             await SupabaseService.deleteEntry(id);
             this.showToast('Record deleted!');
+            
+            // Clear cache when entry is deleted
+            this.clearCache(this.state.currentTemplateId);
 
             const cacheKey = `template-${this.state.currentTemplate.id}`;
             delete this.state.cache[cacheKey];
@@ -5233,3 +5387,8 @@ export const AppCore = {
     //------------function para mapunta agad sa last row------------------
     //-----------------------------------------------------------------------------------------
 };
+
+// Ensure AppCore is globally available
+if (typeof window !== 'undefined') {
+    window.AppCore = AppCore;
+}

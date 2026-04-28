@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Performance Data Generator</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #374151;
+        }
+
+        select, input, button {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+
+        select:focus, input:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+
+        .preset-buttons {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .preset-btn {
+            padding: 10px;
+            background: #f3f4f6;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        .preset-btn:hover {
+            background: #3b82f6;
+            color: white;
+            border-color: #3b82f6;
+        }
+
+        .preset-btn.active {
+            background: #3b82f6;
+            color: white;
+            border-color: #3b82f6;
+        }
+
+        .generate-btn {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            border: none;
+            font-weight: 600;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .generate-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(16, 185, 129, 0.3);
+        }
+
+        .generate-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .progress {
+            margin-top: 20px;
+            padding: 20px;
+            background: #f9fafb;
+            border-radius: 8px;
+            display: none;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e5e7eb;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #3b82f6, #10b981);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .progress-text {
+            font-size: 14px;
+            color: #6b7280;
+            text-align: center;
+        }
+
+        .results {
+            margin-top: 20px;
+            padding: 20px;
+            background: #f0f9ff;
+            border-radius: 8px;
+            border-left: 4px solid #3b82f6;
+            display: none;
+        }
+
+        .results h3 {
+            color: #1d4ed8;
+            margin-bottom: 10px;
+        }
+
+        .results-stats {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .stat {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #1d4ed8;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: #6b7280;
+            text-transform: uppercase;
+        }
+
+        .error-list {
+            max-height: 150px;
+            overflow-y: auto;
+            font-size: 12px;
+            color: #dc2626;
+            background: white;
+            padding: 10px;
+            border-radius: 4px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 Performance Data Generator</h1>
+            <p>Generate thousands of test records for performance testing</p>
+        </div>
+
+        <div class="content">
+            <div class="form-group">
+                <label for="templateSelect">Select Template:</label>
+                <select id="templateSelect">
+                    <option value="">Loading templates...</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Quick Presets:</label>
+                <div class="preset-buttons">
+                    <button class="preset-btn" data-amount="100">100</button>
+                    <button class="preset-btn" data-amount="500">500</button>
+                    <button class="preset-btn active" data-amount="1000">1K</button>
+                    <button class="preset-btn" data-amount="5000">5K</button>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="customAmount">Custom Amount:</label>
+                <input type="number" id="customAmount" placeholder="Enter number of records" min="1" max="50000">
+            </div>
+
+            <div class="form-group">
+                <label for="batchSize">Batch Size:</label>
+                <select id="batchSize">
+                    <option value="25">25 records per batch</option>
+                    <option value="50" selected>50 records per batch</option>
+                    <option value="100">100 records per batch</option>
+                    <option value="200">200 records per batch</option>
+                </select>
+            </div>
+
+            <button class="generate-btn" id="generateBtn">🎯 Generate Test Data</button>
+
+            <div class="progress" id="progress">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <div class="progress-text" id="progressText">Preparing...</div>
+            </div>
+
+            <div class="results" id="results">
+                <h3>📊 Generation Results</h3>
+                <div class="results-stats">
+                    <div class="stat">
+                        <div class="stat-value" id="successCount">0</div>
+                        <div class="stat-label">Success</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value" id="failedCount">0</div>
+                        <div class="stat-label">Failed</div>
+                    </div>
+                </div>
+                <div class="error-list" id="errorList"></div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { SUPABASE_CONFIG } from './config.js';
+        import { SupabaseService } from './supabase-service.js';
+        import { DataGenerator } from './data-generator.js';
+
+        // Initialize Supabase
+        const { createClient } = supabase;
+        const supabaseClient = createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
+        SupabaseService.client = supabaseClient;
+        
+        // Make DataGenerator available globally for console access
+        window.DataGenerator = DataGenerator;
+
+        // UI Elements
+        const templateSelect = document.getElementById('templateSelect');
+        const customAmount = document.getElementById('customAmount');
+        const batchSize = document.getElementById('batchSize');
+        const generateBtn = document.getElementById('generateBtn');
+        const progress = document.getElementById('progress');
+        const progressFill = document.getElementById('progressFill');
+        const progressText = document.getElementById('progressText');
+        const results = document.getElementById('results');
+        const successCount = document.getElementById('successCount');
+        const failedCount = document.getElementById('failedCount');
+        const errorList = document.getElementById('errorList');
+
+        let currentAmount = 1000;
+
+        // Load templates
+        async function loadTemplates() {
+            try {
+                const templates = await SupabaseService.getTemplates(1);
+                templateSelect.innerHTML = '<option value="">Select a template...</option>';
+                
+                templates.forEach(template => {
+                    const option = document.createElement('option');
+                    option.value = template.id;
+                    option.textContent = `${template.name} (${template.columns?.length || 0} columns)`;
+                    templateSelect.appendChild(option);
+                });
+            } catch (error) {
+                console.error('Failed to load templates:', error);
+                templateSelect.innerHTML = '<option value="">Failed to load templates</option>';
+            }
+        }
+
+        // Preset buttons
+        document.querySelectorAll('.preset-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+                currentAmount = parseInt(this.dataset.amount);
+                customAmount.value = '';
+            });
+        });
+
+        // Custom amount input
+        customAmount.addEventListener('input', function() {
+            if (this.value) {
+                currentAmount = parseInt(this.value);
+                document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+            }
+        });
+
+        // Generate data
+        generateBtn.addEventListener('click', async function() {
+            const templateId = templateSelect.value;
+            
+            if (!templateId) {
+                alert('Please select a template first');
+                return;
+            }
+
+            if (!currentAmount || currentAmount < 1) {
+                alert('Please enter a valid amount');
+                return;
+            }
+
+            // Disable button and show progress
+            generateBtn.disabled = true;
+            generateBtn.textContent = '⏳ Generating...';
+            progress.style.display = 'block';
+            results.style.display = 'none';
+            
+            // Override console.log to update progress
+            const originalLog = console.log;
+            console.log = function(...args) {
+                originalLog.apply(console, args);
+                
+                const message = args.join(' ');
+                if (message.includes('Processing batch')) {
+                    const batchMatch = message.match(/batch (\d+)/);
+                    if (batchMatch) {
+                        const batchNum = parseInt(batchMatch[1]);
+                        const totalBatches = Math.ceil(currentAmount / parseInt(batchSize.value));
+                        const progress = (batchNum / totalBatches) * 100;
+                        progressFill.style.width = `${progress}%`;
+                        progressText.textContent = `Processing batch ${batchNum}/${totalBatches}...`;
+                    }
+                }
+                
+                if (message.includes('Generation completed')) {
+                    progressText.textContent = '✅ Completed!';
+                }
+            };
+
+            try {
+                const results_data = await DataGenerator.generateBatchData(
+                    templateId, 
+                    currentAmount, 
+                    parseInt(batchSize.value)
+                );
+
+                // Show results
+                successCount.textContent = results_data.success;
+                failedCount.textContent = results_data.failed;
+                
+                if (results_data.errors.length > 0) {
+                    errorList.style.display = 'block';
+                    errorList.innerHTML = results_data.errors.slice(0, 20).join('<br>');
+                } else {
+                    errorList.style.display = 'none';
+                }
+                
+                results.style.display = 'block';
+                
+            } catch (error) {
+                console.error('Generation failed:', error);
+                alert('Failed to generate data: ' + error.message);
+            } finally {
+                // Restore console.log
+                console.log = originalLog;
+                
+                // Re-enable button
+                generateBtn.disabled = false;
+                generateBtn.textContent = '🎯 Generate Test Data';
+            }
+        });
+
+        // Initialize
+        loadTemplates();
+    </script>
+</body>
+</html>
