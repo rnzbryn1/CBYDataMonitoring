@@ -2745,8 +2745,26 @@ export const AppCore = {
 
     //Column Drag
     enableColumnDrag: function () {
-        const headerRow = document.querySelector('#tableHeaders tr');
-        if (!headerRow) return;
+        // Check if there's a third row (groups exist)
+        const allRows = document.querySelectorAll('#tableHeaders tr');
+        console.log('Total header rows:', allRows.length);
+        
+        let headerRow;
+        
+        if (allRows.length >= 3) {
+            // Groups exist: use the third row (actual column names under groups)
+            headerRow = allRows[2];
+            console.log('Using row 3 (groups exist)');
+        } else {
+            // No groups: use the second row (column names with rowspan)
+            headerRow = allRows[1];
+            console.log('Using row 2 (no groups)');
+        }
+        
+        if (!headerRow) {
+            console.log('No header row found');
+            return;
+        }
 
         let dragStartIndex = null;
 
@@ -2756,7 +2774,9 @@ export const AppCore = {
 
         headerRow.querySelectorAll('th').forEach((th, index) => {
             if (index === 0) return; // skip checkbox column
+            if (th.hasAttribute('colspan')) return; // skip group headers
 
+            console.log(`Setting draggable on th ${index}:`, th.textContent);
             th.setAttribute('draggable', true);
 
             th.addEventListener('dragstart', (e) => {
@@ -3895,6 +3915,9 @@ export const AppCore = {
     computeFormulaForEntry: function (entry, formula, columns) {
         let evalExpr = formula.startsWith('=') ? formula.slice(1) : formula;
 
+        // Track if formula involves date columns for result formatting
+        let involvesDateColumn = false;
+
         // Helper: parse date from column name or value
         const parseDate = (arg) => {
             const clean = arg.trim();
@@ -4029,6 +4052,7 @@ export const AppCore = {
 
             let num;
             if (colType === 'date' && raw) {
+                involvesDateColumn = true;
                 let date;
                 if (raw.includes('/')) {
                     const parts = raw.split('/');
@@ -4058,6 +4082,20 @@ export const AppCore = {
 
         try {
             const result = eval(evalExpr);
+            
+            // Excel-like date addition: if formula involves dates and result is a number, convert back to date
+            if (involvesDateColumn && typeof result === 'number' && !isNaN(result)) {
+                // Convert Excel serial number back to date
+                const dateResult = new Date(result * (1000 * 60 * 60 * 24));
+                if (!isNaN(dateResult.getTime())) {
+                    // Format as YYYY-MM-DD for display
+                    const year = dateResult.getFullYear();
+                    const month = String(dateResult.getMonth() + 1).padStart(2, '0');
+                    const day = String(dateResult.getDate()).padStart(2, '0');
+                    return `${year}-${month}-${day}`;
+                }
+            }
+            
             return this.formatNumber(result);
         } catch {
             return 'ERR';
