@@ -3378,11 +3378,11 @@ export const AppCore = {
                     if (typeof result === 'number' && !isNaN(result)) {
                         const dateResult = new Date(result * (1000 * 60 * 60 * 24));
                         if (!isNaN(dateResult.getTime())) {
-                            // Format as YYYY-MM-DD for date display
-                            const year = dateResult.getFullYear();
+                            // Format as MM/DD/YYYY for date display
                             const month = String(dateResult.getMonth() + 1).padStart(2, '0');
                             const day = String(dateResult.getDate()).padStart(2, '0');
-                            return `${year}-${month}-${day}`;
+                            const year = dateResult.getFullYear();
+                            return `${month}/${day}/${year}`;
                         }
                     }
                     // If result is already a date string, return as is
@@ -4591,11 +4591,11 @@ export const AppCore = {
                     if (typeof result === 'number' && !isNaN(result)) {
                         const dateResult = new Date(result * (1000 * 60 * 60 * 24));
                         if (!isNaN(dateResult.getTime())) {
-                            // Format as YYYY-MM-DD for date display
-                            const year = dateResult.getFullYear();
+                            // Format as MM/DD/YYYY for date display
                             const month = String(dateResult.getMonth() + 1).padStart(2, '0');
                             const day = String(dateResult.getDate()).padStart(2, '0');
-                            return `${year}-${month}-${day}`;
+                            const year = dateResult.getFullYear();
+                            return `${month}/${day}/${year}`;
                         }
                     }
                     // If result is already a date string, return as is
