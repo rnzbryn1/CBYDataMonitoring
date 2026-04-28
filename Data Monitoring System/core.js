@@ -3335,19 +3335,21 @@ export const AppCore = {
                 let num;
                 // Handle date columns differently - convert to days for arithmetic
                 if (colType === 'date' && raw) {
+                    // Convert raw to string to handle different data types
+                    const rawString = String(raw);
                     // Parse date - handle DD/MM/YYYY format
                     let date;
-                    if (raw.includes('/')) {
-                        const parts = raw.split('/');
+                    if (rawString.includes('/')) {
+                        const parts = rawString.split('/');
                         if (parts.length === 3) {
                             // Assume DD/MM/YYYY format
                             const [day, month, year] = parts.map(p => parseInt(p, 10));
                             date = new Date(year, month - 1, day);
                         } else {
-                            date = new Date(raw);
+                            date = new Date(rawString);
                         }
                     } else {
-                        date = new Date(raw);
+                        date = new Date(rawString);
                     }
                     
                     if (!isNaN(date.getTime())) {
@@ -3368,7 +3370,26 @@ export const AppCore = {
 
             try {
                 const result = eval(evalExpr);
-                return this.formatNumber(result); // APPLY HERE
+                
+                // Check if target column is date type and format accordingly
+                const targetColDef = columns.find(c => c.encoding_columns.column_name === this.state.currentColName);
+                if (targetColDef && targetColDef.encoding_columns.column_type === 'date') {
+                    // If result is a number (Excel serial), convert to date
+                    if (typeof result === 'number' && !isNaN(result)) {
+                        const dateResult = new Date(result * (1000 * 60 * 60 * 24));
+                        if (!isNaN(dateResult.getTime())) {
+                            // Format as YYYY-MM-DD for date display
+                            const year = dateResult.getFullYear();
+                            const month = String(dateResult.getMonth() + 1).padStart(2, '0');
+                            const day = String(dateResult.getDate()).padStart(2, '0');
+                            return `${year}-${month}-${day}`;
+                        }
+                    }
+                    // If result is already a date string, return as is
+                    return String(result);
+                }
+                
+                return this.formatNumber(result); // For non-date columns
             } catch {
                 return 'ERR';
             }
@@ -3952,6 +3973,92 @@ export const AppCore = {
             return new Date(clean);
         };
 
+        // Helper: check if a column contains a date
+        const isDateColumn = (colName) => {
+            let colNameToUse = colName.trim();
+            if (this.state.variableColumns && this.state.variableColumns[colNameToUse]) {
+                colNameToUse = this.state.variableColumns[colNameToUse];
+            }
+            
+            const column = columns.find(c => c.encoding_columns.column_name === colNameToUse);
+            return column && column.encoding_columns.column_type === 'date';
+        };
+
+        // Helper: get date value from column
+        const getDateValue = (colName) => {
+            let colNameToUse = colName.trim();
+            if (this.state.variableColumns && this.state.variableColumns[colNameToUse]) {
+                colNameToUse = this.state.variableColumns[colNameToUse];
+            }
+            
+            const raw = entry.values[colNameToUse];
+            if (!raw) return null;
+            
+            // Handle DD/MM/YYYY format
+            if (raw.includes('/')) {
+                const parts = raw.split('/');
+                if (parts.length === 3) {
+                    const [day, month, year] = parts.map(p => parseInt(p, 10));
+                    return new Date(year, month - 1, day);
+                }
+            }
+            // Handle YYYY-MM-DD format
+            if (raw.includes('-')) {
+                const parts = raw.split('-');
+                if (parts.length === 3) {
+                    const [year, month, day] = parts.map(p => parseInt(p, 10));
+                    return new Date(year, month - 1, day);
+                }
+            }
+            return new Date(raw);
+        };
+
+        // Helper: get numeric value from column
+        const getNumericValue = (colName) => {
+            let colNameToUse = colName.trim();
+            if (this.state.variableColumns && this.state.variableColumns[colNameToUse]) {
+                colNameToUse = this.state.variableColumns[colNameToUse];
+            }
+            
+            const raw = entry.values[colNameToUse] ?? '0';
+            return parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
+        };
+
+        // Process date addition: A+B or B+A where A is date and B is number
+        // This handles cases like delivery_date + add_days or add_days + delivery_date
+        evalExpr = evalExpr.replace(/\b([A-Z]+)\s*[+\-]\s*([A-Z]+)\b/g, (match, var1, var2, op) => {
+            const originalOp = match.includes('+') ? '+' : '-';
+            
+            // Check if either variable is a date column
+            const var1IsDate = isDateColumn(var1);
+            const var2IsDate = isDateColumn(var2);
+            
+            // Only process if exactly one is a date and the other is numeric
+            if ((var1IsDate && !var2IsDate) || (!var1IsDate && var2IsDate)) {
+                const dateVar = var1IsDate ? var1 : var2;
+                const numVar = var1IsDate ? var2 : var1;
+                
+                const dateValue = getDateValue(dateVar);
+                const numValue = getNumericValue(numVar);
+                
+                if (dateValue && !isNaN(dateValue.getTime())) {
+                    involvesDateColumn = true;
+                    const resultDate = new Date(dateValue);
+                    
+                    if (originalOp === '+') {
+                        resultDate.setDate(resultDate.getDate() + numValue);
+                    } else {
+                        resultDate.setDate(resultDate.getDate() - numValue);
+                    }
+                    
+                    // Return as Excel serial number for consistent processing
+                    return resultDate.getTime() / (1000 * 60 * 60 * 24);
+                }
+            }
+            
+            return match; // Return original if not a date addition pattern
+        });
+
         // Process date functions FIRST
         evalExpr = evalExpr.replace(/TODAY\(\)/gi, () => {
             const today = new Date();
@@ -4442,19 +4549,21 @@ export const AppCore = {
                 let num;
                 // Handle date columns differently - convert to days for arithmetic
                 if (colType === 'date' && raw) {
+                    // Convert raw to string to handle different data types
+                    const rawString = String(raw);
                     // Parse date - handle DD/MM/YYYY format
                     let date;
-                    if (raw.includes('/')) {
-                        const parts = raw.split('/');
+                    if (rawString.includes('/')) {
+                        const parts = rawString.split('/');
                         if (parts.length === 3) {
                             // Assume DD/MM/YYYY format
                             const [day, month, year] = parts.map(p => parseInt(p, 10));
                             date = new Date(year, month - 1, day);
                         } else {
-                            date = new Date(raw);
+                            date = new Date(rawString);
                         }
                     } else {
-                        date = new Date(raw);
+                        date = new Date(rawString);
                     }
                     
                     if (!isNaN(date.getTime())) {
@@ -4474,7 +4583,26 @@ export const AppCore = {
 
             try {
                 const result = eval(evalExpr);
-                return self.formatNumber(result);
+                
+                // Check if target column is date type and format accordingly
+                const targetColDef = columns.find(c => c.encoding_columns.column_name === targetColumnName);
+                if (targetColDef && targetColDef.encoding_columns.column_type === 'date') {
+                    // If result is a number (Excel serial), convert to date
+                    if (typeof result === 'number' && !isNaN(result)) {
+                        const dateResult = new Date(result * (1000 * 60 * 60 * 24));
+                        if (!isNaN(dateResult.getTime())) {
+                            // Format as YYYY-MM-DD for date display
+                            const year = dateResult.getFullYear();
+                            const month = String(dateResult.getMonth() + 1).padStart(2, '0');
+                            const day = String(dateResult.getDate()).padStart(2, '0');
+                            return `${year}-${month}-${day}`;
+                        }
+                    }
+                    // If result is already a date string, return as is
+                    return String(result);
+                }
+                
+                return self.formatNumber(result); // For non-date columns
             } catch {
                 return 'ERR';
             }
