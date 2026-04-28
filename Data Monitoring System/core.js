@@ -693,7 +693,17 @@ export const AppCore = {
                     
                     const dateInput = document.createElement('input');
                     dateInput.type = 'date';
-                    dateInput.value = val || '';
+                    
+                    // Convert MM/DD/YYYY to YYYY-MM-DD for date input field
+                    let dateValue = val || '';
+                    if (val && val.includes('/')) {
+                        const parts = val.split('/');
+                        if (parts.length === 3) {
+                            const [month, day, year] = parts.map(p => parseInt(p, 10));
+                            dateValue = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                        }
+                    }
+                    dateInput.value = dateValue;
                     dateInput.style.cssText = `
                         width: 100%;
                         border: none;
@@ -3437,12 +3447,25 @@ export const AppCore = {
             }
 
             if (colDef) {
+                // For date columns, ensure proper date format for database storage
+                let dbValue = result;
+                if (colDef.column_type === 'date' && typeof result === 'string') {
+                    // Convert MM/DD/YYYY to YYYY-MM-DD for database storage
+                    if (result.includes('/')) {
+                        const parts = result.split('/');
+                        if (parts.length === 3) {
+                            const [month, day, year] = parts.map(p => parseInt(p, 10));
+                            dbValue = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                        }
+                    }
+                }
+                
                 let detail = entry.valueDetails.find(v => v.column_id === colDef.id);
-                if (detail) detail.value = String(result);
-                else entry.valueDetails.push({ column_id: colDef.id, value: String(result) });
+                if (detail) detail.value = dbValue;
+                else entry.valueDetails.push({ column_id: colDef.id, value: dbValue });
 
                 const payload = {};
-                payload[colDef.id] = result;
+                payload[colDef.id] = dbValue;
 
                 await this.saveEntryField(entry.id, payload);
                 
@@ -3469,9 +3492,21 @@ export const AppCore = {
                 if (!entry.valueDetails) entry.valueDetails = [];
                 entry.valueDetails = entry.valueDetails.filter(v => v.column_id !== colDef.id);
                 if (result !== '' && result !== null && result !== undefined) {
+                    // For date columns, ensure proper date format for database storage
+                    let displayValue = result;
+                    if (colDef.column_type === 'date' && typeof result === 'string') {
+                        // Convert MM/DD/YYYY to YYYY-MM-DD for database storage
+                        if (result.includes('/')) {
+                            const parts = result.split('/');
+                            if (parts.length === 3) {
+                                const [month, day, year] = parts.map(p => parseInt(p, 10));
+                                displayValue = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                            }
+                        }
+                    }
                     entry.valueDetails.push({
                         column_id: colDef.id,
-                        value: String(result)
+                        value: displayValue
                     });
                 }
                 
@@ -3487,13 +3522,26 @@ export const AppCore = {
                 const batch = computedResults.slice(i, i + batchSize);
                 const batchPromises = batch.map(({ entry, result }) => {
                     if (colDef) {
+                        // For date columns, ensure proper date format for database storage
+                        let dbValue = result;
+                        if (colDef.column_type === 'date' && typeof result === 'string') {
+                            // Convert MM/DD/YYYY to YYYY-MM-DD for database storage
+                            if (result.includes('/')) {
+                                const parts = result.split('/');
+                                if (parts.length === 3) {
+                                    const [month, day, year] = parts.map(p => parseInt(p, 10));
+                                    dbValue = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                                }
+                            }
+                        }
+                        
                         // Update valueDetails
                         let detail = entry.valueDetails.find(v => v.column_id === colDef.id);
-                        if (detail) detail.value = String(result);
-                        else entry.valueDetails.push({ column_id: colDef.id, value: String(result) });
+                        if (detail) detail.value = dbValue;
+                        else entry.valueDetails.push({ column_id: colDef.id, value: dbValue });
 
                         const payload = {};
-                        payload[colDef.id] = result;
+                        payload[colDef.id] = dbValue;
                         return this.saveEntryField(entry.id, payload);
                     }
                     return Promise.resolve();
@@ -4621,7 +4669,33 @@ export const AppCore = {
         const targetCell = cells.find(c => c.dataset.colName === targetColumnName);
         
         if (targetCell) {
-            targetCell.textContent = newResult;
+            // Check if this is a date column and update the date input value instead of overwriting
+            const targetColDef = this.state.currentTemplate.columns.find(
+                c => c.encoding_columns.column_name === targetColumnName
+            )?.encoding_columns;
+            
+            if (targetColDef && targetColDef.column_type === 'date') {
+                // For date columns, update the date input value
+                const dateInput = targetCell.querySelector('input[type="date"]');
+                if (dateInput) {
+                    // Convert MM/DD/YYYY to YYYY-MM-DD for date input
+                    let dateValue = newResult || '';
+                    if (newResult && newResult.includes('/')) {
+                        const parts = newResult.split('/');
+                        if (parts.length === 3) {
+                            const [month, day, year] = parts.map(p => parseInt(p, 10));
+                            dateValue = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                        }
+                    }
+                    dateInput.value = dateValue;
+                } else {
+                    // If no date input found, fallback to text content
+                    targetCell.textContent = newResult;
+                }
+            } else {
+                // For non-date columns, use text content as before
+                targetCell.textContent = newResult;
+            }
 
             // Update local state
             entry.values[targetColumnName] = newResult;
@@ -4633,8 +4707,21 @@ export const AppCore = {
                 )?.encoding_columns;
 
                 if (colDef) {
+                    // For date columns, ensure proper date format for database storage
+                    let dbValue = newResult;
+                    if (colDef.column_type === 'date' && typeof newResult === 'string') {
+                        // Convert MM/DD/YYYY to YYYY-MM-DD for database storage
+                        if (newResult.includes('/')) {
+                            const parts = newResult.split('/');
+                            if (parts.length === 3) {
+                                const [month, day, year] = parts.map(p => parseInt(p, 10));
+                                dbValue = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                            }
+                        }
+                    }
+                    
                     const payload = {};
-                    payload[colDef.id] = newResult;
+                    payload[colDef.id] = dbValue;
                     await SupabaseService.updateEntryValues(entryId, payload);
                 }
             } catch (err) {
