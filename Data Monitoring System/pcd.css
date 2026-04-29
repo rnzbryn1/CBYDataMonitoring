@@ -333,7 +333,8 @@ table {
     width: auto;
     min-width: 100%;
     table-layout: auto;
-    border-collapse: collapse;
+    border-collapse: separate;
+    border-spacing: 0;
     font-size: 13px;
 }
 
@@ -359,6 +360,8 @@ padding: 10px 14px;
 letter-spacing: 0.06em;
 text-transform: uppercase;
 white-space: nowrap;
+border-bottom: 2px solid #cbd5e1;
+border-right: 1px solid #e2e8f0;
 }
 
 /* Group header styling */
@@ -378,14 +381,17 @@ font-size: 14px;
 
 /* Rows */
 tbody tr {
-border-bottom: 0.5px solid #f1f5f9;
-transition: background 0.1s;
+    border-bottom: 1px solid #e2e8f0;
     transition: background 0.1s;
+}
+
+tbody tr:nth-child(even) {
+    background: #f8fafc;
 }
 
 tbody tr:last-child { border-bottom: none; }
 
-tbody tr:hover { background: #f8fafc; }
+tbody tr:hover { background: #f1f5f9; }
 
 tbody td:not(:first-child) {
     padding: 11px 14px;
@@ -393,6 +399,7 @@ tbody td:not(:first-child) {
     vertical-align: middle;
     word-wrap: break-word;
     overflow-wrap: break-word;
+    border-right: 1px solid #e2e8f0;
 }
 
 /* --- CHECKBOX COLUMN --- */
