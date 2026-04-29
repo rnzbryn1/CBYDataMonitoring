@@ -3305,7 +3305,7 @@ export const AppCore = {
         return null;
     },
 
-    openComputeModal: function () {
+    openComputeModal: function (isFromHeader = false) {
         // Generate column variables before opening modal
         this.generateColumnVariables();
         
@@ -3325,8 +3325,18 @@ export const AppCore = {
         const cellFormulaKey = `${entryId}|${columnName}`;
         const hasCellFormula = !!(this.state.cellFormulas[cellFormulaKey]);
         const hasColumnFormula = !!(columnName && this.state.columnFormulas[columnName]);
-        // If a column formula exists (and no cell-specific override), mode is "column"
-        const currentMode = (hasColumnFormula && !hasCellFormula) ? 'column' : 'cell';
+        
+        // If called from header, force column mode and disable cell selection
+        let currentMode;
+        let disableCellToggle = false;
+        
+        if (isFromHeader) {
+            currentMode = 'column';
+            disableCellToggle = true;
+        } else {
+            // If a column formula exists (and no cell-specific override), mode is "column"
+            currentMode = (hasColumnFormula && !hasCellFormula) ? 'column' : 'cell';
+        }
 
         modal.innerHTML = `
             <div class="compute-box">
@@ -3339,8 +3349,8 @@ export const AppCore = {
                 <input id="computeFormula" placeholder="=SUM(A, B, C)" value="${currentFormula}">
 
                 <div class="compute-toggle" id="computeMode">
-                    <button type="button" class="toggle-btn${currentMode === 'cell' ? ' toggle-active' : ''}" data-mode="cell">Selected Cell</button>
-                    <button type="button" class="toggle-btn${currentMode === 'column' ? ' toggle-active' : ''}" data-mode="column">Whole Column</button>
+                    <button type="button" class="toggle-btn${currentMode === 'cell' ? ' toggle-active' : ''}" data-mode="cell" ${disableCellToggle ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}>Selected Cell</button>
+                    <button type="button" class="toggle-btn${currentMode === 'column' ? ' toggle-active' : ''}" data-mode="column" ${disableCellToggle ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}>Whole Column</button>
                 </div>
 
                 <div class="compute-section">
@@ -5771,8 +5781,8 @@ export const AppCore = {
         // Set the current column for computation
         this.state.currentColName = this.state.currentColName;
         
-        // Open the compute modal (reuse existing compute functionality)
-        this.openColumnComputeModal();
+        // Open the compute modal with header flag to disable cell selection
+        this.openComputeModal(true);
         
         // Hide context menu
         document.getElementById('headerContextMenu').style.display = 'none';
