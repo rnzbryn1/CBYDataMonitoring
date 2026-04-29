@@ -4178,6 +4178,9 @@ export const AppCore = {
     computeFormulaForEntry: function (entry, formula, columns) {
         let evalExpr = formula.startsWith('=') ? formula.slice(1) : formula;
 
+        console.log('🔧 Processing formula:', formula);
+        console.log('🔧 Cleaned expression:', evalExpr);
+
         // Track if formula involves date columns for result formatting
         let involvesDateColumn = false;
 
@@ -4266,16 +4269,40 @@ export const AppCore = {
             return parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
         };
 
-        // Process date addition: A+B or B+A where A is date and B is number
-        // This handles cases like delivery_date + add_days or add_days + delivery_date
+        // Process date operations: A+B, A-B, B+A, B-A where A and/or B are dates
+        console.log('🔍 Looking for date operations in:', evalExpr);
         evalExpr = evalExpr.replace(/\b([A-Z]+)\s*[+\-]\s*([A-Z]+)\b/g, (match, var1, var2, op) => {
+            console.log('🎯 Found operation:', match, 'var1:', var1, 'var2:', var2);
             const originalOp = match.includes('+') ? '+' : '-';
             
-            // Check if either variable is a date column
+            // Check if variables are date columns
             const var1IsDate = isDateColumn(var1);
             const var2IsDate = isDateColumn(var2);
+            console.log('📅 Variable types -', var1, ':', var1IsDate ? 'date' : 'not date', ',', var2, ':', var2IsDate ? 'date' : 'not date');
             
-            // Only process if exactly one is a date and the other is numeric
+            // Case 1: Date subtraction (A-E) where both are dates - return day difference
+            if (var1IsDate && var2IsDate && originalOp === '-') {
+                console.log('🔍 Date subtraction detected:', var1, '-', var2);
+                const date1 = getDateValue(var1);
+                const date2 = getDateValue(var2);
+                
+                console.log('📅 Date1:', date1, 'Date2:', date2);
+                console.log('📅 Date1 valid:', date1 && !isNaN(date1.getTime()));
+                console.log('📅 Date2 valid:', date2 && !isNaN(date2.getTime()));
+                
+                if (date1 && date2 && !isNaN(date1.getTime()) && !isNaN(date2.getTime())) {
+                    involvesDateColumn = true;
+                    const diffTime = date1 - date2;
+                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                    console.log('⏰ Time difference:', diffTime, 'ms');
+                    console.log('📊 Day difference:', diffDays, 'days');
+                    return diffDays;
+                } else {
+                    console.log('❌ Invalid dates detected');
+                }
+            }
+            
+            // Case 2: Date addition/subtraction with number (A+5 or A-5)
             if ((var1IsDate && !var2IsDate) || (!var1IsDate && var2IsDate)) {
                 const dateVar = var1IsDate ? var1 : var2;
                 const numVar = var1IsDate ? var2 : var1;
@@ -4290,7 +4317,13 @@ export const AppCore = {
                     if (originalOp === '+') {
                         resultDate.setDate(resultDate.getDate() + numValue);
                     } else {
-                        resultDate.setDate(resultDate.getDate() - numValue);
+                        // For date - number, the number should be subtracted from date
+                        if (var1IsDate) {
+                            resultDate.setDate(resultDate.getDate() - numValue);
+                        } else {
+                            // For number - date, this is invalid, return 0
+                            return 0;
+                        }
                     }
                     
                     // Return as Excel serial number for consistent processing
@@ -4298,7 +4331,7 @@ export const AppCore = {
                 }
             }
             
-            return match; // Return original if not a date addition pattern
+            return match; // Return original if not a date operation pattern
         });
 
         // Process date functions FIRST
@@ -4638,6 +4671,9 @@ export const AppCore = {
         const computeRow = (entry) => {
             let evalExpr = formula.startsWith('=') ? formula.slice(1) : formula;
 
+            console.log('🔧 Processing formula in recalculateSingleFormula:', formula);
+            console.log('🔧 Cleaned expression:', evalExpr);
+
             // Helper: parse date from column name or value
             const parseDate = (arg) => {
                 const clean = arg.trim();
@@ -4780,6 +4816,70 @@ export const AppCore = {
             evalExpr = evalExpr.replace(/\bMIN\((.*?)\)/gi, (_, args) => {
                 const vals = args.split(',').map(a => getVal(a, entry));
                 return Math.min(...vals);
+            });
+
+            // Process date operations BEFORE column name replacement
+            console.log('🔍 Looking for date operations in:', evalExpr);
+            evalExpr = evalExpr.replace(/\b([A-Z]+)\s*[+\-]\s*([A-Z]+)\b/g, (match, var1, var2, op) => {
+                console.log('🎯 Found operation:', match, 'var1:', var1, 'var2:', var2);
+                const originalOp = match.includes('+') ? '+' : '-';
+                
+                // Helper: check if column is date type
+                const isDateColumn = (colName) => {
+                    const column = columns.find(c => c.encoding_columns.column_name === colName);
+                    return column && column.encoding_columns.column_type === 'date';
+                };
+                
+                // Helper: get date value from column
+                const getDateValue = (colName) => {
+                    const raw = entry.values[colName];
+                    if (!raw) return null;
+                    
+                    // Parse date - handle DD/MM/YYYY format
+                    let date;
+                    const rawString = String(raw);
+                    if (rawString.includes('/')) {
+                        const parts = rawString.split('/');
+                        if (parts.length === 3) {
+                            const [day, month, year] = parts.map(p => parseInt(p, 10));
+                            date = new Date(year, month - 1, day);
+                        } else {
+                            date = new Date(rawString);
+                        }
+                    } else {
+                        date = new Date(rawString);
+                    }
+                    
+                    return date && !isNaN(date.getTime()) ? date : null;
+                };
+                
+                // Check if variables are date columns
+                const var1IsDate = isDateColumn(var1);
+                const var2IsDate = isDateColumn(var2);
+                console.log('📅 Variable types -', var1, ':', var1IsDate ? 'date' : 'not date', ',', var2, ':', var2IsDate ? 'date' : 'not date');
+                
+                // Case 1: Date subtraction (A-E) where both are dates - return day difference
+                if (var1IsDate && var2IsDate && originalOp === '-') {
+                    console.log('🔍 Date subtraction detected:', var1, '-', var2);
+                    const date1 = getDateValue(var1);
+                    const date2 = getDateValue(var2);
+                    
+                    console.log('📅 Date1:', date1, 'Date2:', date2);
+                    console.log('📅 Date1 valid:', date1 && !isNaN(date1.getTime()));
+                    console.log('📅 Date2 valid:', date2 && !isNaN(date2.getTime()));
+                    
+                    if (date1 && date2 && !isNaN(date1.getTime()) && !isNaN(date2.getTime())) {
+                        const diffTime = date1 - date2;
+                        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                        console.log('⏰ Time difference:', diffTime, 'ms');
+                        console.log('📊 Day difference:', diffDays, 'days');
+                        return diffDays;
+                    } else {
+                        console.log('❌ Invalid dates detected');
+                    }
+                }
+                
+                return match; // Return original if not a date operation pattern
             });
 
             // Convert column names to numbers for evaluation
