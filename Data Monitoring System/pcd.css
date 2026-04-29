@@ -1281,6 +1281,76 @@ td.cell-focused {
     box-shadow: 0 0 0 2px #93c5fd;
 }
 
+/* --- TAB INTERFACE FOR MONITORING COLUMN MODAL --- */
+.tab-navigation {
+    display: flex;
+    gap: 0;
+    margin-bottom: 20px;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.tab-btn {
+    flex: 1;
+    padding: 12px 16px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    font-size: 14px;
+    font-weight: 500;
+    color: #64748b;
+    transition: all 0.2s ease;
+    border-radius: 6px 6px 0 0;
+}
+
+.tab-btn:hover {
+    background: #f8fafc;
+    color: #475569;
+}
+
+.tab-btn.active {
+    color: #2563eb;
+    border-bottom-color: #2563eb;
+    background: #f0f7ff;
+}
+
+.tab-content {
+    min-height: 120px;
+}
+
+.tab-pane {
+    display: none;
+}
+
+.tab-pane.active {
+    display: block;
+}
+
+.tab-pane label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 500;
+    color: #374151;
+}
+
+.tab-pane input,
+.tab-pane select {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    margin-bottom: 12px;
+    font-size: 14px;
+    transition: border-color 0.2s ease;
+}
+
+.tab-pane input:focus,
+.tab-pane select:focus {
+    outline: none;
+    border-color: #2563eb;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
 /* --- SCROLLBAR --- */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }

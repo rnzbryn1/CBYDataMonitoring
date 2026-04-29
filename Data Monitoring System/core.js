@@ -1,4 +1,4 @@
-// Import SupabaseService for database operations
+﻿// Import SupabaseService for database operations
 import { SupabaseService } from './supabase-service.js';
 import { UI } from './ui.js';
 
@@ -104,6 +104,7 @@ export const AppCore = {
         window.closeModal        = ()          => document.getElementById('categoryModal').style.display = 'none';
         window.openColumnModal   = async (groupName) => this.openColumnModal(groupName);
         window.closeColumnModal  = ()          => document.getElementById('columnModal').style.display = 'none';
+        window.switchColumnTab   = (tabName)    => this.switchColumnTab(tabName);
         window.openRenameGroupModal = (oldGroupName) => this.openRenameGroupModal(oldGroupName);
         window.closeRenameGroupModal = () => this.closeRenameGroupModal();
         window.confirmRenameGroup = () => this.confirmRenameGroup();
@@ -1945,9 +1946,12 @@ export const AppCore = {
         const isMonitoring = this.state.currentTemplate.module === 'monitoring';
 
         if (isMonitoring) {
-            // Show monitoring form (select existing column)
+            // Show monitoring form with tabs
             encodingForm.style.display = 'none';
             monitoringForm.style.display = 'block';
+
+            // Initialize tabs - default to existing column tab
+            this.switchColumnTab('existing');
 
             // Populate dropdown with columns from encoding templates
             try {
@@ -1999,16 +2003,39 @@ export const AppCore = {
             let columnId;
 
             if (isMonitoring) {
-                // For monitoring templates: select existing column from encoding
-                columnId = document.getElementById('existingColumnSelect').value;
-                if (!columnId) return UI.showToast('Please select a column from encoding templates.', 'error');
+                // Check which tab is active for monitoring templates
+                const activeTab = document.querySelector('.tab-btn.active').getAttribute('data-tab');
+                
+                if (activeTab === 'existing') {
+                    // For monitoring templates: select existing column from encoding
+                    columnId = document.getElementById('existingColumnSelect').value;
+                    if (!columnId) return UI.showToast('Please select a column from encoding templates.', 'error');
 
-                // Check if column already exists in current template
-                const existingColumn = this.state.currentTemplate.columns?.find(
-                    col => col.encoding_columns.id === columnId
-                );
-                if (existingColumn) {
-                    return UI.showToast('This column is already added to the template.', 'error');
+                    // Check if column already exists in current template
+                    const existingColumn = this.state.currentTemplate.columns?.find(
+                        col => col.encoding_columns.id === columnId
+                    );
+                    if (existingColumn) {
+                        return UI.showToast('This column is already added to the template.', 'error');
+                    }
+                } else {
+                    // For monitoring templates: create new column
+                    const name = document.getElementById('monitoringNewColumnName').value.trim();
+                    const columnType = document.getElementById('monitoringNewColumnType').value;
+                    const groupName = document.getElementById('monitoringColumnGroup').value.trim() || null;
+                    
+                    if (!name) return UI.showToast('Column name is required.', 'error');
+
+                    // Create reusable column with group name (for visual grouping only)
+                    const column = await SupabaseService.createColumn(
+                        this.state.departmentId,
+                        name,
+                        columnType,
+                        0, // display order will be set when adding to template
+                        false, // isRequired
+                        groupName // Use group name instead of parent_column_id
+                    );
+                    columnId = column.id;
                 }
 
                 // Calculate display order to add at the end
@@ -2133,6 +2160,41 @@ export const AppCore = {
             }
         }
     },
+
+    switchColumnTab: function(tabName) {
+        // Update tab buttons
+        const tabButtons = document.querySelectorAll('.tab-btn');
+        tabButtons.forEach(btn => {
+            btn.classList.remove('active');
+            if (btn.getAttribute('data-tab') === tabName) {
+                btn.classList.add('active');
+            }
+        });
+
+        // Update tab panes
+        const tabPanes = document.querySelectorAll('.tab-pane');
+        tabPanes.forEach(pane => {
+            pane.classList.remove('active');
+            pane.style.display = 'none';
+        });
+
+        // Show selected tab
+        const selectedPane = document.getElementById(`${tabName}ColumnTab`);
+        if (selectedPane) {
+            selectedPane.classList.add('active');
+            selectedPane.style.display = 'block';
+        }
+
+        // Clear form values when switching tabs
+        if (tabName === 'existing') {
+            document.getElementById('existingColumnSelect').value = '';
+        } else if (tabName === 'new') {
+            document.getElementById('monitoringNewColumnName').value = '';
+            document.getElementById('monitoringNewColumnType').value = 'text';
+            document.getElementById('monitoringColumnGroup').value = '';
+        }
+    },
+
     deleteColumn: async function (columnId, columnName) {
         if (!confirm(`Delete column "${columnName}"? This affects all records.`)) return;
 

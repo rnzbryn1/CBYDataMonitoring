@@ -121,15 +121,48 @@
             </label>
         </div>
         
-        <!-- For monitoring templates: select existing column from encoding -->
+        <!-- For monitoring templates: tab interface for existing/new columns -->
         <div id="monitoringColumnForm" style="display:none;">
-            <label>Select from Encoding Columns:</label>
-            <select id="existingColumnSelect">
-                <option value="">-- Select a column --</option>
-            </select>
-            <p style="font-size:12px;color:#666;margin-top:5px;">
-                Monitoring templates can only use columns from encoding templates
-            </p>
+            <!-- Tab Navigation -->
+            <div class="tab-navigation">
+                <button type="button" class="tab-btn active" data-tab="existing" onclick="switchColumnTab('existing')">
+                    Existing Column
+                </button>
+                <button type="button" class="tab-btn" data-tab="new" onclick="switchColumnTab('new')">
+                    New Column
+                </button>
+            </div>
+            
+            <!-- Tab Content -->
+            <div class="tab-content">
+                <!-- Existing Column Tab -->
+                <div id="existingColumnTab" class="tab-pane active">
+                    <label>Select from Encoding Columns:</label>
+                    <select id="existingColumnSelect">
+                        <option value="">-- Select a column --</option>
+                    </select>
+                    <p style="font-size:12px;color:#666;margin-top:5px;">
+                        Select an existing column from encoding templates
+                    </p>
+                </div>
+                
+                <!-- New Column Tab -->
+                <div id="newColumnTab" class="tab-pane" style="display:none;">
+                    <label>Create New Column:</label>
+                    <input type="text" id="monitoringNewColumnName" placeholder="Column name">
+                    <select id="monitoringNewColumnType">
+                        <option value="text">Text</option>
+                        <option value="number">Number</option>
+                        <option value="date">Date</option>
+                    </select>
+                    <label style="font-size:12px;color:#666;margin-top:10px;display:block;">
+                        <input type="text" id="monitoringColumnGroup" placeholder="Group name (optional for header grouping)">
+                    </label>
+                    <p style="font-size:12px;color:#666;margin-top:5px;">
+                        Create a new column that will be available to all templates
+                    </p>
+                </div>
+            </div>
         </div>
         
         <div class="modal-actions">
