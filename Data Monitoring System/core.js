@@ -3245,47 +3245,57 @@ export const AppCore = {
 
         modal.innerHTML = `
             <div class="compute-box">
-                <h3>Compute Formula</h3>
+                <div class="compute-header">
+                    <h3>Compute Formula</h3>
+                    <button id="closeComputeX" class="compute-close">&times;</button>
+                </div>
 
                 <label>Formula</label>
                 <input id="computeFormula" placeholder="=SUM(A, B, C)" value="${currentFormula}">
 
-                <label>Apply Mode</label>
-                <select id="computeMode">
-                    <option value="cell"${currentMode === 'cell' ? ' selected' : ''}>Selected Cell</option>
-                    <option value="column"${currentMode === 'column' ? ' selected' : ''}>Whole Column</option>
-                </select>
-
-                <div class="compute-columns">
-                    ${cols.map(c => `
-                        <button type="button" class="col-btn" data-col-name="${c.encoding_columns.column_name}">
-                            <div style="display: flex; flex-direction: column; align-items: center;">
-                                <span style="font-weight: bold; color: #2563eb; font-size: 14px;">${this.getColumnVariable(c.encoding_columns.column_name)}</span>
-                                <span style="font-size: 11px; color: #666;">${c.encoding_columns.column_name}</span>
-                            </div>
-                        </button>
-                    `).join('')}
+                <div class="compute-toggle" id="computeMode">
+                    <button type="button" class="toggle-btn${currentMode === 'cell' ? ' toggle-active' : ''}" data-mode="cell">Selected Cell</button>
+                    <button type="button" class="toggle-btn${currentMode === 'column' ? ' toggle-active' : ''}" data-mode="column">Whole Column</button>
                 </div>
 
-                <div class="compute-functions">
-                    <button type="button" class="func-btn">=SUM()</button>
-                    <button type="button" class="func-btn">=AVERAGE()</button>
-                    <button type="button" class="func-btn">=COUNT()</button>
-                    <button type="button" class="func-btn">=MAX()</button>
-                    <button type="button" class="func-btn">=MIN()</button>
-                    <button type="button" class="func-btn">=TODAY()</button>
-                    <button type="button" class="func-btn">=NOW()</button>
-                    <button type="button" class="func-btn">=YEAR()</button>
-                    <button type="button" class="func-btn">=MONTH()</button>
-                    <button type="button" class="func-btn">=DAY()</button>
-                    <button type="button" class="func-btn">=DAYS()</button>
-                    <button type="button" class="func-btn">=DATEDIF()</button>
+                <div class="compute-section">
+                    <span class="section-label">Columns</span>
+                    <div class="compute-columns">
+                        ${cols.map(c => `
+                            <button type="button" class="col-btn" data-col-name="${c.encoding_columns.column_name}">
+                                <div style="display: flex; flex-direction: column; align-items: center;">
+                                    <span style="font-weight: bold; color: #2563eb; font-size: 14px;">${this.getColumnVariable(c.encoding_columns.column_name)}</span>
+                                    <span style="font-size: 11px; color: #666;">${c.encoding_columns.column_name}</span>
+                                </div>
+                            </button>
+                        `).join('')}
+                    </div>
+                </div>
+
+                <div class="compute-section">
+                    <span class="section-label">Math</span>
+                    <div class="compute-functions">
+                        <button type="button" class="func-btn func-math">=SUM()</button>
+                        <button type="button" class="func-btn func-math">=AVERAGE()</button>
+                        <button type="button" class="func-btn func-math">=COUNT()</button>
+                        <button type="button" class="func-btn func-math">=MAX()</button>
+                        <button type="button" class="func-btn func-math">=MIN()</button>
+                    </div>
+                    <span class="section-label" style="margin-top: 8px;">Date</span>
+                    <div class="compute-functions">
+                        <button type="button" class="func-btn func-date">=TODAY()</button>
+                        <button type="button" class="func-btn func-date">=NOW()</button>
+                        <button type="button" class="func-btn func-date">=YEAR()</button>
+                        <button type="button" class="func-btn func-date">=MONTH()</button>
+                        <button type="button" class="func-btn func-date">=DAY()</button>
+                        <button type="button" class="func-btn func-date">=DAYS()</button>
+                        <button type="button" class="func-btn func-date">=DATEDIF()</button>
+                    </div>
                 </div>
 
                 <div class="compute-actions">
-                    <button id="runCompute">Apply</button>
-                    <button id="removeCompute" style="background-color: #dc2626;">Remove</button>
-                    <button id="closeCompute">Cancel</button>
+                    <button id="removeCompute" class="btn-remove">Remove</button>
+                    <button id="runCompute" class="btn-apply">Apply</button>
                 </div>
             </div>
         `;
@@ -3347,7 +3357,15 @@ export const AppCore = {
             };
         });
 
-        modal.querySelector('#closeCompute').onclick = () => modal.remove();
+        // TOGGLE BUTTONS
+        modal.querySelectorAll('.toggle-btn').forEach(btn => {
+            btn.onclick = () => {
+                modal.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('toggle-active'));
+                btn.classList.add('toggle-active');
+            };
+        });
+
+        modal.querySelector('#closeComputeX').onclick = () => modal.remove();
 
         modal.querySelector('#removeCompute').onclick = () => {
             const currentFormula = this.getCurrentFormula();
@@ -3383,7 +3401,8 @@ export const AppCore = {
 
         modal.querySelector('#runCompute').onclick = () => {
             const formula = modal.querySelector('#computeFormula').value;
-            const mode = modal.querySelector('#computeMode').value;
+            const activeToggle = modal.querySelector('.toggle-btn.toggle-active');
+            const mode = activeToggle ? activeToggle.dataset.mode : 'cell';
 
             // Convert formula from variables to column names for storage
             const convertedFormula = this.convertFormulaToColumnNames(formula);
