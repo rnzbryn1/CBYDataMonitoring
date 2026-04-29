@@ -657,7 +657,7 @@ export const SupabaseService = {
       const values = valuesByEntry[entry.id] || [];
       const valueObj = {};
       values.forEach(v => {
-        valueObj[v.encoding_columns.column_name] = v.value || v.value_number;
+        valueObj[v.encoding_columns.column_name] = v.value ?? v.value_number;
       });
       
       return {
@@ -736,7 +736,7 @@ export const SupabaseService = {
       const values = valuesByEntry[entry.id] || [];
       const valueObj = {};
       values.forEach(v => {
-        valueObj[v.encoding_columns.column_name] = v.value || v.value_number;
+        valueObj[v.encoding_columns.column_name] = v.value ?? v.value_number;
       });
       
       return {

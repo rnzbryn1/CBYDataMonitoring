@@ -819,7 +819,7 @@ export const AppCore = {
             if (entry.valueDetails) {
                 entry.valueDetails.forEach(v => {
                     // Handle null values and the string "null" - display as blank
-                    const val = v.value || v.value_number;
+                    const val = v.value ?? v.value_number;
                     valueMap[v.column_id] = (val === null || val === undefined || val === 'null') ? '' : val;
                     colorMap[v.column_id] = v.cell_color || null;
                 });
@@ -845,7 +845,7 @@ export const AppCore = {
             // Column cells
             columns.forEach(col => {
                 const colDef = col.encoding_columns;
-                const val = valueMap[colDef.id] || '';
+                const val = valueMap[colDef.id] ?? '';
                 const cellColor = colorMap[colDef.id] || '';
                 const isDateType = colDef.column_type === 'date';
                 
@@ -1541,7 +1541,7 @@ export const AppCore = {
         if (e.key === 'Enter') { e.preventDefault(); td.blur(); }
     },
 
-    onTableCellPaste: function (e) {
+    onTableCellPaste: async function (e) {
         const text = e.clipboardData?.getData('text/plain') || '';
         if (!text) return;
 
@@ -1588,7 +1588,7 @@ export const AppCore = {
 
         if (!changedEntries.size) return;
         
-        changedEntries.forEach(async (values, entryId) => {
+        for (const [entryId, values] of changedEntries) {
             try {
                 await SupabaseService.updateEntryValues(entryId, values);
 
@@ -1608,19 +1608,19 @@ export const AppCore = {
             } catch (err) {
                 this.showToast('Save failed: ' + err.message, 'error');
             }
-        });
+        }
 
         // 🔄 AUTO-UPDATE - Recalculate for each changed entry and column
-        changedEntries.forEach((values, entryId) => {
-            Object.keys(values).forEach(colId => {
+        for (const [entryId, values] of changedEntries) {
+            for (const colId of Object.keys(values)) {
                 const colName = this.state.currentTemplate.columns.find(
                     c => c.encoding_columns.id === colId
                 )?.encoding_columns.column_name;
                 if (colName) {
-                    this.autoRecalculateDependentFormulas(colName, entryId);
+                    await this.autoRecalculateDependentFormulas(colName, entryId);
                 }
-            });
-        });
+            }
+        }
 
         // AUTO UPDATE COLUMN COMPUTE   
         if (this.state.activeColumnCompute) {
@@ -2111,22 +2111,43 @@ export const AppCore = {
             // 3. Save the values if any were entered
             if (Object.keys(values).length > 0) {
                 await SupabaseService.updateEntryValues(entry.id, values);
-
-                // Note: No need to update local state here since loadEntries() will refresh it
-                // The entry won't be in localEntries yet since it was just created
             }
 
-            // 4. Apply column formulas to the new entry
+            // 4. Add the new entry to localEntries with its values so formulas can be computed
+            const valueDetails = Object.entries(values).map(([colId, val]) => ({
+                column_id: colId,
+                value: val
+            }));
+            
+            const newEntry = {
+                id: entry.id,
+                values: {},
+                valueDetails: valueDetails
+            };
+            
+            // Populate values object from valueDetails
+            const columns = core.state.currentTemplate?.columns || [];
+            columns.forEach(col => {
+                const colDef = col.encoding_columns;
+                const valObj = valueDetails.find(v => v.column_id === colDef.id);
+                if (valObj) {
+                    newEntry.values[colDef.column_name] = valObj.value;
+                }
+            });
+            
+            core.state.localEntries.push(newEntry);
+
+            // 5. Apply column formulas to the new entry
             await core.recalculateRowFormulas(entry.id);
 
-            // 5. UI Feedback
+            // 6. UI Feedback
             inputs.forEach(input => input.value = '');
             core.showToast('Data saved successfully!');
             
-            // 6. Refresh Table using the now-defined function
+            // 7. Refresh Table using the now-defined function
             await core.loadEntries(core.state.currentTemplateId);
 
-            // 7. AUTO-UPDATE MONITORING TEMPLATES
+            // 8. AUTO-UPDATE MONITORING TEMPLATES
             await core.autoUpdateMonitoring({ entryId: entry.id, values: values }, 'create');
 
         } catch (error) {
@@ -2174,7 +2195,7 @@ export const AppCore = {
             // Search across all values in the entry
             const values = e.valueDetails || [];
             return values.some(v => 
-                String(v.value || v.value_number || '').toLowerCase().includes(term)
+                String(v.value ?? v.value_number ?? '').toLowerCase().includes(term)
             );
         });
         // Reset pagination when searching
@@ -2233,7 +2254,7 @@ export const AppCore = {
                 const colDef = col.encoding_columns;
                 const valObj = entry.valueDetails?.find(v => v.column_id === colDef.id);
 
-                const value = valObj?.value || valObj?.value_number || '';
+                const value = valObj?.value ?? valObj?.value_number ?? '';
                 const color = valObj?.cell_color || null;
 
                 row.push(value);
@@ -2660,7 +2681,7 @@ export const AppCore = {
             const mappedValues = mappedExcelCols.map(colName => {
                 const rowKey = colNameMap[colName];
                 const val = rowKey ? row[rowKey] : undefined;
-                const strVal = String(val || '').trim();
+                const strVal = String(val ?? '').trim();
                 return strVal;
             });
             
@@ -3699,7 +3720,7 @@ export const AppCore = {
                 // Update valueDetails immediately for UI display
                 if (!entry.valueDetails) entry.valueDetails = [];
                 entry.valueDetails = entry.valueDetails.filter(v => v.column_id !== colDef.id);
-                if (result !== '' && result !== null && result !== undefined && result !== false) {
+                if (result !== '' && result !== null && result !== undefined) {
                     // For date columns, ensure proper date format for database storage
                     let displayValue = result;
                     if (colDef.column_type === 'date' && typeof result === 'string') {
@@ -3729,7 +3750,7 @@ export const AppCore = {
             for (let i = 0; i < computedResults.length; i += batchSize) {
                 const batch = computedResults.slice(i, i + batchSize);
                 const batchPromises = batch.map(({ entry, result }) => {
-                    if (colDef && result !== '' && result !== null && result !== undefined && result !== false) {
+                    if (colDef && result !== '' && result !== null && result !== undefined) {
                         // For date columns, ensure proper date format for database storage
                         let dbValue = result;
                         if (colDef.column_type === 'date' && typeof result === 'string') {
@@ -4588,7 +4609,7 @@ export const AppCore = {
      * Automatically recalculate all formulas that depend on a changed column
      * Called whenever a cell value changes
      */
-    autoRecalculateDependentFormulas: function (changedColumnName, changedEntryId) {
+    autoRecalculateDependentFormulas: async function (changedColumnName, changedEntryId) {
         if (!this.state.currentTemplate) return;
 
         console.log('autoRecalculateDependentFormulas called for:', changedColumnName, changedEntryId);
@@ -4612,7 +4633,7 @@ export const AppCore = {
         // Recalculate all column formulas for this entry
         if (this.state.columnFormulas && Object.keys(this.state.columnFormulas).length > 0) {
             console.log('Recalculating column formulas for entry:', changedEntryId);
-            this.recalculateRowFormulas(changedEntryId);
+            await this.recalculateRowFormulas(changedEntryId);
         }
     },
 
@@ -4661,7 +4682,7 @@ export const AppCore = {
     /**
      * Recalculate all per-row formulas for a specific entry
      */
-    recalculateRowFormulas: function (entryId) {
+    recalculateRowFormulas: async function (entryId) {
         console.log('🔄 recalculateRowFormulas called for entry:', entryId);
         console.log('📊 Available column formulas:', this.state.columnFormulas);
         
@@ -4676,10 +4697,11 @@ export const AppCore = {
 
         const columns = this.state.currentTemplate?.columns || [];
 
-        Object.entries(this.state.columnFormulas || {}).forEach(([columnName, formula]) => {
+        // Use for...of to properly await async operations
+        for (const [columnName, formula] of Object.entries(this.state.columnFormulas || {})) {
             console.log('🧮 Applying column formula:', columnName, '=', formula);
-            this.recalculateSingleFormula(entryId, columnName, formula);
-        });
+            await this.recalculateSingleFormula(entryId, columnName, formula);
+        }
     },
 
     /**
@@ -4999,75 +5021,87 @@ export const AppCore = {
 
         const newResult = computeRow(entry);
 
-        // Find and update the cell in the table
-        const table = document.getElementById('tableData');
-        if (!table) return;
+        // Update local state always (even if table row doesn't exist yet)
+        entry.values[targetColumnName] = newResult;
 
-        const row = table.querySelector(`tr[data-entry-id="${entryId}"]`);
-        if (!row) return;
-
-        const cells = Array.from(row.querySelectorAll('td[data-col-name]'));
-        const targetCell = cells.find(c => c.dataset.colName === targetColumnName);
+        // Update valueDetails
+        const targetColDef = this.state.currentTemplate.columns.find(
+            c => c.encoding_columns.column_name === targetColumnName
+        )?.encoding_columns;
         
-        if (targetCell) {
-            // Check if this is a date column and update the date input value instead of overwriting
-            const targetColDef = this.state.currentTemplate.columns.find(
-                c => c.encoding_columns.column_name === targetColumnName
-            )?.encoding_columns;
-            
-            if (targetColDef && targetColDef.column_type === 'date') {
-                // For date columns, update the date input value
-                const dateInput = targetCell.querySelector('input[type="date"]');
-                if (dateInput) {
-                    // Convert MM/DD/YYYY to YYYY-MM-DD for date input
-                    let dateValue = newResult || '';
-                    if (newResult && newResult.includes('/')) {
+        if (targetColDef) {
+            if (!entry.valueDetails) entry.valueDetails = [];
+            entry.valueDetails = entry.valueDetails.filter(v => v.column_id !== targetColDef.id);
+            if (newResult !== '' && newResult !== null && newResult !== undefined) {
+                entry.valueDetails.push({
+                    column_id: targetColDef.id,
+                    value: newResult
+                });
+            }
+        }
+
+        // Find and update the cell in the table (if row exists)
+        const table = document.getElementById('tableData');
+        if (table) {
+            const row = table.querySelector(`tr[data-entry-id="${entryId}"]`);
+            if (row) {
+                const cells = Array.from(row.querySelectorAll('td[data-col-name]'));
+                const targetCell = cells.find(c => c.dataset.colName === targetColumnName);
+                
+                if (targetCell) {
+                    // Check if this is a date column and update the date input value instead of overwriting
+                    const cellColDef = this.state.currentTemplate.columns.find(
+                        c => c.encoding_columns.column_name === targetColumnName
+                    )?.encoding_columns;
+                    
+                    if (cellColDef && cellColDef.column_type === 'date') {
+                        // For date columns, update the date input value
+                        const dateInput = targetCell.querySelector('input[type="date"]');
+                        if (dateInput) {
+                            // Convert MM/DD/YYYY to YYYY-MM-DD for date input
+                            let dateValue = newResult ?? '';
+                            if (newResult && newResult.includes('/')) {
+                                const parts = newResult.split('/');
+                                if (parts.length === 3) {
+                                    const [month, day, year] = parts.map(p => parseInt(p, 10));
+                                    dateValue = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                                }
+                            }
+                            dateInput.value = dateValue;
+                        } else {
+                            // If no date input found, fallback to text content
+                            targetCell.textContent = newResult;
+                        }
+                    } else {
+                        // For non-date columns, use text content as before
+                        targetCell.textContent = newResult;
+                    }
+                }
+            }
+        }
+
+        // Save to database
+        try {
+            if (targetColDef) {
+                // For date columns, ensure proper date format for database storage
+                let dbValue = newResult;
+                if (targetColDef.column_type === 'date' && typeof newResult === 'string') {
+                    // Convert MM/DD/YYYY to YYYY-MM-DD for database storage
+                    if (newResult.includes('/')) {
                         const parts = newResult.split('/');
                         if (parts.length === 3) {
                             const [month, day, year] = parts.map(p => parseInt(p, 10));
-                            dateValue = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                            dbValue = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                         }
                     }
-                    dateInput.value = dateValue;
-                } else {
-                    // If no date input found, fallback to text content
-                    targetCell.textContent = newResult;
                 }
-            } else {
-                // For non-date columns, use text content as before
-                targetCell.textContent = newResult;
+                
+                const payload = {};
+                payload[targetColDef.id] = dbValue;
+                await SupabaseService.updateEntryValues(entryId, payload);
             }
-
-            // Update local state
-            entry.values[targetColumnName] = newResult;
-
-            // Save to database
-            try {
-                const colDef = this.state.currentTemplate.columns.find(
-                    c => c.encoding_columns.column_name === targetColumnName
-                )?.encoding_columns;
-
-                if (colDef) {
-                    // For date columns, ensure proper date format for database storage
-                    let dbValue = newResult;
-                    if (colDef.column_type === 'date' && typeof newResult === 'string') {
-                        // Convert MM/DD/YYYY to YYYY-MM-DD for database storage
-                        if (newResult.includes('/')) {
-                            const parts = newResult.split('/');
-                            if (parts.length === 3) {
-                                const [month, day, year] = parts.map(p => parseInt(p, 10));
-                                dbValue = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                            }
-                        }
-                    }
-                    
-                    const payload = {};
-                    payload[colDef.id] = dbValue;
-                    await SupabaseService.updateEntryValues(entryId, payload);
-                }
-            } catch (err) {
-                console.error('Failed to save formula result:', err);
-            }
+        } catch (err) {
+            console.error('Failed to save formula result:', err);
         }
     },
 
