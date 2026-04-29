@@ -1,5 +1,6 @@
 // Import SupabaseService for database operations
 import { SupabaseService } from './supabase-service.js';
+import { UI } from './ui.js';
 
 // Note: Supabase client is initialized in supabase-service.js
 // This prevents "Multiple GoTrueClient instances" warning
@@ -35,6 +36,9 @@ export const AppCore = {
         // Query caching for performance
         queryCache:             new Map(),      // Cache recent queries
         cacheTimeout:           300000,         // 5 minutes cache timeout
+        // Column visibility feature
+        columnVisibility:       {},             // { "columnName": true/false, ... }
+        showColumnSelector:     false,          // Whether column selector UI is visible
     },
 
     // ============================================================
@@ -62,7 +66,7 @@ export const AppCore = {
                         .limit(1);
                     
                     if (deptError || !allDepts || !allDepts.length) {
-                        this.showToast('No departments found. Please create a department first.', 'error');
+                        UI.showToast('No departments found. Please create a department first.', 'error');
                         return;
                     }
                     
@@ -78,7 +82,7 @@ export const AppCore = {
             this.state.allColumns = await SupabaseService.getColumns(this.state.departmentId);
             this.renderCategoryCards();
         } catch (error) {
-            this.showToast('Failed to load templates: ' + error.message, 'error');
+            UI.showToast('Failed to load templates: ' + error.message, 'error');
         }
     },    
 
@@ -254,7 +258,7 @@ export const AppCore = {
 
         menu.appendChild(addColToGroupBtn);
         menu.appendChild(renameGroupBtn);
-        menu.appendChild(deleteColumnBtn);
+        // Removed duplicate deleteColumnBtn from here - Delete Column is now only in header context menu
         menu.appendChild(computeColBtn);
         menu.appendChild(computeBtn);
         menu.appendChild(colorBtn);
@@ -371,17 +375,6 @@ export const AppCore = {
     // ============================================================
     // TOAST
     // ============================================================
-    showToast: function (message, type = 'success') {
-        const toast = document.createElement('div');
-        toast.className = `toast toast-${type} show`;
-        toast.innerText = message;
-        document.body.appendChild(toast);
-        setTimeout(() => {
-            toast.classList.remove('show');
-            setTimeout(() => toast.remove(), 500);
-        }, 3000);
-    },
-
     // ============================================================
     // TEMPLATE SWITCHING
     // ============================================================
@@ -448,7 +441,7 @@ export const AppCore = {
             
             console.log('Template switch complete');
         } catch (error) {
-            this.showToast('Switch failed: ' + error.message, 'error');
+            UI.showToast('Switch failed: ' + error.message, 'error');
             console.error('Switch template error:', error);
         } finally {
             workspace.style.opacity = '1';
@@ -626,7 +619,7 @@ export const AppCore = {
             }
         } catch (error) {
             console.error('Error loading entries:', error);
-            this.showToast('Error loading data', 'error');
+            UI.showToast('Error loading data', 'error');
         }
     },
 
@@ -637,25 +630,29 @@ export const AppCore = {
         const headers = document.getElementById('tableHeaders');
         if (!headers) return;
 
-        const columns = this.state.currentTemplate.columns || [];
+        const allColumns = this.state.currentTemplate.columns || [];
+        
+        // Filter columns based on visibility
+        const visibleColumns = allColumns.filter(col => {
+            const colDef = col.encoding_columns;
+            return this.isColumnVisible(colDef.column_name);
+        });
+        
+        console.log('Total columns:', allColumns.length, 'Visible columns:', visibleColumns.length);
         
         // Generate column variables first
         this.generateColumnVariables();
         
         // First, build the variable row (A, B, C, etc.)
         let variableRowHTML = '<tr><th></th>'; // Empty cell for checkbox column
-        columns.forEach(col => {
+        visibleColumns.forEach(col => {
             const colDef = col.encoding_columns;
             const variable = this.getColumnVariable(colDef.column_name);
             const hasColumnFormula = this.state.columnFormulas[colDef.column_name];
             const formulaIndicator = hasColumnFormula ? 
                 '<span style="background-color: #3b82f6; color: white; font-size: 10px; padding: 2px 6px; border-radius: 3px; margin-left: 5px;">fx</span>' : '';
             
-            variableRowHTML += `
-                <th data-col-id="${colDef.id}" data-col-name="${colDef.column_name}" style="background-color: #f8f9fa; font-size: 11px; font-weight: 600; color: #6c757d; border-bottom: 1px solid #dee2e6;">
-                    ${variable}${formulaIndicator}
-                </th>
-            `;
+            variableRowHTML += `<th>${variable}${formulaIndicator}</th>`;
         });
         variableRowHTML += '</tr>';
         
@@ -666,8 +663,8 @@ export const AppCore = {
         let currentGroup = null;
         let groupStartIndex = -1;
 
-        for (let i = 0; i < columns.length; i++) {
-            const col = columns[i];
+        for (let i = 0; i < visibleColumns.length; i++) {
+            const col = visibleColumns[i];
             const colDef = col.encoding_columns;
             const groupName = colDef.group_name || null;
             const variable = this.getColumnVariable(colDef.column_name);
@@ -675,10 +672,11 @@ export const AppCore = {
             if (groupName && groupName !== currentGroup) {
                 // Close previous group if exists
                 if (currentGroup && groupStartIndex !== -1) {
-                    const groupLength = i - groupStartIndex;
+                    const visibleGroupColumns = visibleColumns.slice(groupStartIndex, i);
+                    const groupLength = visibleGroupColumns.length;
                     headerHTML += `<th colspan="${groupLength}" class="group-header" data-group-name="${currentGroup}"><span class="group-name">${currentGroup}</span></th>`;
-                    for (let j = groupStartIndex; j < i; j++) {
-                        const groupCol = columns[j];
+                    
+                    visibleGroupColumns.forEach(groupCol => {
                         const groupColDef = groupCol.encoding_columns;
                         const hasColumnFormula = this.state.columnFormulas[groupColDef.column_name];
                         const lockIcon = hasColumnFormula ? '<svg style="margin-left: 4px; width: 12px; height: 12px; vertical-align: middle;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>' : '';
@@ -689,7 +687,7 @@ export const AppCore = {
                                 </div>
                             </th>
                         `;
-                    }
+                    });
                 }
                 // Start new group
                 currentGroup = groupName;
@@ -698,10 +696,11 @@ export const AppCore = {
             } else if (!groupName && currentGroup) {
                 // Close previous group when hitting ungrouped column
                 if (groupStartIndex !== -1) {
-                    const groupLength = i - groupStartIndex;
+                    const visibleGroupColumns = visibleColumns.slice(groupStartIndex, i);
+                    const groupLength = visibleGroupColumns.length;
                     headerHTML += `<th colspan="${groupLength}" class="group-header" data-group-name="${currentGroup}"><span class="group-name">${currentGroup}</span></th>`;
-                    for (let j = groupStartIndex; j < i; j++) {
-                        const groupCol = columns[j];
+                    
+                    visibleGroupColumns.forEach(groupCol => {
                         const groupColDef = groupCol.encoding_columns;
                         const hasColumnFormula = this.state.columnFormulas[groupColDef.column_name];
                         const lockIcon = hasColumnFormula ? '<svg style="margin-left: 4px; width: 12px; height: 12px; vertical-align: middle;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>' : '';
@@ -712,7 +711,7 @@ export const AppCore = {
                                 </div>
                             </th>
                         `;
-                    }
+                    });
                 }
                 currentGroup = null;
                 groupStartIndex = -1;
@@ -733,10 +732,11 @@ export const AppCore = {
 
         // Close last group if exists
         if (currentGroup && groupStartIndex !== -1) {
-            const groupLength = columns.length - groupStartIndex;
+            const visibleGroupColumns = visibleColumns.slice(groupStartIndex);
+            const groupLength = visibleGroupColumns.length;
             headerHTML += `<th colspan="${groupLength}" class="group-header" data-group-name="${currentGroup}"><span class="group-name">${currentGroup}</span></th>`;
-            for (let j = groupStartIndex; j < columns.length; j++) {
-                const groupCol = columns[j];
+            
+            visibleGroupColumns.forEach(groupCol => {
                 const groupColDef = groupCol.encoding_columns;
                 const hasColumnFormula = this.state.columnFormulas[groupColDef.column_name];
                 const lockIcon = hasColumnFormula ? '<svg style="margin-left: 4px; width: 12px; height: 12px; vertical-align: middle;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>' : '';
@@ -747,7 +747,7 @@ export const AppCore = {
                         </div>
                     </th>
                 `;
-            }
+            });
         }
 
         headerHTML += '</tr>';
@@ -761,6 +761,31 @@ export const AppCore = {
         headerHTML = variableRowHTML + headerHTML;
 
         headers.innerHTML = headerHTML;
+        
+        // Debug: Check header attributes
+        const renderedHeaders = headers.querySelectorAll('th[data-col-id]');
+        console.log('Rendered headers with data-col-id:', renderedHeaders.length);
+        renderedHeaders.forEach(th => {
+            console.log('Header:', th.dataset.colName, 'data-col-id:', th.dataset.colId);
+        });
+        
+        // Remove existing header context menu listener if exists
+        if (this.headerContextMenuHandler) {
+            headers.removeEventListener('contextmenu', this.headerContextMenuHandler);
+        }
+        
+        // Add event delegation for header context menu
+        this.headerContextMenuHandler = (e) => {
+            const th = e.target.closest('th[data-col-id]');
+            if (th) {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('Header right-clicked via delegation:', th.dataset.colName);
+                this.showHeaderContextMenu(th, e.pageX, e.pageY);
+            }
+        };
+        
+        headers.addEventListener('contextmenu', this.headerContextMenuHandler);
     },
 
     renderAll: function () {
@@ -824,17 +849,23 @@ export const AppCore = {
         // Clear table immediately to show responsiveness
         body.innerHTML = '';
 
+        const allColumns = this.state.currentTemplate.columns || [];
+        
+        // Filter columns based on visibility
+        const visibleColumns = allColumns.filter(col => {
+            const colDef = col.encoding_columns;
+            return this.isColumnVisible(colDef.column_name);
+        });
+
         if (!entries.length) {
-            const columns = this.state.currentTemplate.columns || [];
-            const colSpan = columns.length + 1; // +1 for checkbox column
+            const colSpan = visibleColumns.length + 1; // +1 for checkbox column
             body.innerHTML = `<tr><td colspan="${colSpan}" class="no-data">No records found.</td></tr>`;
             this.renderPaginationControls(0);
             return;
         }
 
-        const columns = this.state.currentTemplate.columns || [];
-
         console.log(`Rendering page ${this.state.currentPage}: ${entries.length} entries (total: ${this.state.totalCount})`);
+        console.log('Visible columns for table:', visibleColumns.length);
 
         // Use DocumentFragment for efficient DOM manipulation
         const fragment = document.createDocumentFragment();
@@ -853,8 +884,7 @@ export const AppCore = {
             }
 
             if (!entry.values) entry.values = {};
-            const columns = this.state.currentTemplate.columns || [];
-            columns.forEach(col => {
+            allColumns.forEach(col => {
                 const colDef = col.encoding_columns;
                 entry.values[colDef.column_name] = valueMap[colDef.id] ?? '';
             });
@@ -876,12 +906,17 @@ export const AppCore = {
             checkboxTd.appendChild(checkbox);
             tr.appendChild(checkboxTd);
 
-            // Column cells
-            columns.forEach(col => {
+            // Column cells - only render visible columns
+            visibleColumns.forEach(col => {
                 const colDef = col.encoding_columns;
                 const val = valueMap[colDef.id] ?? '';
                 const cellColor = colorMap[colDef.id] || '';
                 const isDateType = colDef.column_type === 'date';
+                
+                // Debug logging for cell colors
+                if (cellColor) {
+                    console.log(`Rendering cell color for ${colDef.column_name}: ${cellColor}`);
+                }
                 
                 if (isDateType) {
                     // Render date input for date type columns
@@ -971,7 +1006,7 @@ export const AppCore = {
                                 this.updateColumnComputation();
                             }
 
-                            // 🔄 AUTO-UPDATE MONITORING TEMPLATES
+                            // AUTO-UPDATE MONITORING TEMPLATES
                             await this.autoUpdateMonitoring({ 
                                 values: { [colId]: e.target.value },
                                 entryId: entryId,
@@ -979,7 +1014,7 @@ export const AppCore = {
                             }, 'update');
                         } catch (error) {
                             console.error('Error saving date:', error);
-                            this.showToast('Error saving date', 'error');
+                            UI.showToast('Error saving date', 'error');
                         }
                     });
                     
@@ -1188,6 +1223,14 @@ export const AppCore = {
 
         document.addEventListener('mouseup', () => { isSelecting = false; });
 
+        // Hide context menus when clicking elsewhere
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.context-menu')) {
+                document.getElementById('contextMenu').style.display = 'none';
+                document.getElementById('headerContextMenu').style.display = 'none';
+            }
+        });
+
         // focusin — single cell edit focus
         body.addEventListener('focusin', (e) => {
             const td = e.target;
@@ -1252,7 +1295,7 @@ export const AppCore = {
                         const cacheKey = `template-${this.state.currentTemplate.id}`;
                         delete this.state.cache[cacheKey];
                     } catch (err) {
-                        this.showToast('Delete failed: ' + err.message, 'error');
+                        UI.showToast('Delete failed: ' + err.message, 'error');
                     }
                 });
 
@@ -1275,7 +1318,7 @@ export const AppCore = {
                     }, 'update');
                 });
 
-                this.showToast(`Cleared ${selected.length} cell(s)`);
+                UI.showToast(`Cleared ${selected.length} cell(s)`);
                 return;
             }
 
@@ -1302,7 +1345,7 @@ export const AppCore = {
                     .join('\n');
 
                 navigator.clipboard.writeText(tsv).catch(() => {});
-                this.showToast(`Copied ${selected.length} cell(s)`);
+                UI.showToast(`Copied ${selected.length} cell(s)`);
                 return;
             }
 
@@ -1331,6 +1374,7 @@ export const AppCore = {
         const menu = document.getElementById('contextMenu');
         
         body.addEventListener('contextmenu', (e) => {
+            // Handle cell context menu only (headers have their own listeners)
             const td = e.target.closest('td');
             if (!td) return;
 
@@ -1556,7 +1600,7 @@ export const AppCore = {
                 const cacheKey = `template-${this.state.currentTemplate.id}`;
                 delete this.state.cache[cacheKey];
             } catch (err) {
-                this.showToast('Save failed: ' + err.message, 'error');
+                UI.showToast('Save failed: ' + err.message, 'error');
             }
 
             // 🔄 AUTO UPDATE - Recalculate all dependent computations
@@ -1647,7 +1691,7 @@ export const AppCore = {
                 const cacheKey = `template-${this.state.currentTemplate.id}`;
                 delete this.state.cache[cacheKey];
             } catch (err) {
-                this.showToast('Save failed: ' + err.message, 'error');
+                UI.showToast('Save failed: ' + err.message, 'error');
             }
         }
 
@@ -1726,7 +1770,7 @@ export const AppCore = {
             const cacheKey = `template-${this.state.currentTemplate.id}`;
             delete this.state.cache[cacheKey];
         } catch (err) {
-            this.showToast('Save failed: ' + err.message, 'error');
+            UI.showToast('Save failed: ' + err.message, 'error');
         }
     },
 
@@ -1757,7 +1801,7 @@ export const AppCore = {
 
             document.getElementById('editModal').style.display = 'block';
         } catch (error) {
-            this.showToast('Failed to load entry: ' + error.message, 'error');
+            UI.showToast('Failed to load entry: ' + error.message, 'error');
         }
     },
 
@@ -1783,11 +1827,11 @@ export const AppCore = {
             // Note: No need to update local state here since loadEntries() will refresh it
             
             this.closeEditModal();
-            this.showToast('Entry updated successfully!');
+            UI.showToast('Entry updated successfully!');
             await this.loadEntries(this.state.currentTemplateId);
         } catch (error) {
             console.error('Error updating entry:', error);
-            this.showToast('Error updating entry', 'error');
+            UI.showToast('Error updating entry', 'error');
         }
     },
 
@@ -1800,7 +1844,7 @@ export const AppCore = {
             this.state.allColumns = await SupabaseService.getColumns(this.state.departmentId);
             this.renderCategoryCards();
         } catch (error) {
-            this.showToast('Failed to load templates: ' + error.message, 'error');
+            UI.showToast('Failed to load templates: ' + error.message, 'error');
         }
     },
 
@@ -1842,7 +1886,7 @@ export const AppCore = {
     createNewTemplate: async function () {
         const name = document.getElementById('newCategoryName').value.trim();
         const templateType = document.getElementById('newTemplateType').value || 'encoding';
-        if (!name) return this.showToast('Template name is required.', 'error');
+        if (!name) return UI.showToast('Template name is required.', 'error');
 
         try {
             const template = await SupabaseService.createTemplate(
@@ -1854,12 +1898,12 @@ export const AppCore = {
 
             this.state.allTemplates.push(template);
             this.renderCategoryCards();
-            this.showToast(`Template created (Type: ${templateType})!`);
+            UI.showToast(`Template created (Type: ${templateType})!`);
             document.getElementById('newCategoryName').value = '';
             document.getElementById('newTemplateType').value = 'encoding';
             window.closeModal();
         } catch (error) {
-            this.showToast('Failed: ' + error.message, 'error');
+            UI.showToast('Failed: ' + error.message, 'error');
         }
     },
 
@@ -1878,9 +1922,9 @@ export const AppCore = {
             }
 
             this.renderCategoryCards();
-            this.showToast('Template deleted.');
+            UI.showToast('Template deleted.');
         } catch (error) {
-            this.showToast('Failed: ' + error.message, 'error');
+            UI.showToast('Failed: ' + error.message, 'error');
         }
     },
 
@@ -1889,7 +1933,7 @@ export const AppCore = {
     // ============================================================
     openColumnModal: async function (groupName = null) {
         if (!this.state.currentTemplate) {
-            return this.showToast('No template selected.', 'error');
+            return UI.showToast('No template selected.', 'error');
         }
 
         const modal = document.getElementById('columnModal');
@@ -1918,10 +1962,10 @@ export const AppCore = {
                 });
 
                 if (encodingColumns.length === 0) {
-                    this.showToast('No columns found in encoding templates. Please create encoding templates first.', 'error');
+                    UI.showToast('No columns found in encoding templates. Please create encoding templates first.', 'error');
                 }
             } catch (error) {
-                this.showToast('Failed to load encoding columns: ' + error.message, 'error');
+                UI.showToast('Failed to load encoding columns: ' + error.message, 'error');
             }
         } else {
             encodingForm.style.display = 'block';
@@ -1935,7 +1979,7 @@ export const AppCore = {
     },
 
     addColumnToTemplate: async function () {
-        if (!this.state.currentTemplate) return this.showToast('No template selected.', 'error');
+        if (!this.state.currentTemplate) return UI.showToast('No template selected.', 'error');
 
         const isMonitoring = this.state.currentTemplate.module === 'monitoring';
         const loadingOverlay = document.getElementById('loadingOverlay');
@@ -1957,14 +2001,14 @@ export const AppCore = {
             if (isMonitoring) {
                 // For monitoring templates: select existing column from encoding
                 columnId = document.getElementById('existingColumnSelect').value;
-                if (!columnId) return this.showToast('Please select a column from encoding templates.', 'error');
+                if (!columnId) return UI.showToast('Please select a column from encoding templates.', 'error');
 
                 // Check if column already exists in current template
                 const existingColumn = this.state.currentTemplate.columns?.find(
                     col => col.encoding_columns.id === columnId
                 );
                 if (existingColumn) {
-                    return this.showToast('This column is already added to the template.', 'error');
+                    return UI.showToast('This column is already added to the template.', 'error');
                 }
 
                 // Calculate display order to add at the end
@@ -1979,7 +2023,7 @@ export const AppCore = {
                 const columnType = document.getElementById('newColumnType').value;
                 const groupName = document.getElementById('columnGroup').value.trim() || null;
                 
-                if (!name) return this.showToast('Column name is required.', 'error');
+                if (!name) return UI.showToast('Column name is required.', 'error');
 
                 // Calculate display order to add column within the group or at the end
                 const existingColumns = this.state.currentTemplate.columns || [];
@@ -2048,11 +2092,11 @@ export const AppCore = {
                 // Force reload entries after copy
                 await this.loadEntries(this.state.currentTemplate.id);
                 
-                this.showToast(`Column added! ${copiedCount} entries copied from encoding.`);
+                UI.showToast(`Column added! ${copiedCount} entries copied from encoding.`);
             } else {
                 // For encoding templates, just reload entries
                 await this.loadEntries(this.state.currentTemplate.id);
-                this.showToast('Column added!');
+                UI.showToast('Column added!');
             }
 
             // Render with updated state
@@ -2073,9 +2117,9 @@ export const AppCore = {
 
             // Show user-friendly error message
             if (error.message && error.message.includes('duplicate') || error.message && error.message.includes('unique constraint')) {
-                this.showToast('A column with this name already exists in this group.', 'error');
+                UI.showToast('A column with this name already exists in this group.', 'error');
             } else {
-                this.showToast('Failed to add column. Please try again.', 'error');
+                UI.showToast('Failed to add column. Please try again.', 'error');
             }
         } finally {
             // Always hide loading overlay
@@ -2112,9 +2156,9 @@ export const AppCore = {
             delete this.state.cache[cacheKey];
 
             this.renderAll();
-            this.showToast('Column deleted.');
+            UI.showToast('Column deleted.');
         } catch (error) {
-            this.showToast('Failed: ' + error.message, 'error');
+            UI.showToast('Failed: ' + error.message, 'error');
         }
     },
 
@@ -2183,7 +2227,7 @@ export const AppCore = {
 
             // 6. UI Feedback
             inputs.forEach(input => input.value = '');
-            core.showToast('Data saved successfully!');
+            UI.showToast('Data saved successfully!');
             
             // 7. Refresh Table using the now-defined function
             await core.loadEntries(core.state.currentTemplateId);
@@ -2193,7 +2237,7 @@ export const AppCore = {
 
         } catch (error) {
             console.error('Error saving data:', error);
-            core.showToast('Error saving data: ' + error.message, 'error');
+            UI.showToast('Error saving data: ' + error.message, 'error');
         }
     },
 
@@ -2202,7 +2246,7 @@ export const AppCore = {
 
         try {
             await SupabaseService.deleteEntry(id);
-            this.showToast('Record deleted!');
+            UI.showToast('Record deleted!');
             
             // Clear cache when entry is deleted
             this.clearCache(this.state.currentTemplateId);
@@ -2223,7 +2267,7 @@ export const AppCore = {
                 operation: 'delete'
             }, 'delete');
         } catch (error) {
-            this.showToast('Failed to delete: ' + error.message, 'error');
+            UI.showToast('Failed to delete: ' + error.message, 'error');
         }
     },
 
@@ -2247,7 +2291,7 @@ export const AppCore = {
     sortByDate: function () {
         const columns = this.state.currentTemplate.columns || [];
         const dateColDef = columns.find(col => col.encoding_columns.column_type === 'date');
-        if (!dateColDef) return this.showToast('No date column found.', 'error');
+        if (!dateColDef) return UI.showToast('No date column found.', 'error');
         
         const dateColId = dateColDef.encoding_columns.id;
         
@@ -2269,10 +2313,10 @@ export const AppCore = {
     // ============================================================
     exportToExcel: function () {
         if (!this.state.currentTemplate) 
-            return this.showToast('No template selected.', 'error');
+            return UI.showToast('No template selected.', 'error');
 
         if (!this.state.localEntries.length) 
-            return this.showToast('No data to export.', 'error');
+            return UI.showToast('No data to export.', 'error');
 
         const columns = this.state.currentTemplate.columns || [];
 
@@ -2392,7 +2436,7 @@ export const AppCore = {
 
         XLSX.writeFile(wb, `${this.state.currentTemplate.name}.xlsx`);
 
-        this.showToast('Exported with colors & column totals!');
+        UI.showToast('Exported with colors & column totals!');
     },
 
     // ============================================================
@@ -2491,10 +2535,10 @@ export const AppCore = {
 
     openImportModal: function () {
         if (!this.state.currentTemplate)
-            return this.showToast('Select a template first.', 'error');
+            return UI.showToast('Select a template first.', 'error');
         const columns = this.state.currentTemplate.columns || [];
         if (!columns.length)
-            return this.showToast('Add columns to template before importing.', 'error');
+            return UI.showToast('Add columns to template before importing.', 'error');
         document.getElementById('importModal').style.display = 'block';
     },
 
@@ -2533,7 +2577,7 @@ export const AppCore = {
                 sheetSelect.onchange = () => this.previewSheet();
                 this.previewSheet();
             } catch (err) {
-                this.showToast('Could not read file: ' + err.message, 'error');
+                UI.showToast('Could not read file: ' + err.message, 'error');
             }
         };
         reader.readAsArrayBuffer(file);
@@ -2665,15 +2709,15 @@ export const AppCore = {
 
     // FIX #3 + #5: confirmImport now uses mapping UI and re-fetches ordered data
     confirmImport: async function () {
-        if (!this.state._importWorkbook) return this.showToast('No file loaded.', 'error');
-        if (!this.state.currentTemplate)  return this.showToast('No template selected.', 'error');
+        if (!this.state._importWorkbook) return UI.showToast('No file loaded.', 'error');
+        if (!this.state.currentTemplate)  return UI.showToast('No template selected.', 'error');
 
         const sheetName = this._el('importSheet')?.value;
         const headerRow = Math.max(1, parseInt(this._el('importHeaderRow')?.value || '1') || 1);
         const ws        = this.state._importWorkbook.Sheets[sheetName];
         let rows        = XLSX.utils.sheet_to_json(ws, { defval: '', range: headerRow - 1, raw: false });
 
-        if (!rows.length) return this.showToast('No data rows to import.', 'error');
+        if (!rows.length) return UI.showToast('No data rows to import.', 'error');
 
         // Read the manual column mapping from UI FIRST
         const mappingSelects = document.querySelectorAll('.col-mapping-select');
@@ -2749,7 +2793,7 @@ export const AppCore = {
         console.log(`✗ Completely empty rows (skipped): ${rows.length - rowsWithData.length}`);
         
         if (rowsWithData.length === 0) {
-            return this.showToast('No rows with data found in mapped columns.', 'error');
+            return UI.showToast('No rows with data found in mapped columns.', 'error');
         }
 
         console.log(`Starting batch import of ${rowsWithData.length} rows...`);
@@ -2858,10 +2902,10 @@ export const AppCore = {
             // Refresh the table with new data
             await this.loadEntries(this.state.currentTemplate.id);
             this.closeImportModal();
-            this.showToast(`${rowsWithData.length} rows imported successfully!`);
+            UI.showToast(`${rowsWithData.length} rows imported successfully!`);
         } catch (err) {
             console.error('Import error:', err);
-            this.showToast('Import failed: ' + err.message, 'error');
+            UI.showToast('Import failed: ' + err.message, 'error');
         } finally {
             if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.innerText = 'Import'; }
         }
@@ -2890,7 +2934,7 @@ export const AppCore = {
             .map(cb => cb.dataset.id)
             .filter(id => id);
 
-        if (!checked.length) return this.showToast('No selected rows.', 'error');
+        if (!checked.length) return UI.showToast('No selected rows.', 'error');
 
         if (!confirm(`Delete ${checked.length} records?`)) return;
 
@@ -2913,10 +2957,10 @@ export const AppCore = {
                 this.updateColumnComputation();
             }
 
-            this.showToast(`Deleted ${checked.length} records.`);
+            UI.showToast(`Deleted ${checked.length} records.`);
         } catch (err) {
             console.error('Delete error:', err);
-            this.showToast('Delete failed: ' + err.message, 'error');
+            UI.showToast('Delete failed: ' + err.message, 'error');
         } finally {
             if (deleteBtn) { deleteBtn.disabled = false; deleteBtn.innerText = originalText; }
         }
@@ -2934,9 +2978,9 @@ export const AppCore = {
             if (template) template.name = newName.trim();
 
             this.renderCategoryCards();
-            this.showToast('Template renamed!');
+            UI.showToast('Template renamed!');
         } catch (err) {
-            this.showToast('Rename failed: ' + err.message, 'error');
+            UI.showToast('Rename failed: ' + err.message, 'error');
         }
     },    
 
@@ -2964,9 +3008,9 @@ export const AppCore = {
             this.generateColumnVariables();
             
             this.renderAll();
-            this.showToast('Column renamed!');
+            UI.showToast('Column renamed!');
         } catch (err) {
-            this.showToast('Rename failed: ' + err.message, 'error');
+            UI.showToast('Rename failed: ' + err.message, 'error');
         }
     },
 
@@ -3002,7 +3046,7 @@ export const AppCore = {
                 .map(col => col.encoding_columns.id);
 
             if (columnsInGroup.length === 0) {
-                this.showToast('No columns found in this group', 'error');
+                UI.showToast('No columns found in this group', 'error');
                 this.closeRenameGroupModal();
                 return;
             }
@@ -3016,10 +3060,10 @@ export const AppCore = {
             // Refresh the current template to get updated group names
             this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
             this.renderAll();
-            this.showToast('Group renamed!');
+            UI.showToast('Group renamed!');
             this.closeRenameGroupModal();
         } catch (err) {
-            this.showToast('Rename failed: ' + err.message, 'error');
+            UI.showToast('Rename failed: ' + err.message, 'error');
         }
     },
 
@@ -3105,7 +3149,7 @@ export const AppCore = {
         )).then(() => {
             this.renderAll();
         }).catch(err => {
-            this.showToast('Failed to update column order: ' + err.message, 'error');
+            UI.showToast('Failed to update column order: ' + err.message, 'error');
         });
     },
 
@@ -3415,7 +3459,7 @@ export const AppCore = {
             
             if (!currentFormula) {
                 // No formula exists
-                this.showToast('No formula to remove', 'error');
+                UI.showToast('No formula to remove', 'error');
                 modal.remove();
                 return;
             }
@@ -3460,7 +3504,7 @@ export const AppCore = {
         }
 
         if (!formula.startsWith('=')) {
-            return this.showToast('Formula must start with "="', 'error');
+            return UI.showToast('Formula must start with "="', 'error');
         }
 
         // Ensure variables are generated
@@ -3468,14 +3512,14 @@ export const AppCore = {
         
         const columnName = this.state.currentColName;
         if (!columnName) {
-            return this.showToast('No column selected', 'error');
+            return UI.showToast('No column selected', 'error');
         }
 
         // Check for formula conflicts
         if (mode === 'cell') {
             // Check if there's an existing column formula for this column
             if (this.state.columnFormulas[columnName]) {
-                return this.showToast('Cannot apply cell formula: This column already has a whole column formula applied. To update, you must use "Whole Column" mode or remove the existing column formula first.', 'error');
+                return UI.showToast('Cannot apply cell formula: This column already has a whole column formula applied. To update, you must use "Whole Column" mode or remove the existing column formula first.', 'error');
             }
         } else if (mode === 'column') {
             // Check if there are existing cell formulas for this column
@@ -3735,7 +3779,7 @@ export const AppCore = {
         // SINGLE CELL
         if (mode === 'cell') {
             const td = this.state.currentCell;
-            if (!td) return this.showToast('No cell selected', 'error');
+            if (!td) return UI.showToast('No cell selected', 'error');
 
             const row = td.closest('tr');
             const entryId = row.dataset.entryId;
@@ -3749,7 +3793,7 @@ export const AppCore = {
             try {
                 result = computeRow(entry);
             } catch (error) {
-                return this.showToast(error.message, 'error');
+                return UI.showToast(error.message, 'error');
             }
 
             td.textContent = result;
@@ -3814,7 +3858,7 @@ export const AppCore = {
             const colDef = columns.find(c => c.encoding_columns.column_name === this.state.currentColName)?.encoding_columns;
 
             // Show loading indicator
-            this.showToast('Computing values...', 'info');
+            UI.showToast('Computing values...', 'info');
             // OPTIMIZATION: Compute all values first and update UI immediately
             let computedResults;
             try {
@@ -3847,7 +3891,7 @@ export const AppCore = {
                 return { entry, result };
             });
             } catch (error) {
-                return this.showToast(error.message, 'error');
+                return UI.showToast(error.message, 'error');
             }
 
             // Update table UI immediately
@@ -3906,13 +3950,13 @@ export const AppCore = {
                 }
             }
 
-            this.showToast('Computed! Auto-update is now active for this formula.');
+            UI.showToast('Computed! Auto-update is now active for this formula.');
         }
     },
 
     removeFormula: async function (mode) {
         const td = this.state.currentCell;
-        if (!td) return this.showToast('No cell selected', 'error');
+        if (!td) return UI.showToast('No cell selected', 'error');
 
         const row = td.closest('tr');
         const entryId = row?.dataset.entryId;
@@ -3921,14 +3965,14 @@ export const AppCore = {
         const colDef = columns.find(c => c.encoding_columns.column_name === columnName)?.encoding_columns;
 
         if (!entryId || !columnName || !colDef) {
-            return this.showToast('Invalid selection', 'error');
+            return UI.showToast('Invalid selection', 'error');
         }
 
         // Check for formula conflicts when removing
         if (mode === 'cell') {
             // Check if there's an existing column formula for this column
             if (this.state.columnFormulas[columnName]) {
-                return this.showToast('Cannot remove cell formula: This column has a whole column formula applied. To remove formulas, you must use "Whole Column" mode to remove the column formula.', 'error');
+                return UI.showToast('Cannot remove cell formula: This column has a whole column formula applied. To remove formulas, you must use "Whole Column" mode to remove the column formula.', 'error');
             }
         }
 
@@ -3974,7 +4018,7 @@ export const AppCore = {
                 // Re-render headers only to update formula indicator immediately
                 this.renderHeaders();
 
-                this.showToast('Cell formula removed');
+                UI.showToast('Cell formula removed');
             } else if (mode === 'column') {
                 // Remove column formula
                 console.log('Removing column formula for:', columnName);
@@ -4018,11 +4062,11 @@ export const AppCore = {
                 // Re-render table to show cleared values
                 this.renderTable(this.state.localEntries);
 
-                this.showToast('Column formula removed');
+                UI.showToast('Column formula removed');
             }
         } catch (err) {
             console.error('Failed to remove formula:', err);
-            this.showToast('Failed to remove formula: ' + err.message, 'error');
+            UI.showToast('Failed to remove formula: ' + err.message, 'error');
         }
     },
 
@@ -4034,6 +4078,9 @@ export const AppCore = {
         // Clear formula memory to prevent old formulas from persisting
         this.state.cellFormulas = {};
         this.state.columnFormulas = {};
+        
+        // Reset column visibility when switching templates
+        this.resetColumnVisibility();
         
         // Force reload entries from database to get fresh data
         await this.loadEntries(this.state.currentTemplate.id);
@@ -4680,18 +4727,18 @@ export const AppCore = {
             }
         } catch (err) {
             console.error('Failed to update column computation position:', err);
-            this.showToast('Failed to update position', 'error');
+            UI.showToast('Failed to update position', 'error');
             return;
         }
 
         // Re-render footer in new position
         this.updateColumnComputation();
-        this.showToast(`Position changed to ${newPosition}`);
+        UI.showToast(`Position changed to ${newPosition}`);
     },
 
     deleteColumnComputation: async function () {
         if (!this.state.activeColumnCompute) {
-            this.showToast('No active column computation to delete', 'info');
+            UI.showToast('No active column computation to delete', 'info');
             return;
         }
 
@@ -4710,7 +4757,7 @@ export const AppCore = {
             }
         } catch (err) {
             console.error('Failed to delete column computation:', err);
-            this.showToast('Failed to delete computation', 'error');
+            UI.showToast('Failed to delete computation', 'error');
             return;
         }
 
@@ -4724,7 +4771,7 @@ export const AppCore = {
             if (footer) footer.remove();
         }
 
-        this.showToast('Column computation deleted');
+        UI.showToast('Column computation deleted');
     },
 
     //para sa 2 decimal places to beh
@@ -5365,9 +5412,9 @@ export const AppCore = {
                 const cacheKey = `template-${this.state.currentTemplate.id}`;
                 delete this.state.cache[cacheKey];
                 
-                this.showToast('Cell colors saved');
+                UI.showToast('Cell colors saved');
             } catch (err) {
-                this.showToast('Failed to save colors: ' + err.message, 'error');
+                UI.showToast('Failed to save colors: ' + err.message, 'error');
             }
         }
 
@@ -5472,10 +5519,10 @@ export const AppCore = {
                 delete this.state.cache[monitoringCacheKey];
             }
 
-            this.showToast(`Updated ${monitoringTemplates.length} monitoring template(s)`, 'success');
+            UI.showToast(`Updated ${monitoringTemplates.length} monitoring template(s)`, 'success');
         } catch (error) {
             console.error('Error in auto-update monitoring:', error);
-            this.showToast('Auto-update failed: ' + error.message, 'error');
+            UI.showToast('Auto-update failed: ' + error.message, 'error');
         }
     },
 
@@ -5548,6 +5595,222 @@ export const AppCore = {
         });
 
         return mappings;
+    },
+
+    // ============================================================
+    // COLUMN VISIBILITY FEATURE
+    // ============================================================
+
+    /**
+     * Toggle column selector modal visibility
+     */
+    toggleColumnSelector: function () {
+        const modal = document.getElementById('columnSelectorModal');
+        const isVisible = modal.style.display === 'block';
+        
+        if (!isVisible) {
+            this.populateColumnSelector();
+            modal.style.display = 'block';
+        } else {
+            modal.style.display = 'none';
+        }
+    },
+
+    /**
+     * Populate column selector with checkboxes for all columns
+     */
+    populateColumnSelector: function () {
+        const content = document.getElementById('columnSelectorContent');
+        const columns = this.state.currentTemplate?.columns || [];
+        
+        // Initialize visibility state if not exists
+        if (Object.keys(this.state.columnVisibility).length === 0) {
+            columns.forEach(col => {
+                const colDef = col.encoding_columns;
+                this.state.columnVisibility[colDef.column_name] = true; // Default to visible
+            });
+        }
+        
+        content.innerHTML = columns.map(col => {
+            const colDef = col.encoding_columns;
+            const isChecked = this.state.columnVisibility[colDef.column_name] ? 'checked' : '';
+            const hasFormula = this.state.columnFormulas[colDef.column_name];
+            const formulaIndicator = hasFormula ? 
+                '<span class="formula-indicator">fx</span>' : '';
+            
+            return `
+                <div class="checkbox-item">
+                    <input type="checkbox" 
+                           id="col_${colDef.id}" 
+                           data-column-name="${colDef.column_name}"
+                           ${isChecked}>
+                    <label for="col_${colDef.id}">
+                        ${colDef.column_name}${formulaIndicator}
+                    </label>
+                </div>
+            `;
+        }).join('');
+    },
+
+    /**
+     * Select or deselect all columns
+     */
+    selectAllColumns: function (select) {
+        const checkboxes = document.querySelectorAll('#columnSelectorContent input[type="checkbox"]');
+        checkboxes.forEach(checkbox => {
+            checkbox.checked = select;
+            const columnName = checkbox.dataset.columnName;
+            this.state.columnVisibility[columnName] = select;
+        });
+    },
+
+    /**
+     * Apply column visibility settings
+     */
+    applyColumnVisibility: function () {
+        console.log('Applying column visibility...');
+        const checkboxes = document.querySelectorAll('#columnSelectorContent input[type="checkbox"]');
+        
+        console.log('Found checkboxes:', checkboxes.length);
+        
+        checkboxes.forEach(checkbox => {
+            const columnName = checkbox.dataset.columnName;
+            const isChecked = checkbox.checked;
+            console.log(`Column: ${columnName}, Checked: ${isChecked}`);
+            this.state.columnVisibility[columnName] = isChecked;
+        });
+        
+        console.log('Column visibility state:', this.state.columnVisibility);
+        
+        // Debug: Check if entry data is preserved
+        console.log('Local entries before re-render:', this.state.localEntries.length);
+        if (this.state.localEntries.length > 0) {
+            const firstEntry = this.state.localEntries[0];
+            console.log('First entry valueDetails:', firstEntry.valueDetails);
+        }
+        
+        // Re-render table with updated visibility
+        this.renderTable(this.state.localEntries);
+        this.renderHeaders();
+        
+        // Close modal
+        document.getElementById('columnSelectorModal').style.display = 'none';
+        
+        UI.showToast('Column visibility updated');
+    },
+
+    /**
+     * Check if a column should be visible
+     */
+    isColumnVisible: function (columnName) {
+        // If no visibility settings exist, default to visible
+        if (Object.keys(this.state.columnVisibility).length === 0) {
+            console.log(`Column ${columnName}: No visibility settings, defaulting to visible`);
+            return true;
+        }
+        
+        const isVisible = this.state.columnVisibility[columnName] !== false;
+        console.log(`Column ${columnName}: Visible = ${isVisible}, State = ${this.state.columnVisibility[columnName]}`);
+        return isVisible;
+    },
+
+    /**
+     * Reset column visibility when switching templates
+     */
+    resetColumnVisibility: function () {
+        this.state.columnVisibility = {};
+    },
+
+    // ============================================================
+    // COLUMN HEADER CONTEXT MENU
+    // ============================================================
+
+    /**
+     * Show context menu for column headers
+     */
+    showHeaderContextMenu: function (th, x, y) {
+        console.log('showHeaderContextMenu called with:', { th, x, y });
+        
+        const menu = document.getElementById('headerContextMenu');
+        console.log('Found headerContextMenu menu:', menu);
+        
+        const colId = th.dataset.colId;
+        const colName = th.dataset.colName;
+        
+        console.log('Column info:', { colId, colName });
+        
+        // Store current column info
+        this.state.currentColId = colId;
+        this.state.currentColName = colName;
+        
+        // Position menu
+        menu.style.display = 'block';
+        menu.style.top = y + 'px';
+        menu.style.left = x + 'px';
+        
+        console.log('Menu positioned at:', { top: y, left: x });
+        
+        // Adjust position if menu goes off screen
+        const rect = menu.getBoundingClientRect();
+        if (rect.right > window.innerWidth) {
+            menu.style.left = (x - rect.width) + 'px';
+        }
+        if (rect.bottom > window.innerHeight) {
+            menu.style.top = (y - rect.height) + 'px';
+        }
+    },
+
+    /**
+     * Handle "Compute Whole Column" from header context menu
+     */
+    handleHeaderComputeColumn: function () {
+        if (!this.state.currentColName) return;
+        
+        console.log('Opening compute for whole column:', this.state.currentColName);
+        
+        // Set the current column for computation
+        this.state.currentColName = this.state.currentColName;
+        
+        // Open the compute modal (reuse existing compute functionality)
+        this.openColumnComputeModal();
+        
+        // Hide context menu
+        document.getElementById('headerContextMenu').style.display = 'none';
+    },
+
+    /**
+     * Handle "Rename Column" from header context menu
+     */
+    handleHeaderRenameColumn: function () {
+        if (!this.state.currentColName) return;
+        
+        console.log('Renaming column:', this.state.currentColName);
+        
+        // Find the column header element and trigger rename
+        const headerElement = document.querySelector(`th[data-col-name="${this.state.currentColName}"] .th-text`);
+        if (headerElement) {
+            // Trigger the existing rename functionality
+            this.startColumnRename(headerElement);
+        }
+        
+        // Hide context menu
+        document.getElementById('headerContextMenu').style.display = 'none';
+    },
+
+    /**
+     * Handle "Delete Column" from header context menu
+     */
+    handleHeaderDeleteColumn: function () {
+        if (!this.state.currentColId) return;
+        
+        const columnName = this.state.currentColName;
+        console.log('Deleting column:', columnName);
+        
+        // Call existing delete column functionality (which has its own confirmation)
+        this.deleteColumn(this.state.currentColId, columnName);
+        
+        // Hide context menu
+        document.getElementById('headerContextMenu').style.display = 'none';
     },
 
     /**

@@ -46,6 +46,7 @@
                 <!-- <button onclick="sortByDate()">Sort by Date</button>-->
                 <button onclick="exportToExcel()">Export Excel</button>
                 <button onclick="openImportModal()">Import Excel</button>
+                <button class="add-cat-btn" onclick="toggleColumnSelector()" title="Show/Hide Columns">Columns</button>
                 <button class="add-cat-btn" onclick="openColumnModal()" data-admin-only>+ Add Column</button>
             </div>
         </section>
@@ -60,6 +61,24 @@
             </div>
         </section>
 
+    </div>
+</div>
+
+<!-- COLUMN SELECTOR MODAL -->
+<div id="columnSelectorModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <span class="close-btn" onclick="toggleColumnSelector()">&times;</span>
+        <h3>Select Columns to Display</h3>
+        <div id="columnSelectorContent">
+            <!-- Column checkboxes will be populated here -->
+        </div>
+        <div class="modal-actions">
+            <div class="left-buttons">
+                <button onclick="selectAllColumns(true)">Select All</button>
+                <button onclick="selectAllColumns(false)">Deselect All</button>
+            </div>
+            <button class="apply-btn" onclick="applyColumnVisibility()">Apply</button>
+        </div>
     </div>
 </div>
 
@@ -216,6 +235,12 @@
     <button id="ctxDelete" class="delete">Delete Row</button>
 </div>
 
+<div id="headerContextMenu" class="context-menu" style="display: none;">
+    <button id="hctxComputeColumn" onclick="handleHeaderComputeColumn()">Compute Whole Column</button>
+    <button id="hctxRenameColumn" onclick="handleHeaderRenameColumn()">Rename Column</button>
+    <button id="hctxDeleteColumn" class="delete" onclick="handleHeaderDeleteColumn()">Delete Column</button>
+</div>
+
 <!-- LOADING OVERLAY -->
 <div id="loadingOverlay" class="loading-overlay" style="display:none;">
     <div class="loading-spinner"></div>
@@ -223,5 +248,46 @@
 </div>
 
 <script type="module" src="pcd.js"></script>
+
+<!-- Global function references for onclick handlers -->
+<script>
+// Column visibility functions
+window.toggleColumnSelector = function() {
+    if (typeof AppCore !== 'undefined' && AppCore.toggleColumnSelector) {
+        AppCore.toggleColumnSelector();
+    }
+};
+
+window.selectAllColumns = function(select) {
+    if (typeof AppCore !== 'undefined' && AppCore.selectAllColumns) {
+        AppCore.selectAllColumns(select);
+    }
+};
+
+window.applyColumnVisibility = function() {
+    if (typeof AppCore !== 'undefined' && AppCore.applyColumnVisibility) {
+        AppCore.applyColumnVisibility();
+    }
+};
+
+// Header context menu functions
+window.handleHeaderComputeColumn = function() {
+    if (typeof AppCore !== 'undefined' && AppCore.handleHeaderComputeColumn) {
+        AppCore.handleHeaderComputeColumn();
+    }
+};
+
+window.handleHeaderRenameColumn = function() {
+    if (typeof AppCore !== 'undefined' && AppCore.handleHeaderRenameColumn) {
+        AppCore.handleHeaderRenameColumn();
+    }
+};
+
+window.handleHeaderDeleteColumn = function() {
+    if (typeof AppCore !== 'undefined' && AppCore.handleHeaderDeleteColumn) {
+        AppCore.handleHeaderDeleteColumn();
+    }
+};
+</script>
 </body>
 </html>
