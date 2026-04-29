@@ -1662,9 +1662,20 @@ export const AppCore = {
                         entry.valueDetails = entry.valueDetails.filter(v => v.column_id !== colId);
                         
                         if (val !== '' && val !== null && val !== undefined) {
+                            let displayValue = val;
+                            if (col.encoding_columns.column_type === 'date' && typeof val === 'string') {
+                                // Convert MM/DD/YYYY to YYYY-MM-DD for database storage
+                                if (val.includes('/')) {
+                                    const parts = val.split('/');
+                                    if (parts.length === 3) {
+                                        const [month, day, year] = parts.map(p => parseInt(p, 10));
+                                        displayValue = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                                    }
+                                }
+                            }
                             entry.valueDetails.push({
                                 column_id: colId,
-                                value: String(val)
+                                value: displayValue
                             });
                         }
                     }
@@ -2105,14 +2116,17 @@ export const AppCore = {
                 // The entry won't be in localEntries yet since it was just created
             }
 
-            // 4. UI Feedback
+            // 4. Apply column formulas to the new entry
+            await core.recalculateRowFormulas(entry.id);
+
+            // 5. UI Feedback
             inputs.forEach(input => input.value = '');
             core.showToast('Data saved successfully!');
             
-            // 5. Refresh Table using the now-defined function
+            // 6. Refresh Table using the now-defined function
             await core.loadEntries(core.state.currentTemplateId);
 
-            // 6. AUTO-UPDATE MONITORING TEMPLATES
+            // 7. AUTO-UPDATE MONITORING TEMPLATES
             await core.autoUpdateMonitoring({ entryId: entry.id, values: values }, 'create');
 
         } catch (error) {
@@ -3685,7 +3699,7 @@ export const AppCore = {
                 // Update valueDetails immediately for UI display
                 if (!entry.valueDetails) entry.valueDetails = [];
                 entry.valueDetails = entry.valueDetails.filter(v => v.column_id !== colDef.id);
-                if (result !== '' && result !== null && result !== undefined) {
+                if (result !== '' && result !== null && result !== undefined && result !== false) {
                     // For date columns, ensure proper date format for database storage
                     let displayValue = result;
                     if (colDef.column_type === 'date' && typeof result === 'string') {
@@ -3715,7 +3729,7 @@ export const AppCore = {
             for (let i = 0; i < computedResults.length; i += batchSize) {
                 const batch = computedResults.slice(i, i + batchSize);
                 const batchPromises = batch.map(({ entry, result }) => {
-                    if (colDef) {
+                    if (colDef && result !== '' && result !== null && result !== undefined && result !== false) {
                         // For date columns, ensure proper date format for database storage
                         let dbValue = result;
                         if (colDef.column_type === 'date' && typeof result === 'string') {
@@ -4296,7 +4310,8 @@ export const AppCore = {
                     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
                     console.log('⏰ Time difference:', diffTime, 'ms');
                     console.log('📊 Day difference:', diffDays, 'days');
-                    return diffDays;
+                    // Ensure 0 is returned when dates are the same
+                    return diffDays === 0 ? 0 : diffDays;
                 } else {
                     console.log('❌ Invalid dates detected');
                 }
@@ -4647,12 +4662,22 @@ export const AppCore = {
      * Recalculate all per-row formulas for a specific entry
      */
     recalculateRowFormulas: function (entryId) {
+        console.log('🔄 recalculateRowFormulas called for entry:', entryId);
+        console.log('📊 Available column formulas:', this.state.columnFormulas);
+        
         const entry = this.state.localEntries.find(e => e.id === entryId);
-        if (!entry) return;
+        if (!entry) {
+            console.log('❌ Entry not found:', entryId);
+            return;
+        }
+        
+        console.log('✅ Entry found:', entry.id);
+        console.log('📋 Entry values:', entry.values);
 
         const columns = this.state.currentTemplate?.columns || [];
 
         Object.entries(this.state.columnFormulas || {}).forEach(([columnName, formula]) => {
+            console.log('🧮 Applying column formula:', columnName, '=', formula);
             this.recalculateSingleFormula(entryId, columnName, formula);
         });
     },
@@ -4820,7 +4845,25 @@ export const AppCore = {
 
             // Process date operations BEFORE column name replacement
             console.log('🔍 Looking for date operations in:', evalExpr);
-            evalExpr = evalExpr.replace(/\b([A-Z]+)\s*[+\-]\s*([A-Z]+)\b/g, (match, var1, var2, op) => {
+            
+            // Create a more flexible regex that handles column names with spaces
+            // First, get all column names to build a proper regex
+            const columnNames = columns.map(c => c.encoding_columns.column_name);
+            console.log('📋 Available columns:', columnNames);
+            const escapedColumnNames = columnNames.map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+            const columnPattern = escapedColumnNames.join('|');
+            
+            // Build regex for date operations with column names that may have spaces
+            const dateOperationRegex = new RegExp(`(${columnPattern})\\s*[\\+\\-]\\s*(${columnPattern})`, 'g');
+            
+            console.log('🔍 Built regex pattern:', dateOperationRegex);
+            console.log('🔍 Testing regex against:', evalExpr);
+            
+            // Test if regex matches
+            const testMatch = evalExpr.match(dateOperationRegex);
+            console.log('🧪 Regex test matches:', testMatch);
+            
+            evalExpr = evalExpr.replace(dateOperationRegex, (match, var1, var2, op) => {
                 console.log('🎯 Found operation:', match, 'var1:', var1, 'var2:', var2);
                 const originalOp = match.includes('+') ? '+' : '-';
                 
@@ -4832,7 +4875,10 @@ export const AppCore = {
                 
                 // Helper: get date value from column
                 const getDateValue = (colName) => {
+                    console.log('🔍 Getting date value for column:', colName);
+                    console.log('📊 Entry values:', entry.values);
                     const raw = entry.values[colName];
+                    console.log('📄 Raw value for', colName, ':', raw);
                     if (!raw) return null;
                     
                     // Parse date - handle DD/MM/YYYY format
@@ -4873,7 +4919,8 @@ export const AppCore = {
                         const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
                         console.log('⏰ Time difference:', diffTime, 'ms');
                         console.log('📊 Day difference:', diffDays, 'days');
-                        return diffDays;
+                        // Ensure 0 is returned when dates are the same
+                        return diffDays === 0 ? 0 : diffDays;
                     } else {
                         console.log('❌ Invalid dates detected');
                     }
