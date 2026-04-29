@@ -824,6 +824,13 @@ export const AppCore = {
                     colorMap[v.column_id] = v.cell_color || null;
                 });
             }
+
+            if (!entry.values) entry.values = {};
+            const columns = this.state.currentTemplate.columns || [];
+            columns.forEach(col => {
+                const colDef = col.encoding_columns;
+                entry.values[colDef.column_name] = valueMap[colDef.id] ?? '';
+            });
             
             const isEmpty = !entry.valueDetails || entry.valueDetails.length === 0;
 
@@ -1485,7 +1492,14 @@ export const AppCore = {
 
         // Get the old value to check if it actually changed
         const entry = this.state.localEntries.find(e => e.id === info.entryId);
-        const oldValue = entry?.values?.[info.colName] || '';
+        let oldValue = '';
+        if (entry) {
+            const detail = entry.valueDetails?.find(v => v.column_id === colId);
+            oldValue = detail ? (detail.value ?? detail.value_number ?? '') : '';
+            if (oldValue === '' && entry.values && info.colName in entry.values) {
+                oldValue = entry.values[info.colName] ?? '';
+            }
+        }
 
         // Only save and recalculate if the value actually changed
         if (newValue !== oldValue) {
@@ -3157,55 +3171,16 @@ export const AppCore = {
     getColumnNameFromVariable: function(variable) {
         return this.state.variableColumns[variable] || variable;
     },
-
-    replaceOutsideQuotes: function(formula, transform) {
-        let result = '';
-        let buffer = '';
-        let inQuote = false;
-        let quoteChar = '';
-
-        for (let i = 0; i < formula.length; i += 1) {
-            const char = formula[i];
-            if (inQuote) {
-                buffer += char;
-                if (char === quoteChar) {
-                    result += buffer;
-                    buffer = '';
-                    inQuote = false;
-                    quoteChar = '';
-                }
-            } else {
-                if (char === '"' || char === "'") {
-                    result += transform(buffer);
-                    buffer = char;
-                    inQuote = true;
-                    quoteChar = char;
-                } else {
-                    buffer += char;
-                }
-            }
-        }
-
-        if (buffer) {
-            result += inQuote ? buffer : transform(buffer);
-        }
-
-        return result;
-    },
     
     convertFormulaToVariables: function(formula) {
         if (!formula) return formula;
         
         let convertedFormula = formula;
-        convertedFormula = this.replaceOutsideQuotes(convertedFormula, segment => {
-            let replaced = segment;
-            Object.keys(this.state.columnVariables).forEach(colName => {
-                const variable = this.state.columnVariables[colName];
-                const safeCol = colName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                const regex = new RegExp(`\\b${safeCol}\\b`, 'g');
-                replaced = replaced.replace(regex, variable);
-            });
-            return replaced;
+        Object.keys(this.state.columnVariables).forEach(colName => {
+            const variable = this.state.columnVariables[colName];
+            const safeCol = colName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const regex = new RegExp(`\\b${safeCol}\\b`, 'g');
+            convertedFormula = convertedFormula.replace(regex, variable);
         });
         
         return convertedFormula;
@@ -3215,15 +3190,11 @@ export const AppCore = {
         if (!formula) return formula;
         
         let convertedFormula = formula;
-        convertedFormula = this.replaceOutsideQuotes(convertedFormula, segment => {
-            let replaced = segment;
-            Object.keys(this.state.variableColumns).forEach(variable => {
-                const colName = this.state.variableColumns[variable];
-                const safeVar = variable.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                const regex = new RegExp(`\\b${safeVar}\\b`, 'g');
-                replaced = replaced.replace(regex, colName);
-            });
-            return replaced;
+        Object.keys(this.state.variableColumns).forEach(variable => {
+            const colName = this.state.variableColumns[variable];
+            const safeVar = variable.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const regex = new RegExp(`\\b${safeVar}\\b`, 'g');
+            convertedFormula = convertedFormula.replace(regex, colName);
         });
         
         return convertedFormula;
@@ -3386,7 +3357,7 @@ export const AppCore = {
                 const end = input.selectionEnd ?? input.value.length;
 
                 const funcName = btn.textContent.replace('()', '').trim();
-                const insert = funcName === 'DATEDIF' ? `${funcName}(, , "D")` : `${funcName}()`;
+                const insert = `${funcName}()`;
 
                 const before = input.value.substring(0, start);
                 const after = input.value.substring(end);
@@ -3605,39 +3576,17 @@ export const AppCore = {
                 const parts = args.split(',').map(a => a.trim());
                 const start = parts[0];
                 const end = parts[1];
-                const unitRaw = parts[2] || 'D'; // Default to days if unit not provided
-                const unit = unitRaw.replace(/^['\"]|['\"]$/g, '').trim().toUpperCase() || 'D';
+                const unit = parts[2] || 'D'; // Default to days if unit not provided
                 
-                if (!start || !end) {
-                    throw new Error('DATEDIF requires both start and end dates.');
-                }
-
                 const startDate = parseDate(start);
                 const endDate = parseDate(end);
-                if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
-                    throw new Error('DATEDIF requires valid date values.');
-                }
-
-                const normalizedStart = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
-                const normalizedEnd = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
-                const diffDays = Math.floor((normalizedEnd - normalizedStart) / (1000 * 60 * 60 * 24));
-
+                const diffTime = endDate - startDate;
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                
                 switch(unit.toUpperCase()) {
-                    case 'D':
-                        return diffDays;
-                    case 'M': {
-                        let months = (normalizedEnd.getFullYear() - normalizedStart.getFullYear()) * 12 + (normalizedEnd.getMonth() - normalizedStart.getMonth());
-                        if (normalizedEnd.getDate() < normalizedStart.getDate()) months -= 1;
-                        return months;
-                    }
-                    case 'Y': {
-                        let years = normalizedEnd.getFullYear() - normalizedStart.getFullYear();
-                        if (normalizedEnd.getMonth() < normalizedStart.getMonth() ||
-                            (normalizedEnd.getMonth() === normalizedStart.getMonth() && normalizedEnd.getDate() < normalizedStart.getDate())) {
-                            years -= 1;
-                        }
-                        return years;
-                    }
+                    case 'D': return diffDays;
+                    case 'M': return (endDate.getFullYear() - startDate.getFullYear()) * 12 + (endDate.getMonth() - startDate.getMonth());
+                    case 'Y': return endDate.getFullYear() - startDate.getFullYear();
                     default: return diffDays;
                 }
             });
@@ -3827,7 +3776,6 @@ export const AppCore = {
                 
                 // Force clear all formula cache to ensure complete synchronization
                 await this.forceClearFormulaCache();
-                this.showToast('Formula applied successfully.', 'success');
             }
         }
 
@@ -4569,41 +4517,18 @@ export const AppCore = {
             const parts = args.split(',').map(a => a.trim());
             const start = parts[0];
             const end = parts[1];
-            const unitRaw = parts[2] || 'D';
-            const unit = unitRaw.replace(/^['"]|['"]$/g, '').trim().toUpperCase() || 'D';
+            const unit = parts[2] || 'D';
             
-            if (!start || !end) {
-                throw new Error('DATEDIF requires both start and end dates.');
-            }
-
             const startDate = parseDate(start);
             const endDate = parseDate(end);
-            if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
-                throw new Error('DATEDIF requires valid date values.');
-            }
-
-            const normalizedStart = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
-            const normalizedEnd = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
-            const diffDays = Math.floor((normalizedEnd - normalizedStart) / (1000 * 60 * 60 * 24));
-
+            const diffTime = endDate - startDate;
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            
             switch(unit.toUpperCase()) {
-                case 'D':
-                    return diffDays;
-                case 'M': {
-                    let months = (normalizedEnd.getFullYear() - normalizedStart.getFullYear()) * 12 + (normalizedEnd.getMonth() - normalizedStart.getMonth());
-                    if (normalizedEnd.getDate() < normalizedStart.getDate()) months -= 1;
-                    return months;
-                }
-                case 'Y': {
-                    let years = normalizedEnd.getFullYear() - normalizedStart.getFullYear();
-                    if (normalizedEnd.getMonth() < normalizedStart.getMonth() ||
-                        (normalizedEnd.getMonth() === normalizedStart.getMonth() && normalizedEnd.getDate() < normalizedStart.getDate())) {
-                        years -= 1;
-                    }
-                    return years;
-                }
-                default:
-                    return diffDays;
+                case 'D': return diffDays;
+                case 'M': return Math.floor(diffDays / 30);
+                case 'Y': return Math.floor(diffDays / 365);
+                default: return diffDays;
             }
         });
 
@@ -5003,39 +4928,17 @@ export const AppCore = {
                 const parts = args.split(',').map(a => a.trim());
                 const start = parts[0];
                 const end = parts[1];
-                const unitRaw = parts[2] || 'D'; // Default to days if unit not provided
-                const unit = unitRaw.replace(/^['\"]|['\"]$/g, '').trim().toUpperCase() || 'D';
+                const unit = parts[2] || 'D'; // Default to days if unit not provided
                 
-                if (!start || !end) {
-                    throw new Error('DATEDIF requires both start and end dates.');
-                }
-
                 const startDate = parseDate(start);
                 const endDate = parseDate(end);
-                if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
-                    throw new Error('DATEDIF requires valid date values.');
-                }
-
-                const normalizedStart = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
-                const normalizedEnd = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
-                const diffDays = Math.floor((normalizedEnd - normalizedStart) / (1000 * 60 * 60 * 24));
-
+                const diffTime = endDate - startDate;
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                
                 switch(unit.toUpperCase()) {
-                    case 'D':
-                        return diffDays;
-                    case 'M': {
-                        let months = (normalizedEnd.getFullYear() - normalizedStart.getFullYear()) * 12 + (normalizedEnd.getMonth() - normalizedStart.getMonth());
-                        if (normalizedEnd.getDate() < normalizedStart.getDate()) months -= 1;
-                        return months;
-                    }
-                    case 'Y': {
-                        let years = normalizedEnd.getFullYear() - normalizedStart.getFullYear();
-                        if (normalizedEnd.getMonth() < normalizedStart.getMonth() ||
-                            (normalizedEnd.getMonth() === normalizedStart.getMonth() && normalizedEnd.getDate() < normalizedStart.getDate())) {
-                            years -= 1;
-                        }
-                        return years;
-                    }
+                    case 'D': return diffDays;
+                    case 'M': return (endDate.getFullYear() - startDate.getFullYear()) * 12 + (endDate.getMonth() - startDate.getMonth());
+                    case 'Y': return endDate.getFullYear() - startDate.getFullYear();
                     default: return diffDays;
                 }
             });
