@@ -3283,8 +3283,8 @@ export const AppCore = {
                     </div>
                     <span class="section-label" style="margin-top: 8px;">Date</span>
                     <div class="compute-functions">
-                        <button type="button" class="func-btn func-date">=TODAY()</button>
-                        <button type="button" class="func-btn func-date">=NOW()</button>
+                        <!--<button type="button" class="func-btn func-date">=TODAY()</button> 
+                        <button type="button" class="func-btn func-date">=NOW()</button>-->
                         <button type="button" class="func-btn func-date">=YEAR()</button>
                         <button type="button" class="func-btn func-date">=MONTH()</button>
                         <button type="button" class="func-btn func-date">=DAY()</button>
