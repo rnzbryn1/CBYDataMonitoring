@@ -3232,6 +3232,17 @@ export const AppCore = {
         // Get current formula for the selected cell/column and convert to variables
         const currentFormula = this.convertFormulaToVariables(this.getCurrentFormula() || '');
 
+        // Determine the current formula mode (cell vs column)
+        const td = this.state.currentCell;
+        const row = td?.closest('tr');
+        const entryId = row?.dataset.entryId;
+        const columnName = this.state.currentColName;
+        const cellFormulaKey = `${entryId}|${columnName}`;
+        const hasCellFormula = !!(this.state.cellFormulas[cellFormulaKey]);
+        const hasColumnFormula = !!(columnName && this.state.columnFormulas[columnName]);
+        // If a column formula exists (and no cell-specific override), mode is "column"
+        const currentMode = (hasColumnFormula && !hasCellFormula) ? 'column' : 'cell';
+
         modal.innerHTML = `
             <div class="compute-box">
                 <h3>Compute Formula</h3>
@@ -3241,8 +3252,8 @@ export const AppCore = {
 
                 <label>Apply Mode</label>
                 <select id="computeMode">
-                    <option value="cell">Selected Cell</option>
-                    <option value="column">Whole Column</option>
+                    <option value="cell"${currentMode === 'cell' ? ' selected' : ''}>Selected Cell</option>
+                    <option value="column"${currentMode === 'column' ? ' selected' : ''}>Whole Column</option>
                 </select>
 
                 <div class="compute-columns">
