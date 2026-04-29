@@ -70,7 +70,8 @@ export const SupabaseService = {
           column_type,
           is_required,
           display_order,
-          group_name
+          group_name,
+          is_computed
         )
       `)
       .eq('template_id', templateId)
@@ -256,7 +257,22 @@ export const SupabaseService = {
       .from('encoding_columns')
       .delete()
       .eq('id', columnId);
-    
+
+    if (error) throw error;
+  },
+
+  /**
+   * Update column is_computed flag
+   * @param {string} columnId
+   * @param {boolean} isComputed
+   * @returns {Promise<void>}
+   */
+  async updateColumnComputedFlag(columnId, isComputed) {
+    const { error } = await this.client
+      .from('encoding_columns')
+      .update({ is_computed: isComputed })
+      .eq('id', columnId);
+
     if (error) throw error;
   },
 
@@ -288,7 +304,8 @@ export const SupabaseService = {
         encoding_columns (
           id,
           column_name,
-          column_type
+          column_type,
+          is_computed
         )
       `)
       .in('template_id', templateIds);

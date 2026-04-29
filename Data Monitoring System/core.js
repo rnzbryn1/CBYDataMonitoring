@@ -440,6 +440,9 @@ export const AppCore = {
             // Re-render headers to show formula indicators after formulas are loaded
             this.renderHeaders();
 
+            // Re-render entry form to hide computed columns after formulas are loaded
+            this.renderAll();
+
             // Load saved column computations
             await this.loadColumnComputations();
             
@@ -677,10 +680,12 @@ export const AppCore = {
                     for (let j = groupStartIndex; j < i; j++) {
                         const groupCol = columns[j];
                         const groupColDef = groupCol.encoding_columns;
+                        const hasColumnFormula = this.state.columnFormulas[groupColDef.column_name];
+                        const lockIcon = hasColumnFormula ? '<svg style="margin-left: 4px; width: 12px; height: 12px; vertical-align: middle;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>' : '';
                         secondRowHTML += `
                             <th data-col-id="${groupColDef.id}" data-col-name="${groupColDef.column_name}">
                                 <div class="th-inner">
-                                    <span class="th-text">${groupColDef.column_name}</span>
+                                    <span class="th-text">${groupColDef.column_name}${lockIcon}</span>
                                 </div>
                             </th>
                         `;
@@ -698,10 +703,12 @@ export const AppCore = {
                     for (let j = groupStartIndex; j < i; j++) {
                         const groupCol = columns[j];
                         const groupColDef = groupCol.encoding_columns;
+                        const hasColumnFormula = this.state.columnFormulas[groupColDef.column_name];
+                        const lockIcon = hasColumnFormula ? '<svg style="margin-left: 4px; width: 12px; height: 12px; vertical-align: middle;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>' : '';
                         secondRowHTML += `
                             <th data-col-id="${groupColDef.id}" data-col-name="${groupColDef.column_name}">
                                 <div class="th-inner">
-                                    <span class="th-text">${groupColDef.column_name}</span>
+                                    <span class="th-text">${groupColDef.column_name}${lockIcon}</span>
                                 </div>
                             </th>
                         `;
@@ -712,10 +719,12 @@ export const AppCore = {
             }
             // For ungrouped columns, add header with rowspan=2
             if (!groupName) {
+                const hasColumnFormula = this.state.columnFormulas[colDef.column_name];
+                const lockIcon = hasColumnFormula ? '<svg style="margin-left: 4px; width: 12px; height: 12px; vertical-align: middle;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>' : '';
                 headerHTML += `
                     <th data-col-id="${colDef.id}" data-col-name="${colDef.column_name}" rowspan="2">
                         <div class="th-inner">
-                            <span class="th-text">${colDef.column_name}</span>
+                            <span class="th-text">${colDef.column_name}${lockIcon}</span>
                         </div>
                     </th>
                 `;
@@ -729,10 +738,12 @@ export const AppCore = {
             for (let j = groupStartIndex; j < columns.length; j++) {
                 const groupCol = columns[j];
                 const groupColDef = groupCol.encoding_columns;
+                const hasColumnFormula = this.state.columnFormulas[groupColDef.column_name];
+                const lockIcon = hasColumnFormula ? '<svg style="margin-left: 4px; width: 12px; height: 12px; vertical-align: middle;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>' : '';
                 secondRowHTML += `
                     <th data-col-id="${groupColDef.id}" data-col-name="${groupColDef.column_name}">
                         <div class="th-inner">
-                            <span class="th-text">${groupColDef.column_name}</span>
+                            <span class="th-text">${groupColDef.column_name}${lockIcon}</span>
                         </div>
                     </th>
                 `;
@@ -766,9 +777,25 @@ export const AppCore = {
 
         // Use columns from encoding_template_columns
         const columns = this.state.currentTemplate.columns || [];
-        
+
+        console.log('📋 Entry Form - Processing columns:', columns.length);
+        console.log('📋 Entry Form - Column formulas:', this.state.columnFormulas);
+
         form.innerHTML = columns.map(col => {
             const colDef = col.encoding_columns; // join from template_columns
+            const columnName = colDef.column_name;
+
+            // Only skip columns that have COLUMN formulas (whole column), not cell formulas
+            // Cell formulas are for single cells only and shouldn't hide the entire column from entry form
+            const hasColumnFormula = this.state.columnFormulas[columnName];
+
+            console.log(`📋 Column: ${columnName}, hasColumnFormula: ${hasColumnFormula}, is_computed: ${colDef.is_computed}`);
+
+            if (hasColumnFormula) {
+                console.log(`🚫 Skipping column from entry form: ${columnName}`);
+                return ''; // Skip this column in entry form - it has a whole column formula
+            }
+
             const inputType = colDef.column_type === 'date' ? 'date' : 'text';
             return `
                 <div class="input-box">
@@ -3867,12 +3894,13 @@ export const AppCore = {
                         colDef.id,
                         formula
                     );
-                    
+
                     // Store in state immediately for instant indicator update
                     this.state.columnFormulas[this.state.currentColName] = formula;
-                    
-                    // Re-render headers only to update formula indicator immediately
+
+                    // Re-render headers and entry form to show computed column indicators
                     this.renderHeaders();
+                    this.renderAll();
                 } catch (err) {
                     console.error('Failed to save column formula:', err);
                 }
@@ -3983,9 +4011,10 @@ export const AppCore = {
                     colDef.id
                 );
 
-                // Re-render headers only to update formula indicator immediately
+                // Re-render headers and entry form to update computed column indicators
                 this.renderHeaders();
-                
+                this.renderAll();
+
                 // Re-render table to show cleared values
                 this.renderTable(this.state.localEntries);
 

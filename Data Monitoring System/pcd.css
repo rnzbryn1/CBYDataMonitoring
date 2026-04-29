@@ -353,10 +353,10 @@ background: #f8fafc;
 
 thead th {
 text-align: left;
-font-size: 13px;
+font-size: 12px;
 font-weight: 700;
 color: #000000;
-padding: 10px 14px;
+padding: 8px 12px;
 letter-spacing: 0.06em;
 text-transform: uppercase;
 white-space: nowrap;
@@ -394,7 +394,7 @@ tbody tr:last-child { border-bottom: none; }
 tbody tr:hover { background: #f1f5f9; }
 
 tbody td:not(:first-child) {
-    padding: 11px 14px;
+    padding: 8px 12px;
     color: #1e293b;
     vertical-align: middle;
     word-wrap: break-word;
