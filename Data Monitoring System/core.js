@@ -3288,6 +3288,7 @@ export const AppCore = {
                         <button type="button" class="func-btn func-date">=YEAR()</button>
                         <button type="button" class="func-btn func-date">=MONTH()</button>
                         <button type="button" class="func-btn func-date">=DAY()</button>
+                        <button type="button" class="func-btn func-date">=WEEK()</button>
                         <button type="button" class="func-btn func-date">=DAYS()</button>
                         <button type="button" class="func-btn func-date">=DATEDIF()</button>
                     </div>
@@ -3520,6 +3521,32 @@ export const AppCore = {
                 return date.getDate();
             });
 
+            evalExpr = evalExpr.replace(/WEEK\((.*?)\)/gi, (_, args) => {
+                // Check if the column is date type
+                const clean = args.trim();
+                let colNameToUse = clean;
+                if (this.state.variableColumns && this.state.variableColumns[clean]) {
+                    colNameToUse = this.state.variableColumns[clean];
+                }
+                
+                // Find the column definition
+                const columnDef = columns.find(c => c.encoding_columns.column_name === colNameToUse);
+                if (columnDef && columnDef.encoding_columns.column_type !== 'date') {
+                    throw new Error(`WEEK function can only be used with date columns. Column '${colNameToUse}' is of type '${columnDef.encoding_columns.column_type}'.`);
+                }
+                
+                const date = parseDate(args);
+                // Calculate ISO week number (weeks start on Monday)
+                const d = new Date(date);
+                d.setHours(0, 0, 0, 0);
+                // Thursday in current week decides the year.
+                d.setDate(d.getDate() + 3 - (d.getDay() + 6) % 7);
+                // January 4 is always in week 1.
+                const week1 = new Date(d.getFullYear(), 0, 4);
+                // Adjust to Thursday in week 1 and count number of weeks from date to week1.
+                return 1 + Math.round(((d.getTime() - week1.getTime()) / 86400000 - 3 + (week1.getDay() + 6) % 7) / 7);
+            });
+
             evalExpr = evalExpr.replace(/WEEKDAY\((.*?)\)/gi, (_, args) => {
                 const date = parseDate(args);
                 return date.getDay();
@@ -3677,7 +3704,12 @@ export const AppCore = {
             const entry = this.state.localEntries.find(e => e.id === entryId);
             if (!entry) return;
 
-            const result = computeRow(entry);
+            let result;
+            try {
+                result = computeRow(entry);
+            } catch (error) {
+                return this.showToast(error.message, 'error');
+            }
 
             td.textContent = result;
             entry.values[this.state.currentColName] = result;
@@ -3743,9 +3775,11 @@ export const AppCore = {
             // Show loading indicator
             this.showToast('Computing values...', 'info');
             // OPTIMIZATION: Compute all values first and update UI immediately
-            const computedResults = this.state.localEntries.map(entry => {
-                const result = computeRow(entry);
-                entry.values[this.state.currentColName] = result;
+            let computedResults;
+            try {
+                computedResults = this.state.localEntries.map(entry => {
+                    const result = computeRow(entry);
+                    entry.values[this.state.currentColName] = result;
                 
                 // Update valueDetails immediately for UI display
                 if (!entry.valueDetails) entry.valueDetails = [];
@@ -3771,6 +3805,9 @@ export const AppCore = {
                 
                 return { entry, result };
             });
+            } catch (error) {
+                return this.showToast(error.message, 'error');
+            }
 
             // Update table UI immediately
             this.renderTable(this.state.localEntries);
@@ -4425,6 +4462,32 @@ export const AppCore = {
             return date.getDate();
         });
 
+        evalExpr = evalExpr.replace(/WEEK\((.*?)\)/gi, (_, args) => {
+            // Check if the column is date type
+            const clean = args.trim();
+            let colNameToUse = clean;
+            if (this.state.variableColumns && this.state.variableColumns[clean]) {
+                colNameToUse = this.state.variableColumns[clean];
+            }
+            
+            // Find the column definition
+            const columnDef = columns.find(c => c.encoding_columns.column_name === colNameToUse);
+            if (columnDef && columnDef.encoding_columns.column_type !== 'date') {
+                throw new Error(`WEEK function can only be used with date columns. Column '${colNameToUse}' is of type '${columnDef.encoding_columns.column_type}'.`);
+            }
+            
+            const date = parseDate(args);
+            // Calculate ISO week number (weeks start on Monday)
+            const d = new Date(date);
+            d.setHours(0, 0, 0, 0);
+            // Thursday in current week decides the year.
+            d.setDate(d.getDate() + 3 - (d.getDay() + 6) % 7);
+            // January 4 is always in week 1.
+            const week1 = new Date(d.getFullYear(), 0, 4);
+            // Adjust to Thursday in week 1 and count number of weeks from date to week1.
+            return 1 + Math.round(((d.getTime() - week1.getTime()) / 86400000 - 3 + (week1.getDay() + 6) % 7) / 7);
+        });
+
         evalExpr = evalExpr.replace(/WEEKDAY\((.*?)\)/gi, (_, args) => {
             const date = parseDate(args);
             return date.getDay();
@@ -4810,6 +4873,32 @@ export const AppCore = {
                 return date.getDate();
             });
 
+            evalExpr = evalExpr.replace(/WEEK\((.*?)\)/gi, (_, args) => {
+                // Check if the column is date type
+                const clean = args.trim();
+                let colNameToUse = clean;
+                if (this.state.variableColumns && this.state.variableColumns[clean]) {
+                    colNameToUse = this.state.variableColumns[clean];
+                }
+                
+                // Find the column definition
+                const columnDef = columns.find(c => c.encoding_columns.column_name === colNameToUse);
+                if (columnDef && columnDef.encoding_columns.column_type !== 'date') {
+                    throw new Error(`WEEK function can only be used with date columns. Column '${colNameToUse}' is of type '${columnDef.encoding_columns.column_type}'.`);
+                }
+                
+                const date = parseDate(args);
+                // Calculate ISO week number (weeks start on Monday)
+                const d = new Date(date);
+                d.setHours(0, 0, 0, 0);
+                // Thursday in current week decides the year.
+                d.setDate(d.getDate() + 3 - (d.getDay() + 6) % 7);
+                // January 4 is always in week 1.
+                const week1 = new Date(d.getFullYear(), 0, 4);
+                // Adjust to Thursday in week 1 and count number of weeks from date to week1.
+                return 1 + Math.round(((d.getTime() - week1.getTime()) / 86400000 - 3 + (week1.getDay() + 6) % 7) / 7);
+            });
+
             evalExpr = evalExpr.replace(/WEEKDAY\((.*?)\)/gi, (_, args) => {
                 const date = parseDate(args);
                 return date.getDay();
@@ -5049,7 +5138,13 @@ export const AppCore = {
             }
         };
 
-        const newResult = computeRow(entry);
+        let newResult;
+        try {
+            newResult = computeRow(entry);
+        } catch (error) {
+            console.error('Error computing formula:', error.message);
+            newResult = 'ERR';
+        }
 
         // Update local state always (even if table row doesn't exist yet)
         entry.values[targetColumnName] = newResult;
