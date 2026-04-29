@@ -1961,7 +1961,7 @@ export const AppCore = {
                 encodingColumns.forEach(col => {
                     const option = document.createElement('option');
                     option.value = col.id;
-                    option.textContent = `${col.column_name} (${col.column_type})`;
+                    option.textContent = `${col.column_name} - ${col.template_name} (${col.column_type})`;
                     columnSelect.appendChild(option);
                 });
 

@@ -285,7 +285,7 @@ export const SupabaseService = {
     // First, get all encoding template IDs
     const { data: templates, error: templatesError } = await this.client
       .from('encoding_templates')
-      .select('id')
+      .select('id, name')
       .eq('module', 'encoding')
       .eq('department_id', departmentId);
     
@@ -301,6 +301,7 @@ export const SupabaseService = {
     const { data, error } = await this.client
       .from('encoding_template_columns')
       .select(`
+        template_id,
         encoding_columns (
           id,
           column_name,
@@ -312,6 +313,12 @@ export const SupabaseService = {
     
     if (error) throw error;
     
+    // Create a map of template IDs to template names
+    const templateMap = {};
+    templates.forEach(template => {
+      templateMap[template.id] = template.name;
+    });
+    
     // Extract unique columns
     const uniqueColumns = [];
     const seenIds = new Set();
@@ -320,7 +327,10 @@ export const SupabaseService = {
       data.forEach(item => {
         if (item.encoding_columns && !seenIds.has(item.encoding_columns.id)) {
           seenIds.add(item.encoding_columns.id);
-          uniqueColumns.push(item.encoding_columns);
+          uniqueColumns.push({
+            ...item.encoding_columns,
+            template_name: templateMap[item.template_id] || 'Unknown Template'
+          });
         }
       });
     }
