@@ -3818,7 +3818,7 @@ export const AppCore = {
                     );
                     
                     // Store in state immediately for instant indicator update
-                    this.state.columnFormulas[colDef.column_name] = formula;
+                    this.state.columnFormulas[this.state.currentColName] = formula;
                     
                     // Re-render headers only to update formula indicator immediately
                     this.renderHeaders();
@@ -4169,7 +4169,7 @@ export const AppCore = {
 
                 if (formula.formula_type === 'cell' && formula.entry_id) {
                     // Cell formula: for a specific entry
-                    const formulaKey = `${formula.entryId}|${columnName}`;
+                    const formulaKey = `${formula.entry_id}|${columnName}`;
                     this.state.cellFormulas[formulaKey] = formula.formula;
                     loadedCount++;
                 } else if (formula.formula_type === 'column') {
