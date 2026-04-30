@@ -2418,33 +2418,41 @@ export const AppCore = {
             // Build HTML with checkboxes
             let html = '';
             for (const [templateName, columns] of Object.entries(groupedColumns)) {
-                html += `<div style="margin-bottom:15px;">
-                    <label style="font-weight:bold;font-size:13px;display:block;margin-bottom:5px;">
-                        <input type="checkbox" class="template-checkbox" data-template="${templateName}" onchange="AppCore.toggleTemplateColumns(this)">
-                        ${templateName}
-                    </label>
-                    <div style="margin-left:20px;">`;
+                html += `<div class="template-group">
+                    <div class="template-header">
+                        <label>
+                            <input type="checkbox" class="template-checkbox" data-template="${templateName}" onchange="AppCore.toggleTemplateColumns(this)">
+                            ${templateName}
+                        </label>
+                    </div>
+                    <div class="columns-list">`;
                 
                 columns.forEach(col => {
                     // Check if column already exists in current template
                     const existingColumn = this.state.currentTemplate.columns?.find(
                         c => c.encoding_columns.id === col.id
                     );
-                    const isAdded = existingColumn ? ' (already added)' : '';
+                    const isAdded = existingColumn ? '<span class="already-added">(already added)</span>' : '';
                     const disabled = existingColumn ? 'disabled' : '';
                     
-                    html += `<label style="display:block;font-size:12px;margin-bottom:3px;">
-                        <input type="checkbox" class="column-checkbox" data-column-id="${col.id}" data-template="${templateName}" ${disabled}>
-                        ${col.column_name} (${col.column_type})${isAdded}
-                    </label>`;
+                    html += `<div class="column-item">
+                        <label>
+                            <input type="checkbox" class="column-checkbox" data-column-id="${col.id}" data-template="${templateName}" ${disabled}>
+                            <div class="column-info">
+                                <span>${col.column_name}</span>
+                                <span class="column-type">${col.column_type}</span>
+                                ${isAdded}
+                            </div>
+                        </label>
+                    </div>`;
                 });
                 
                 html += '</div></div>';
             }
 
-            html += `<div style="margin-top:10px;padding-top:10px;border-top:1px solid #ddd;">
-                <button onclick="AppCore.selectAllCopyColumns(true)" style="font-size:12px;padding:4px 8px;">Select All</button>
-                <button onclick="AppCore.selectAllCopyColumns(false)" style="font-size:12px;padding:4px 8px;">Deselect All</button>
+            html += `<div class="select-all-controls">
+                <button onclick="AppCore.selectAllCopyColumns(true)">Select All</button>
+                <button onclick="AppCore.selectAllCopyColumns(false)">Deselect All</button>
             </div>`;
 
             columnsList.innerHTML = html;
