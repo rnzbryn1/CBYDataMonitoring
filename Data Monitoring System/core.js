@@ -1085,6 +1085,9 @@ export const AppCore = {
             td.style.padding = '4px';
             td.style.backgroundColor = '#f8fafc';
             
+            // Check if column has a formula (computed column)
+            const hasFormula = this.state.columnFormulas[colDef.column_name];
+            
             if (colDef.column_type === 'date') {
                 const input = document.createElement('input');
                 input.type = 'date';
@@ -1096,6 +1099,16 @@ export const AppCore = {
                 input.style.border = '1px solid #e2e8f0';
                 input.style.borderRadius = '4px';
                 input.style.fontSize = '13px';
+                
+                // Lock computed columns
+                if (hasFormula) {
+                    input.disabled = true;
+                    input.style.backgroundColor = '#f1f5f9';
+                    input.style.cursor = 'not-allowed';
+                    input.placeholder = 'Computed';
+                    input.title = 'This column is computed from a formula';
+                }
+                
                 td.appendChild(input);
             } else {
                 const input = document.createElement('input');
@@ -1103,12 +1116,21 @@ export const AppCore = {
                 input.className = 'empty-row-input';
                 input.dataset.colId = colDef.id;
                 input.dataset.colName = colDef.column_name;
-                input.placeholder = '...';
+                input.placeholder = hasFormula ? 'Computed' : '...';
                 input.style.width = '100%';
                 input.style.padding = '6px';
                 input.style.border = '1px solid #e2e8f0';
                 input.style.borderRadius = '4px';
                 input.style.fontSize = '13px';
+                
+                // Lock computed columns
+                if (hasFormula) {
+                    input.disabled = true;
+                    input.style.backgroundColor = '#f1f5f9';
+                    input.style.cursor = 'not-allowed';
+                    input.title = 'This column is computed from a formula';
+                }
+                
                 td.appendChild(input);
             }
             
