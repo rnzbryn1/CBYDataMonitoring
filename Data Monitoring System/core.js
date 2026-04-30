@@ -1167,10 +1167,16 @@ export const AppCore = {
         }
         
         try {
-            UI.showLoading('Adding row...');
+            UI.setLoading(true);
             
-            // Save the entry
-            await SupabaseService.saveEntry(this.state.currentTemplateId, values);
+            // Create the entry
+            const newEntry = await SupabaseService.createEntry(
+                this.state.currentTemplate.id,
+                this.state.currentTemplate.department_id
+            );
+            
+            // Update entry values
+            await SupabaseService.updateEntryValues(newEntry.id, values);
             
             // Clear inputs
             inputs.forEach(input => input.value = '');
@@ -1191,7 +1197,7 @@ export const AppCore = {
             console.error('Error saving empty row:', error);
             UI.showToast('Failed to add row: ' + error.message, 'error');
         } finally {
-            UI.hideLoading();
+            UI.setLoading(false);
         }
     },
 
@@ -5762,7 +5768,7 @@ export const AppCore = {
 
         // Save to database
         try {
-            if (targetColDef) {
+            if (targetColDef && newResult !== 'ERR') {
                 // For date columns, ensure proper date format for database storage
                 let dbValue = newResult;
                 if (targetColDef.column_type === 'date' && typeof newResult === 'string') {
@@ -5779,6 +5785,9 @@ export const AppCore = {
                 const payload = {};
                 payload[targetColDef.id] = dbValue;
                 await SupabaseService.updateEntryValues(entryId, payload);
+            } else if (targetColDef && newResult === 'ERR') {
+                // Skip saving ERR to database - just show in UI
+                console.log('Skipping database save for ERR value in column:', targetColumnName);
             }
         } catch (err) {
             console.error('Failed to save formula result:', err);
