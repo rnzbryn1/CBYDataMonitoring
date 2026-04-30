@@ -3529,6 +3529,8 @@ export const AppCore = {
         
         // Get current formula for the selected cell/column and convert to variables
         const currentFormula = this.convertFormulaToVariables(this.getCurrentFormula() || '');
+        // Escape quotes for HTML attribute to prevent truncation
+        const escapedFormula = currentFormula.replace(/"/g, '&quot;');
 
         // Determine the current formula mode (cell vs column)
         const td = this.state.currentCell;
@@ -3559,7 +3561,7 @@ export const AppCore = {
                 </div>
 
                 <label>Formula</label>
-                <input id="computeFormula" placeholder="=SUM(A, B, C)" value="${currentFormula}">
+                <input id="computeFormula" placeholder="=SUM(A, B, C)" value="${escapedFormula}">
 
                 <div class="compute-toggle" id="computeMode">
                     <button type="button" class="toggle-btn${currentMode === 'cell' ? ' toggle-active' : ''}" data-mode="cell" ${disableCellToggle ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}>Selected Cell</button>
@@ -3932,6 +3934,53 @@ export const AppCore = {
             evalExpr = evalExpr.replace(/\bMIN\((.*?)\)/gi, (_, args) => {
                 const vals = args.split(',').map(a => getVal(a, entry));
                 return Math.min(...vals);
+            });
+
+            // SUMIFS: Sum with multiple criteria across all entries
+            // Syntax: =SUMIFS(sum_column, criteria_col1, criteria_val1, criteria_col2, criteria_val2, ...)
+            evalExpr = evalExpr.replace(/\bSUMIFS\((.*?)\)/gi, (_, args) => {
+                const parts = args.split(',').map(a => a.trim());
+                if (parts.length < 3 || parts.length % 2 === 0) {
+                    throw new Error('SUMIFS requires sum_column and pairs of criteria_column, criteria_value');
+                }
+                
+                const sumColumn = parts[0];
+                const criteria = [];
+                for (let i = 1; i < parts.length; i += 2) {
+                    criteria.push({
+                        column: parts[i],
+                        value: parts[i + 1]?.replace(/^["']|["']$/g, '') // Remove quotes
+                    });
+                }
+                
+                // Resolve column names (handle variables)
+                let sumColName = sumColumn;
+                if (this.state.variableColumns && this.state.variableColumns[sumColumn]) {
+                    sumColName = this.state.variableColumns[sumColumn];
+                }
+                
+                // Filter entries that match all criteria
+                const matchingEntries = this.state.localEntries.filter(e => {
+                    return criteria.every(c => {
+                        let critColName = c.column;
+                        if (this.state.variableColumns && this.state.variableColumns[c.column]) {
+                            critColName = this.state.variableColumns[c.column];
+                        }
+                        const entryValue = String(e.values[critColName] ?? '').trim();
+                        const critValue = String(c.value).trim();
+                        return entryValue.toLowerCase() === critValue.toLowerCase();
+                    });
+                });
+                
+                // Sum the values from matching entries
+                const total = matchingEntries.reduce((sum, e) => {
+                    const raw = e.values[sumColName] ?? '0';
+                    const num = parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
+                    return sum + num;
+                }, 0);
+                
+                console.log('📊 SUMIFS:', sumColName, 'criteria:', criteria, 'matches:', matchingEntries.length, 'total:', total);
+                return total;
             });
 
             // Convert column names to variables for evaluation
@@ -5441,6 +5490,53 @@ export const AppCore = {
             evalExpr = evalExpr.replace(/\bMIN\((.*?)\)/gi, (_, args) => {
                 const vals = args.split(',').map(a => getVal(a, entry));
                 return Math.min(...vals);
+            });
+
+            // SUMIFS: Sum with multiple criteria across all entries
+            // Syntax: =SUMIFS(sum_column, criteria_col1, criteria_val1, criteria_col2, criteria_val2, ...)
+            evalExpr = evalExpr.replace(/\bSUMIFS\((.*?)\)/gi, (_, args) => {
+                const parts = args.split(',').map(a => a.trim());
+                if (parts.length < 3 || parts.length % 2 === 0) {
+                    throw new Error('SUMIFS requires sum_column and pairs of criteria_column, criteria_value');
+                }
+                
+                const sumColumn = parts[0];
+                const criteria = [];
+                for (let i = 1; i < parts.length; i += 2) {
+                    criteria.push({
+                        column: parts[i],
+                        value: parts[i + 1]?.replace(/^["']|["']$/g, '') // Remove quotes
+                    });
+                }
+                
+                // Resolve column names (handle variables)
+                let sumColName = sumColumn;
+                if (this.state.variableColumns && this.state.variableColumns[sumColumn]) {
+                    sumColName = this.state.variableColumns[sumColumn];
+                }
+                
+                // Filter entries that match all criteria
+                const matchingEntries = this.state.localEntries.filter(e => {
+                    return criteria.every(c => {
+                        let critColName = c.column;
+                        if (this.state.variableColumns && this.state.variableColumns[c.column]) {
+                            critColName = this.state.variableColumns[c.column];
+                        }
+                        const entryValue = String(e.values[critColName] ?? '').trim();
+                        const critValue = String(c.value).trim();
+                        return entryValue.toLowerCase() === critValue.toLowerCase();
+                    });
+                });
+                
+                // Sum the values from matching entries
+                const total = matchingEntries.reduce((sum, e) => {
+                    const raw = e.values[sumColName] ?? '0';
+                    const num = parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
+                    return sum + num;
+                }, 0);
+                
+                console.log('📊 SUMIFS:', sumColName, 'criteria:', criteria, 'matches:', matchingEntries.length, 'total:', total);
+                return total;
             });
 
             // Process date operations BEFORE column name replacement
