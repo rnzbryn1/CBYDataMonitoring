@@ -277,6 +277,21 @@ export const SupabaseService = {
   },
 
   /**
+   * Update column group_name
+   * @param {string} columnId
+   * @param {string|null} groupName
+   * @returns {Promise<void>}
+   */
+  async updateColumnGroup(columnId, groupName) {
+    const { error } = await this.client
+      .from('encoding_columns')
+      .update({ group_name: groupName })
+      .eq('id', columnId);
+
+    if (error) throw error;
+  },
+
+  /**
    * Get columns from encoding templates only (for monitoring templates to reuse)
    * @param {number} departmentId
    * @returns {Promise<Array>} Array of columns from encoding templates

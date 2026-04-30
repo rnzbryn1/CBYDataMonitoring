@@ -128,6 +128,10 @@ export const AppCore = {
         window.applyCellColor = () => this.applyCellColor();
         window.openColorModal = () => this.openColorModal();
         window.closeColorModal = () => this.closeColorModal();
+        window.openAddToGroupModal = () => this.openAddToGroupModal();
+        window.confirmAddToGroup = () => this.confirmAddToGroup();
+        window.toggleEntryForm = () => this.toggleEntryForm();
+        window.saveEmptyRow = () => this.saveEmptyRow();
 
         window.addEventListener('click', () => {
             document.querySelectorAll('.dropdown').forEach(d => d.style.display = 'none');
@@ -1042,6 +1046,131 @@ export const AppCore = {
 
         // Render pagination controls using totalCount from server
         this.renderPaginationControls(this.state.totalCount);
+        
+        // Render empty row for Excel-style entry
+        this.renderEmptyRow();
+    },
+
+    renderEmptyRow: function () {
+        const emptyRowBody = document.getElementById('emptyRowInputs');
+        const saveBtn = document.getElementById('saveEmptyRowBtn');
+        
+        if (!emptyRowBody) return;
+        
+        const allColumns = this.state.currentTemplate?.columns || [];
+        const visibleColumns = allColumns.filter(col => {
+            const colDef = col.encoding_columns;
+            return this.isColumnVisible(colDef.column_name);
+        });
+        
+        if (visibleColumns.length === 0) {
+            emptyRowBody.style.display = 'none';
+            if (saveBtn) saveBtn.style.display = 'none';
+            return;
+        }
+        
+        // Build empty row inputs
+        emptyRowBody.innerHTML = '';
+        
+        const tr = document.createElement('tr');
+        
+        // Empty cell for checkbox column alignment
+        const emptyTd = document.createElement('td');
+        emptyTd.style.backgroundColor = '#f8fafc';
+        tr.appendChild(emptyTd);
+        
+        visibleColumns.forEach(col => {
+            const colDef = col.encoding_columns;
+            const td = document.createElement('td');
+            td.style.padding = '4px';
+            td.style.backgroundColor = '#f8fafc';
+            
+            if (colDef.column_type === 'date') {
+                const input = document.createElement('input');
+                input.type = 'date';
+                input.className = 'empty-row-input';
+                input.dataset.colId = colDef.id;
+                input.dataset.colName = colDef.column_name;
+                input.style.width = '100%';
+                input.style.padding = '6px';
+                input.style.border = '1px solid #e2e8f0';
+                input.style.borderRadius = '4px';
+                input.style.fontSize = '13px';
+                td.appendChild(input);
+            } else {
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.className = 'empty-row-input';
+                input.dataset.colId = colDef.id;
+                input.dataset.colName = colDef.column_name;
+                input.placeholder = '...';
+                input.style.width = '100%';
+                input.style.padding = '6px';
+                input.style.border = '1px solid #e2e8f0';
+                input.style.borderRadius = '4px';
+                input.style.fontSize = '13px';
+                td.appendChild(input);
+            }
+            
+            tr.appendChild(td);
+        });
+        
+        emptyRowBody.appendChild(tr);
+        
+        // Show the empty row and save button
+        emptyRowBody.style.display = 'table-row-group';
+        if (saveBtn) saveBtn.style.display = 'inline-block';
+    },
+
+    saveEmptyRow: async function () {
+        const inputs = document.querySelectorAll('.empty-row-input');
+        if (!inputs.length) return;
+        
+        // Check if any input has data
+        let hasData = false;
+        const values = {};
+        
+        inputs.forEach(input => {
+            const val = input.value.trim();
+            const colId = input.dataset.colId;
+            if (val) {
+                hasData = true;
+                values[colId] = val;
+            }
+        });
+        
+        if (!hasData) {
+            UI.showToast('Please enter at least one value', 'error');
+            return;
+        }
+        
+        try {
+            UI.showLoading('Adding row...');
+            
+            // Save the entry
+            await SupabaseService.saveEntry(this.state.currentTemplateId, values);
+            
+            // Clear inputs
+            inputs.forEach(input => input.value = '');
+            
+            // Refresh data
+            const cacheKey = `template-${this.state.currentTemplate.id}`;
+            delete this.state.cache[cacheKey];
+            this.state.localEntries = await SupabaseService.getAllEntries(this.state.currentTemplate.id);
+            this.renderTable(this.state.localEntries);
+            
+            // Update column compute if active
+            if (this.state.activeColumnCompute) {
+                this.updateColumnComputation();
+            }
+            
+            UI.showToast('Row added successfully', 'success');
+        } catch (error) {
+            console.error('Error saving empty row:', error);
+            UI.showToast('Failed to add row: ' + error.message, 'error');
+        } finally {
+            UI.hideLoading();
+        }
     },
 
     renderPaginationControls: function (totalEntries) {
@@ -5815,6 +5944,25 @@ export const AppCore = {
         this.state.currentColId = colId;
         this.state.currentColName = colName;
         
+        // Check if column is currently in a group
+        const columns = this.state.currentTemplate?.columns || [];
+        const currentCol = columns.find(c => c.encoding_columns?.id === colId);
+        const currentGroup = currentCol?.encoding_columns?.group_name;
+        this.state.currentColGroup = currentGroup;
+        
+        // Show/hide group buttons based on current group status
+        const addBtn = document.getElementById('hctxAddToGroup');
+        const removeBtn = document.getElementById('hctxRemoveFromGroup');
+        if (addBtn && removeBtn) {
+            if (currentGroup) {
+                addBtn.style.display = 'none';
+                removeBtn.style.display = 'block';
+            } else {
+                addBtn.style.display = 'block';
+                removeBtn.style.display = 'none';
+            }
+        }
+        
         // Position menu
         menu.style.display = 'block';
         menu.style.top = y + 'px';
@@ -5880,6 +6028,160 @@ export const AppCore = {
         
         // Call existing delete column functionality (which has its own confirmation)
         this.deleteColumn(this.state.currentColId, columnName);
+        
+        // Hide context menu
+        document.getElementById('headerContextMenu').style.display = 'none';
+    },
+
+    /**
+     * Toggle Entry Form visibility (collapse/expand)
+     */
+    toggleEntryForm: function () {
+        const formSection = document.getElementById('dynamicForm');
+        const toggleBtn = document.getElementById('toggleEntryFormBtn');
+        
+        if (!formSection || !toggleBtn) return;
+        
+        const isHidden = formSection.style.display === 'none';
+        
+        if (isHidden) {
+            // Show form
+            formSection.style.display = '';
+            toggleBtn.textContent = '▼ Hide';
+            toggleBtn.title = 'Hide Entry Form';
+        } else {
+            // Hide form
+            formSection.style.display = 'none';
+            toggleBtn.textContent = '▶ Show';
+            toggleBtn.title = 'Show Entry Form';
+        }
+    },
+
+    /**
+     * Open the custom Add to Group modal
+     */
+    openAddToGroupModal: function () {
+        if (!this.state.currentColId) return;
+        
+        const columnName = this.state.currentColName;
+        const modal = document.getElementById('addToGroupModal');
+        const messageEl = document.getElementById('addToGroupMessage');
+        const inputEl = document.getElementById('groupNameInput');
+        const existingGroupsEl = document.getElementById('existingGroupsList');
+        
+        // Set message
+        messageEl.textContent = `Adding column "${columnName}" to group:`;
+        
+        // Clear input
+        inputEl.value = '';
+        
+        // Get existing groups from current template columns
+        const columns = this.state.currentTemplate?.columns || [];
+        const existingGroups = [...new Set(columns
+            .map(col => col.encoding_columns?.group_name)
+            .filter(g => g))];
+        
+        // Show existing groups
+        if (existingGroups.length > 0) {
+            existingGroupsEl.innerHTML = `<strong>Existing groups:</strong> ${existingGroups.join(', ')}`;
+        } else {
+            existingGroupsEl.innerHTML = '';
+        }
+        
+        // Show modal and hide context menu
+        modal.style.display = 'block';
+        document.getElementById('headerContextMenu').style.display = 'none';
+        
+        // Focus input
+        setTimeout(() => inputEl.focus(), 100);
+    },
+
+    /**
+     * Confirm adding column to group from modal
+     */
+    confirmAddToGroup: async function () {
+        if (!this.state.currentColId) return;
+        
+        const columnName = this.state.currentColName;
+        const inputEl = document.getElementById('groupNameInput');
+        const groupName = inputEl.value.trim();
+        
+        if (!groupName) {
+            UI.showToast('Please enter a group name', 'error');
+            return;
+        }
+        
+        // Get existing groups from current template columns
+        const columns = this.state.currentTemplate?.columns || [];
+        
+        // GUARD: Check if a column with the same name already exists in the target group
+        const duplicateInGroup = columns.find(col => 
+            col.encoding_columns?.group_name === groupName &&
+            col.encoding_columns?.column_name === columnName &&
+            col.encoding_columns?.id !== this.state.currentColId
+        );
+        
+        if (duplicateInGroup) {
+            UI.showToast(`A column named "${columnName}" already exists in group "${groupName}". Each template cannot have duplicate columns in the same group.`, 'error');
+            return;
+        }
+        
+        try {
+            // Update the column's group in the database
+            await SupabaseService.updateColumnGroup(this.state.currentColId, groupName);
+            
+            // Close modal
+            document.getElementById('addToGroupModal').style.display = 'none';
+            
+            // Refresh template data
+            const cacheKey = `template-${this.state.currentTemplate.id}`;
+            delete this.state.cache[cacheKey];
+            this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
+            
+            // Re-render table
+            this.renderAll();
+            
+            UI.showToast(`Column added to group "${groupName}"`, 'success');
+        } catch (error) {
+            console.error('Error updating column group:', error);
+            UI.showToast('Failed to update column group: ' + error.message, 'error');
+        }
+    },
+
+    /**
+     * Handle "Remove from Group" from header context menu
+     */
+    handleHeaderRemoveFromGroup: async function () {
+        if (!this.state.currentColId) return;
+        
+        const columnName = this.state.currentColName;
+        const currentGroup = this.state.currentColGroup;
+        
+        console.log('Removing column from group:', columnName, 'Group:', currentGroup);
+        
+        if (!currentGroup) {
+            UI.showToast('This column is not in a group', 'error');
+            document.getElementById('headerContextMenu').style.display = 'none';
+            return;
+        }
+        
+        try {
+            // Update the column's group in the database (set to null)
+            await SupabaseService.updateColumnGroup(this.state.currentColId, null);
+            
+            // Refresh template data
+            const cacheKey = `template-${this.state.currentTemplate.id}`;
+            delete this.state.cache[cacheKey];
+            this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
+            
+            // Re-render table
+            this.renderAll();
+            
+            UI.showToast(`Column removed from group "${currentGroup}"`, 'success');
+        } catch (error) {
+            console.error('Error removing column from group:', error);
+            UI.showToast('Failed to remove column from group: ' + error.message, 'error');
+        }
         
         // Hide context menu
         document.getElementById('headerContextMenu').style.display = 'none';
