@@ -1187,6 +1187,14 @@ export const AppCore = {
             this.state.localEntries = await SupabaseService.getAllEntries(this.state.currentTemplate.id);
             this.renderTable(this.state.localEntries);
             
+            // Recalculate formulas for the new entry
+            for (const colId of Object.keys(values)) {
+                const colDef = this.state.currentTemplate.columns?.find(c => c.encoding_columns.id === colId);
+                if (colDef) {
+                    await this.autoRecalculateDependentFormulas(colDef.encoding_columns.column_name, newEntry.id);
+                }
+            }
+            
             // Update column compute if active
             if (this.state.activeColumnCompute) {
                 this.updateColumnComputation();
@@ -2175,6 +2183,39 @@ export const AppCore = {
                     if (existingColumn) {
                         return UI.showToast('This column is already added to the template.', 'error');
                     }
+                } else if (activeTab === 'copyMultiple') {
+                    // For monitoring templates: copy multiple columns from encoding
+                    const checkedCheckboxes = document.querySelectorAll('.column-checkbox:checked');
+                    if (checkedCheckboxes.length === 0) {
+                        return UI.showToast('Please select at least one column to copy.', 'error');
+                    }
+
+                    const columnIds = Array.from(checkedCheckboxes).map(cb => cb.dataset.columnId);
+                    
+                    // Calculate display order to add at the end
+                    const existingColumns = this.state.currentTemplate.columns || [];
+                    let displayOrder = existingColumns.length > 0
+                        ? Math.max(...existingColumns.map(col => col.display_order || 0))
+                        : 0;
+
+                    // Add each selected column
+                    for (const colId of columnIds) {
+                        displayOrder++;
+                        await SupabaseService.addColumnToTemplate(
+                            this.state.currentTemplate.id,
+                            colId,
+                            displayOrder,
+                            false
+                        );
+                    }
+
+                    UI.showToast(`Added ${columnIds.length} columns to template.`, 'success');
+                    this.closeColumnModal();
+                    
+                    // Refresh template and re-render
+                    this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
+                    this.renderTable(this.state.localEntries);
+                    return;
                 } else {
                     // For monitoring templates: create new column
                     const name = document.getElementById('monitoringNewColumnName').value.trim();
@@ -2335,21 +2376,97 @@ export const AppCore = {
             pane.style.display = 'none';
         });
 
-        // Show selected tab
-        const selectedPane = document.getElementById(`${tabName}ColumnTab`);
+        // Show selected tab - handle both naming conventions
+        let selectedPane = document.getElementById(`${tabName}ColumnTab`);
+        if (!selectedPane) {
+            selectedPane = document.getElementById(`${tabName}Tab`);
+        }
         if (selectedPane) {
             selectedPane.classList.add('active');
             selectedPane.style.display = 'block';
         }
 
-        // Clear form values when switching tabs
-        if (tabName === 'existing') {
-            document.getElementById('existingColumnSelect').value = '';
-        } else if (tabName === 'new') {
-            document.getElementById('monitoringNewColumnName').value = '';
-            document.getElementById('monitoringNewColumnType').value = 'text';
-            document.getElementById('monitoringColumnGroup').value = '';
+        // Load encoding columns when switching to copyMultiple tab
+        if (tabName === 'copyMultiple') {
+            this.loadEncodingColumnsForCopy();
         }
+    },
+
+    loadEncodingColumnsForCopy: async function() {
+        const columnsList = document.getElementById('encodingColumnsList');
+        columnsList.innerHTML = '<p style="color:#666;font-size:12px;">Loading columns...</p>';
+
+        try {
+            const encodingColumns = await SupabaseService.getEncodingTemplateColumns(this.state.departmentId);
+            
+            if (encodingColumns.length === 0) {
+                columnsList.innerHTML = '<p style="color:#666;font-size:12px;">No columns found in encoding templates.</p>';
+                return;
+            }
+
+            // Group columns by template
+            const groupedColumns = {};
+            encodingColumns.forEach(col => {
+                const templateName = col.template_name || 'Unknown Template';
+                if (!groupedColumns[templateName]) {
+                    groupedColumns[templateName] = [];
+                }
+                groupedColumns[templateName].push(col);
+            });
+
+            // Build HTML with checkboxes
+            let html = '';
+            for (const [templateName, columns] of Object.entries(groupedColumns)) {
+                html += `<div style="margin-bottom:15px;">
+                    <label style="font-weight:bold;font-size:13px;display:block;margin-bottom:5px;">
+                        <input type="checkbox" class="template-checkbox" data-template="${templateName}" onchange="AppCore.toggleTemplateColumns(this)">
+                        ${templateName}
+                    </label>
+                    <div style="margin-left:20px;">`;
+                
+                columns.forEach(col => {
+                    // Check if column already exists in current template
+                    const existingColumn = this.state.currentTemplate.columns?.find(
+                        c => c.encoding_columns.id === col.id
+                    );
+                    const isAdded = existingColumn ? ' (already added)' : '';
+                    const disabled = existingColumn ? 'disabled' : '';
+                    
+                    html += `<label style="display:block;font-size:12px;margin-bottom:3px;">
+                        <input type="checkbox" class="column-checkbox" data-column-id="${col.id}" data-template="${templateName}" ${disabled}>
+                        ${col.column_name} (${col.column_type})${isAdded}
+                    </label>`;
+                });
+                
+                html += '</div></div>';
+            }
+
+            html += `<div style="margin-top:10px;padding-top:10px;border-top:1px solid #ddd;">
+                <button onclick="AppCore.selectAllCopyColumns(true)" style="font-size:12px;padding:4px 8px;">Select All</button>
+                <button onclick="AppCore.selectAllCopyColumns(false)" style="font-size:12px;padding:4px 8px;">Deselect All</button>
+            </div>`;
+
+            columnsList.innerHTML = html;
+        } catch (error) {
+            columnsList.innerHTML = `<p style="color:red;font-size:12px;">Failed to load columns: ${error.message}</p>`;
+        }
+    },
+
+    toggleTemplateColumns: function(checkbox) {
+        const templateName = checkbox.dataset.template;
+        const columnCheckboxes = document.querySelectorAll(`.column-checkbox[data-template="${templateName}"]`);
+        columnCheckboxes.forEach(cb => {
+            if (!cb.disabled) {
+                cb.checked = checkbox.checked;
+            }
+        });
+    },
+
+    selectAllCopyColumns: function(select) {
+        const columnCheckboxes = document.querySelectorAll('.column-checkbox:not(:disabled)');
+        columnCheckboxes.forEach(cb => {
+            cb.checked = select;
+        });
     },
 
     deleteColumn: async function (columnId, columnName) {

@@ -135,6 +135,9 @@
                 <button type="button" class="tab-btn active" data-tab="existing" onclick="switchColumnTab('existing')">
                     Existing Column
                 </button>
+                <button type="button" class="tab-btn" data-tab="copyMultiple" onclick="switchColumnTab('copyMultiple')">
+                    Copy Multiple Columns
+                </button>
                 <button type="button" class="tab-btn" data-tab="new" onclick="switchColumnTab('new')">
                     New Column
                 </button>
@@ -150,6 +153,17 @@
                     </select>
                     <p style="font-size:12px;color:#666;margin-top:5px;">
                         Select an existing column from encoding templates
+                    </p>
+                </div>
+                
+                <!-- Copy Multiple Columns Tab -->
+                <div id="copyMultipleTab" class="tab-pane" style="display:none;">
+                    <label>Copy Multiple Columns from Encoding Templates:</label>
+                    <div id="encodingColumnsList" style="max-height:300px;overflow-y:auto;border:1px solid #ddd;padding:10px;margin-top:5px;">
+                        <p style="color:#666;font-size:12px;">Loading columns...</p>
+                    </div>
+                    <p style="font-size:12px;color:#666;margin-top:5px;">
+                        Select multiple columns to add to this template
                     </p>
                 </div>
                 
