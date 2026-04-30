@@ -3567,6 +3567,11 @@ export const AppCore = {
                         <button type="button" class="func-btn func-math">=MAX()</button>
                         <button type="button" class="func-btn func-math">=MIN()</button>
                     </div>
+                    <span class="section-label" style="margin-top: 8px;">Statistical</span>
+                    <div class="compute-functions">
+                        <button type="button" class="func-btn func-math">=SUMIF()</button>
+                        <button type="button" class="func-btn func-math">=SUMIFS()</button>
+                    </div>
                     <span class="section-label" style="margin-top: 8px;">Date</span>
                     <div class="compute-functions">
                         <!--<button type="button" class="func-btn func-date">=TODAY()</button> 
@@ -4568,6 +4573,50 @@ export const AppCore = {
         this.renderTable(this.state.localEntries);
     },
 
+    /**
+     * Helper function to evaluate criteria for SUMIF
+     */
+    evaluateCriteria: function(value, criteria) {
+        const numValue = parseFloat(String(value).replace(/[^\d.-]/g, '')) || 0;
+        const strValue = String(value).trim();
+        
+        // Numeric comparisons
+        if (criteria.startsWith('>=')) {
+            const threshold = parseFloat(criteria.substring(2).trim()) || 0;
+            return numValue >= threshold;
+        }
+        if (criteria.startsWith('<=')) {
+            const threshold = parseFloat(criteria.substring(2).trim()) || 0;
+            return numValue <= threshold;
+        }
+        if (criteria.startsWith('<>')) {
+            const threshold = parseFloat(criteria.substring(2).trim()) || 0;
+            return numValue !== threshold;
+        }
+        if (criteria.startsWith('>')) {
+            const threshold = parseFloat(criteria.substring(1).trim()) || 0;
+            return numValue > threshold;
+        }
+        if (criteria.startsWith('<')) {
+            const threshold = parseFloat(criteria.substring(1).trim()) || 0;
+            return numValue < threshold;
+        }
+        if (criteria.startsWith('=')) {
+            const threshold = parseFloat(criteria.substring(1).trim()) || 0;
+            return numValue === threshold;
+        }
+        
+        // Wildcard text matching
+        if (criteria.includes('*')) {
+            const regexPattern = criteria.replace(/\*/g, '.*').replace(/\?/g, '.');
+            const regex = new RegExp('^' + regexPattern + '$', 'i');
+            return regex.test(strValue);
+        }
+        
+        // Exact text match
+        return strValue.toLowerCase() === criteria.toLowerCase();
+    },
+
     computeFormulaForEntry: function (entry, formula, columns) {
         let evalExpr = formula.startsWith('=') ? formula.slice(1) : formula;
 
@@ -4843,6 +4892,103 @@ export const AppCore = {
         evalExpr = evalExpr.replace(/\bMIN\((.*?)\)/gi, (_, args) => {
             const vals = args.split(',').map(a => getVal(a, entry));
             return Math.min(...vals);
+        });
+
+        // SUMIF: SUMIF(range, criteria, [sum_range])
+        evalExpr = evalExpr.replace(/\bSUMIF\((.*?)\)/gi, (_, args) => {
+            const parts = args.split(',').map(a => a.trim());
+            if (parts.length < 2) return 0;
+            
+            const rangeCol = parts[0];
+            const criteria = parts[1].replace(/^["']|["']$/g, ''); // Remove quotes
+            const sumRangeCol = parts[2] || rangeCol; // If sum_range not provided, use range
+            
+            // Get column names from variable mapping
+            let rangeColName = rangeCol.trim();
+            let sumRangeColName = sumRangeCol.trim();
+            
+            if (this.state.variableColumns && this.state.variableColumns[rangeColName]) {
+                rangeColName = this.state.variableColumns[rangeColName];
+            }
+            if (this.state.variableColumns && this.state.variableColumns[sumRangeColName]) {
+                sumRangeColName = this.state.variableColumns[sumRangeColName];
+            }
+            
+            // Get all entries
+            const allEntries = this.state.localEntries || [];
+            
+            let sum = 0;
+            
+            allEntries.forEach(e => {
+                const rangeValue = e.values[rangeColName] ?? '';
+                const sumValue = parseFloat(String(e.values[sumRangeColName] ?? '0').replace(/[^\d.-]/g, '')) || 0;
+                
+                // Evaluate criteria
+                if (this.evaluateCriteria(rangeValue, criteria)) {
+                    sum += sumValue;
+                }
+            });
+            
+            return sum;
+        });
+
+        // SUMIFS: SUMIFS(sum_range, criteria_range1, criteria1, [criteria_range2, criteria2], ...)
+        evalExpr = evalExpr.replace(/\bSUMIFS\((.*?)\)/gi, (_, args) => {
+            const parts = args.split(',').map(a => a.trim());
+            if (parts.length < 3 || parts.length % 2 === 0) return 0; // Need at least sum_range + 1 criteria pair (odd number of args)
+            
+            const sumRangeCol = parts[0];
+            
+            // Parse criteria pairs
+            const criteriaPairs = [];
+            for (let i = 1; i < parts.length; i += 2) {
+                if (i + 1 < parts.length) {
+                    criteriaPairs.push({
+                        rangeCol: parts[i],
+                        criteria: parts[i + 1].replace(/^["']|["']$/g, '')
+                    });
+                }
+            }
+            
+            // Get column names from variable mapping
+            let sumRangeColName = sumRangeCol.trim();
+            if (this.state.variableColumns && this.state.variableColumns[sumRangeColName]) {
+                sumRangeColName = this.state.variableColumns[sumRangeColName];
+            }
+            
+            criteriaPairs.forEach(pair => {
+                let colName = pair.rangeCol.trim();
+                if (this.state.variableColumns && this.state.variableColumns[colName]) {
+                    pair.rangeColName = this.state.variableColumns[colName];
+                } else {
+                    pair.rangeColName = colName;
+                }
+            });
+            
+            // Get all entries
+            const allEntries = this.state.localEntries || [];
+            
+            let sum = 0;
+            
+            allEntries.forEach(e => {
+                // Check all criteria
+                let allCriteriaMatch = true;
+                for (const pair of criteriaPairs) {
+                    const rangeValue = e.values[pair.rangeColName] ?? '';
+                    if (!this.evaluateCriteria(rangeValue, pair.criteria)) {
+                        allCriteriaMatch = false;
+                        break;
+                    }
+                }
+                
+                // If all criteria match, add to sum
+                if (allCriteriaMatch) {
+                    const sumValue = parseFloat(String(e.values[sumRangeColName] ?? '0').replace(/[^\d.-]/g, '')) || 0;
+                    sum += sumValue;
+                }
+            });
+            
+            return sum;
         });
 
         // Convert column names to variables for evaluation
