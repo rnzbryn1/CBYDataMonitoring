@@ -1044,6 +1044,9 @@ export const AppCore = {
 
         body.appendChild(fragment);
 
+        // Enable row drag selection for checkboxes
+        this.enableRowDragSelection();
+
         // Render pagination controls using totalCount from server
         this.renderPaginationControls(this.state.totalCount);
         
@@ -1143,6 +1146,64 @@ export const AppCore = {
         // Show the empty row and save button
         emptyRowBody.style.display = 'table-row-group';
         if (saveBtn) saveBtn.style.display = 'inline-block';
+    },
+
+    // Enable drag selection for row checkboxes
+    enableRowDragSelection: function () {
+        let isDragging = false;
+        let startCheckbox = null;
+        let startIndex = -1;
+        let originalStates = new Map();
+
+        // Use event delegation on document for drag start
+        document.addEventListener('mousedown', (e) => {
+            if (!e.target.classList.contains('rowCheckbox')) return;
+            
+            const allCheckboxes = Array.from(document.querySelectorAll('#tableData .rowCheckbox'));
+            startCheckbox = e.target;
+            startIndex = allCheckboxes.indexOf(startCheckbox);
+            
+            if (startIndex === -1) return;
+            
+            isDragging = true;
+            originalStates.clear();
+            allCheckboxes.forEach((cb, i) => {
+                originalStates.set(i, cb.checked);
+            });
+            
+            e.preventDefault();
+        });
+
+        // Use event delegation for drag selection
+        document.addEventListener('mouseover', (e) => {
+            if (!isDragging || !e.target.classList.contains('rowCheckbox')) return;
+
+            const allCheckboxes = Array.from(document.querySelectorAll('#tableData .rowCheckbox'));
+            const currentCheckbox = e.target;
+            const currentIndex = allCheckboxes.indexOf(currentCheckbox);
+            
+            if (currentIndex === -1 || startIndex === -1) return;
+
+            const minIndex = Math.min(startIndex, currentIndex);
+            const maxIndex = Math.max(startIndex, currentIndex);
+            const toggleState = !originalStates.get(startIndex);
+
+            allCheckboxes.forEach((cb, i) => {
+                if (i >= minIndex && i <= maxIndex) {
+                    cb.checked = toggleState;
+                } else {
+                    cb.checked = originalStates.get(i) || false;
+                }
+            });
+        });
+
+        // End drag on mouseup anywhere
+        document.addEventListener('mouseup', () => {
+            isDragging = false;
+            startCheckbox = null;
+            startIndex = -1;
+            originalStates.clear();
+        });
     },
 
     saveEmptyRow: async function () {
@@ -1413,7 +1474,7 @@ export const AppCore = {
         });
 
         // keydown — Ctrl+C copies selection, Enter blurs cell, and delete function for delete or backspace button
-        body.addEventListener('keydown', (e) => {
+        body.addEventListener('keydown', async (e) => {
 
             // ✅ DELETE / BACKSPACE — clear selected cells
             if (e.key === 'Delete') {
@@ -1443,7 +1504,7 @@ export const AppCore = {
                 });
 
                 // Save changes sa database
-                changedEntries.forEach(async (values, entryId) => {
+                for (const [entryId, values] of changedEntries.entries()) {
                     try {
                         await SupabaseService.updateEntryValues(entryId, values);
 
@@ -1464,7 +1525,7 @@ export const AppCore = {
                     } catch (err) {
                         UI.showToast('Delete failed: ' + err.message, 'error');
                     }
-                });
+                }
 
                 // 🔄 AUTO-UPDATE - Recalculate dependent formulas for each changed cell
                 changedCells.forEach(({ entryId, colName }) => {
@@ -1477,13 +1538,14 @@ export const AppCore = {
                 }
 
                 // 🔄 AUTO-UPDATE MONITORING TEMPLATES
-                changedCells.forEach(async ({ entryId, colName }) => {
+                for (const { entryId, colName } of changedCells) {
+                    const values = changedEntries.get(entryId) || {};
                     await this.autoUpdateMonitoring({ 
-                        values: {},
-                        entryId: entryId,
+                        values,
+                        entryId,
                         columnName: colName
                     }, 'update');
-                });
+                }
 
                 UI.showToast(`Cleared ${selected.length} cell(s)`);
                 return;
@@ -2628,6 +2690,9 @@ export const AppCore = {
             await SupabaseService.deleteEntry(id);
             UI.showToast('Record deleted!');
             
+            const deletedEntry = this.state.localEntries.find(e => e.id === id);
+            const deletedEntryValues = deletedEntry?.values;
+
             // Clear cache when entry is deleted
             this.clearCache(this.state.currentTemplateId);
 
@@ -2644,7 +2709,8 @@ export const AppCore = {
             // 🔄 AUTO-UPDATE MONITORING TEMPLATES
             await this.autoUpdateMonitoring({ 
                 entryId: id,
-                operation: 'delete'
+                operation: 'delete',
+                entryValues: deletedEntryValues
             }, 'delete');
         } catch (error) {
             UI.showToast('Failed to delete: ' + error.message, 'error');
@@ -3323,18 +3389,34 @@ export const AppCore = {
         if (deleteBtn) { deleteBtn.disabled = true; deleteBtn.innerText = `Deleting ${checked.length}...`; }
 
         try {
+            const entriesToDelete = this.state.localEntries.filter(e => checked.includes(e.id));
+            const entryValuesById = Object.fromEntries(entriesToDelete.map(e => [e.id, e.values || {}]));
+
             // Delete entries in batches of 100 (service layer handles batching)
             console.log(`Deleting ${checked.length} entries in chunks...`);
             await SupabaseService.deleteEntries(checked);
             console.log(`Deleted ${checked.length} entries`);
 
-            // update UI
-            this.state.localEntries = this.state.localEntries.filter(e => !checked.includes(e.id));
+            // Clear cache when entries are deleted
+            this.clearCache(this.state.currentTemplateId);
+
+            const cacheKey = `template-${this.state.currentTemplate.id}`;
+            delete this.state.cache[cacheKey];
+            this.state.localEntries = await SupabaseService.getAllEntries(this.state.currentTemplate.id);
             this.renderTable(this.state.localEntries);
 
             // 🔄 AUTO-UPDATE: Recalculate column computations after deletion
             if (this.state.activeColumnCompute) {
                 this.updateColumnComputation();
+            }
+
+            // 🔄 AUTO-UPDATE MONITORING TEMPLATES for each deleted entry
+            for (const id of checked) {
+                await this.autoUpdateMonitoring({ 
+                    entryId: id,
+                    operation: 'delete',
+                    entryValues: entryValuesById[id]
+                }, 'delete');
             }
 
             UI.showToast(`Deleted ${checked.length} records.`);
@@ -6193,7 +6275,7 @@ export const AppCore = {
                     await this.updateMonitoringEntry(monitoringTemplate, changedData, columnMappings);
                     break;
                 case 'delete':
-                    await this.deleteMonitoringEntry(monitoringTemplate, changedData);
+                    await this.deleteMonitoringEntry(monitoringTemplate, changedData, columnMappings);
                     break;
             }
         } catch (error) {
@@ -6642,7 +6724,7 @@ export const AppCore = {
                 
                 // Get the value from changed data
                 const value = changedData.values?.[encodingColId];
-                if (value !== undefined && value !== null && value !== '') {
+                if (value !== undefined && value !== null) {
                     monitoringValues[monitoringColId] = value;
                 }
             });
@@ -6684,7 +6766,7 @@ export const AppCore = {
                 
                 // Get value from changed data
                 const value = changedData.values?.[encodingColId];
-                if (value !== undefined && value !== null && value !== '') {
+                if (value !== undefined && value !== null) {
                     monitoringValues[monitoringColId] = value;
                 }
             });
@@ -6703,7 +6785,7 @@ export const AppCore = {
      * Find corresponding monitoring entry for an encoding entry
      * Uses row index matching as primary strategy
      */
-    findCorrespondingMonitoringEntry: async function (monitoringTemplate, encodingEntryId, columnMappings) {
+    findCorrespondingMonitoringEntry: async function (monitoringTemplate, encodingEntryId, columnMappings, changedData = {}) {
         try {
             // First try direct reference matching using the source encoding entry id
             const referencedMonitoringEntry = await SupabaseService.getMonitoringEntryByReferenceNumber(
@@ -6724,8 +6806,8 @@ export const AppCore = {
             const encodingEntryIndex = encodingEntries.findIndex(entry => entry.id === encodingEntryId);
             
             if (encodingEntryIndex === -1) {
-                console.log(`Encoding entry ${encodingEntryId} not found`);
-                return null;
+                console.log(`Encoding entry ${encodingEntryId} not found; using fallback values if available`);
+                return await this.findMonitoringEntryByMatchingValues(monitoringTemplate, encodingEntryId, columnMappings, changedData);
             }
 
             // Match by row index (same position in both templates)
@@ -6748,11 +6830,15 @@ export const AppCore = {
      * Find monitoring entry by matching key column values
      * Fallback method when index matching doesn't work
      */
-    findMonitoringEntryByMatchingValues: async function (monitoringTemplate, encodingEntryId, columnMappings) {
+    findMonitoringEntryByMatchingValues: async function (monitoringTemplate, encodingEntryId, columnMappings, changedData = {}) {
         try {
             // Get encoding entry details
             const encodingEntries = await SupabaseService.getEntries(this.state.currentTemplate.id);
-            const encodingEntry = encodingEntries.find(entry => entry.id === encodingEntryId);
+            let encodingEntry = encodingEntries.find(entry => entry.id === encodingEntryId);
+            
+            if (!encodingEntry && changedData.entryValues) {
+                encodingEntry = { id: encodingEntryId, values: changedData.entryValues };
+            }
             
             if (!encodingEntry) return null;
 
@@ -6793,11 +6879,24 @@ export const AppCore = {
     /**
      * Delete corresponding entry in monitoring template
      */
-    deleteMonitoringEntry: async function (monitoringTemplate, changedData) {
+    deleteMonitoringEntry: async function (monitoringTemplate, changedData, columnMappings) {
         try {
-            // For now, we'll skip deletion to avoid accidental data loss
-            // In a more sophisticated implementation, you might want to delete specific entries
-            console.log(`Deletion operation skipped for monitoring template ${monitoringTemplate.name} (to prevent data loss)`);
+            // Find corresponding monitoring entry for the deleted encoding entry
+            const targetMonitoringEntry = await this.findCorrespondingMonitoringEntry(
+                monitoringTemplate, 
+                changedData.entryId, 
+                columnMappings,
+                changedData
+            );
+
+            if (!targetMonitoringEntry) {
+                console.log(`No corresponding monitoring entry found for deleted encoding entry ${changedData.entryId}`);
+                return;
+            }
+
+            // Delete the monitoring entry
+            await SupabaseService.deleteEntry(targetMonitoringEntry.id);
+            console.log(`Deleted monitoring entry ${targetMonitoringEntry.id} in template ${monitoringTemplate.name}`);
         } catch (error) {
             console.error('Error deleting monitoring entry:', error);
         }
