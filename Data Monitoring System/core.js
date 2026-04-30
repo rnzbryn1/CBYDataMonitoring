@@ -2229,15 +2229,20 @@ export const AppCore = {
                     // Clear cache to force refresh after copy
                     delete this.state.cache[cacheKey];
                     
-                    // Force reload entries after copy
+                    // Refresh template structure FIRST to get new columns
+                    console.log('🔄 Refreshing template structure after multiple column addition...');
+                    this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
+                    console.log('📊 Updated template columns:', this.state.currentTemplate.columns?.length);
+                    
+                    // Then reload entries with updated template structure
                     await this.loadEntries(this.state.currentTemplate.id);
 
+                    console.log('✅ Multiple column addition completed successfully');
                     UI.showToast(`Added ${columnIds.length} columns! ${totalCopied} entries copied from encoding.`, 'success');
-                    this.closeColumnModal();
+                    window.closeColumnModal();
                     
-                    // Refresh template and re-render
-                    this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
-                    this.renderTable(this.state.localEntries);
+                    // Final render to ensure everything is updated
+                    this.renderAll();
                     return;
                 } else {
                     // For monitoring templates: create new column
@@ -2337,12 +2342,19 @@ export const AppCore = {
                 // Clear cache again to force refresh after copy
                 delete this.state.cache[cacheKey];
                 
-                // Force reload entries after copy
+                // Refresh template structure FIRST to get new columns
+                console.log('🔄 Refreshing template structure after column addition...');
+                this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
+                console.log('📊 Updated template columns:', this.state.currentTemplate.columns?.length);
+                
+                // Then reload entries with updated template structure
                 await this.loadEntries(this.state.currentTemplate.id);
                 
+                console.log('✅ Column addition completed successfully');
                 UI.showToast(`Column added! ${copiedCount} entries copied from encoding.`);
             } else {
-                // For encoding templates, just reload entries
+                // For encoding templates, refresh template structure first then reload entries
+                this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
                 await this.loadEntries(this.state.currentTemplate.id);
                 UI.showToast('Column added!');
             }
@@ -2362,12 +2374,13 @@ export const AppCore = {
             window.closeColumnModal();
         } catch (error) {
             console.error('Failed to add column:', error);
+            console.error('Error details:', error.message, error.stack);
 
             // Show user-friendly error message
             if (error.message && error.message.includes('duplicate') || error.message && error.message.includes('unique constraint')) {
                 UI.showToast('A column with this name already exists in this group.', 'error');
             } else {
-                UI.showToast('Failed to add column. Please try again.', 'error');
+                UI.showToast(`Failed to add column: ${error.message}`, 'error');
             }
         } finally {
             // Always hide loading overlay
