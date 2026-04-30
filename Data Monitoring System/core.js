@@ -1063,7 +1063,8 @@ export const AppCore = {
             return this.isColumnVisible(colDef.column_name);
         });
         
-        if (visibleColumns.length === 0) {
+        // Hide empty row if no columns or no template selected
+        if (!this.state.currentTemplate || visibleColumns.length === 0) {
             emptyRowBody.style.display = 'none';
             if (saveBtn) saveBtn.style.display = 'none';
             return;
