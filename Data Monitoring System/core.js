@@ -2210,7 +2210,29 @@ export const AppCore = {
                         );
                     }
 
-                    UI.showToast(`Added ${columnIds.length} columns to template.`, 'success');
+                    // Show loading overlay for data copying
+                    if (loadingOverlay) {
+                        loadingOverlay.style.display = 'flex';
+                    }
+
+                    // Copy data for all added columns
+                    let totalCopied = 0;
+                    for (const colId of columnIds) {
+                        const copiedCount = await SupabaseService.copyColumnDataToMonitoring(
+                            this.state.currentTemplate.id,
+                            colId,
+                            this.state.departmentId
+                        );
+                        totalCopied += copiedCount;
+                    }
+
+                    // Clear cache to force refresh after copy
+                    delete this.state.cache[cacheKey];
+                    
+                    // Force reload entries after copy
+                    await this.loadEntries(this.state.currentTemplate.id);
+
+                    UI.showToast(`Added ${columnIds.length} columns! ${totalCopied} entries copied from encoding.`, 'success');
                     this.closeColumnModal();
                     
                     // Refresh template and re-render
