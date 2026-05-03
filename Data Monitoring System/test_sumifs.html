@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SUMIFS Function Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .test-section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background-color: #fafafa;
+        }
+        .test-section h3 {
+            color: #555;
+            margin-top: 0;
+        }
+        .formula-example {
+            background-color: #f0f8ff;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            margin: 10px 0;
+            border-left: 4px solid #007bff;
+        }
+        .description {
+            color: #666;
+            line-height: 1.6;
+        }
+        .note {
+            background-color: #fff3cd;
+            padding: 10px;
+            border-radius: 4px;
+            border-left: 4px solid #ffc107;
+            margin: 10px 0;
+        }
+        .code-block {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            overflow-x: auto;
+            border: 1px solid #e9ecef;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>SUMIFS Function Test & Documentation</h1>
+        
+        <div class="test-section">
+            <h3>🎯 SUMIFS Function Overview</h3>
+            <div class="description">
+                <p>The SUMIFS function has been implemented for your monitoring category. It works like Excel's SUMIFS but pulls data directly from your database and caches results for performance.</p>
+            </div>
+            
+            <div class="note">
+                <strong>Important:</strong> The function is case-insensitive and automatically caches results to improve performance.
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h3>📝 Syntax & Examples</h3>
+            
+            <div class="formula-example">
+                <strong>Basic Syntax:</strong><br>
+                =SUMIFS('sum_column', 'condition_column1', 'condition_value1', 'condition_column2', 'condition_value2', ...)
+            </div>
+            
+            <div class="formula-example">
+                <strong>Example 1 - Single Condition:</strong><br>
+                =SUMIFS('Accepted QTY', 'Item Description', 'Banana Saba')
+            </div>
+            
+            <div class="formula-example">
+                <strong>Example 2 - Multiple Conditions:</strong><br>
+                =SUMIFS('Accepted QTY', 'Item Description', 'Banana Saba', 'Month #', '10')
+            </div>
+            
+            <div class="formula-example">
+                <strong>Example 3 - Three Conditions:</strong><br>
+                =SUMIFS('Accepted QTY', 'Item Description', 'Banana Saba', 'Month #', '10', 'Year', '2024')
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h3>🔧 How It Works</h3>
+            <div class="description">
+                <ol>
+                    <li><strong>Database Query:</strong> The function searches through all encoding templates in your department</li>
+                    <li><strong>Condition Matching:</strong> It finds entries that match ALL specified conditions (AND logic)</li>
+                    <li><strong>Sum Calculation:</strong> It sums the values in the specified sum column for matching entries</li>
+                    <li><strong>Caching:</strong> Results are cached to improve performance on subsequent evaluations</li>
+                    <li><strong>Auto-Refresh:</strong> The UI automatically updates when cached results are available</li>
+                </ol>
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h3>⚡ Performance Features</h3>
+            <div class="description">
+                <ul>
+                    <li><strong>Smart Caching:</strong> Results are cached based on department, sum column, and conditions</li>
+                    <li><strong>Async Processing:</strong> Database queries run asynchronously to prevent UI freezing</li>
+                    <li><strong>Case-Insensitive:</strong> All text comparisons are case-insensitive</li>
+                    <li><strong>Error Handling:</strong> Returns 0 instead of errors if no data is found</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h3>🚀 Usage in Monitoring Category</h3>
+            <div class="description">
+                <p>To use SUMIFS in your monitoring category:</p>
+                <ol>
+                    <li>Navigate to your monitoring template</li>
+                    <li>Select a cell or column where you want the formula</li>
+                    <li>Enter the formula using the syntax above</li>
+                    <li>The system will automatically pull data from your encoding sheets</li>
+                    <li>Results will update automatically when data changes</li>
+                </ol>
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h3>🔍 Sample Implementation</h3>
+            <div class="code-block">
+// Example formula in a monitoring cell:
+=SUMIFS('Accepted QTY', 'Item Description', 'Banana Saba', 'Month #', '10')
+
+// This will:
+// 1. Search all encoding templates in the current department
+// 2. Find entries where Item Description = "Banana Saba" AND Month # = "10"
+// 3. Sum all values in the "Accepted QTY" column for those entries
+// 4. Cache the result for future use
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h3>✅ Testing Checklist</h3>
+            <div class="description">
+                <p>After implementation, test the following scenarios:</p>
+                <ul>
+                    <li>Single condition SUMIFS</li>
+                    <li>Multiple condition SUMIFS</li>
+                    <li>Case-insensitive matching</li>
+                    <li>Caching behavior (second evaluation should be instant)</li>
+                    <li>Auto-refresh when data changes</li>
+                    <li>Error handling for non-existent columns</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

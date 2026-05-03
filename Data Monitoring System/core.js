@@ -4226,51 +4226,25 @@ export const AppCore = {
                 return Math.min(...vals);
             });
 
-            // SUMIFS: Sum with multiple criteria across all entries
-            // Syntax: =SUMIFS(sum_column, criteria_col1, criteria_val1, criteria_col2, criteria_val2, ...)
-            evalExpr = evalExpr.replace(/\bSUMIFS\((.*?)\)/gi, (_, args) => {
-                const parts = args.split(',').map(a => a.trim());
-                if (parts.length < 3 || parts.length % 2 === 0) {
-                    throw new Error('SUMIFS requires sum_column and pairs of criteria_column, criteria_value');
+            // Excel-style SUMIFS: Sum with multiple criteria from specific sheet/template
+            // Syntax: =SUMIFS('Sheet Name', 'sum_column', 'criteria_col1', 'criteria_val1', 'criteria_col2', 'criteria_val2', ...)
+            evalExpr = evalExpr.replace(/\bSUMIFS\s*\(\s*["']([^"']+)["']\s*,\s*["']([^"']+)["']\s*,\s*["']([^"']+)["']\s*,\s*["']([^"']+)["']((?:\s*,\s*["']([^"']+)["']\s*,\s*["']([^"']+)["']\s*)*)\)/gi, (match, sheetName, sumColumn, condition1Column, condition1Value, remainingConditions) => {
+                console.log('🔍 Excel-style SUMIFS detected:', match);
+                
+                // Parse additional conditions
+                const conditions = [[condition1Column, condition1Value]];
+                if (remainingConditions) {
+                    const additionalMatches = remainingConditions.match(/["']([^"']+)["']\s*,\s*["']([^"']+)["']/g);
+                    if (additionalMatches) {
+                        additionalMatches.forEach(condMatch => {
+                            const [, col, val] = condMatch.match(/["']([^"']+)["']\s*,\s*["']([^"']+)["']/);
+                            conditions.push([col, val]);
+                        });
+                    }
                 }
                 
-                const sumColumn = parts[0];
-                const criteria = [];
-                for (let i = 1; i < parts.length; i += 2) {
-                    criteria.push({
-                        column: parts[i],
-                        value: parts[i + 1]?.replace(/^["']|["']$/g, '') // Remove quotes
-                    });
-                }
-                
-                // Resolve column names (handle variables)
-                let sumColName = sumColumn;
-                if (this.state.variableColumns && this.state.variableColumns[sumColumn]) {
-                    sumColName = this.state.variableColumns[sumColumn];
-                }
-                
-                // Filter entries that match all criteria
-                const matchingEntries = this.state.localEntries.filter(e => {
-                    return criteria.every(c => {
-                        let critColName = c.column;
-                        if (this.state.variableColumns && this.state.variableColumns[c.column]) {
-                            critColName = this.state.variableColumns[c.column];
-                        }
-                        const entryValue = String(e.values[critColName] ?? '').trim();
-                        const critValue = String(c.value).trim();
-                        return entryValue.toLowerCase() === critValue.toLowerCase();
-                    });
-                });
-                
-                // Sum the values from matching entries
-                const total = matchingEntries.reduce((sum, e) => {
-                    const raw = e.values[sumColName] ?? '0';
-                    const num = parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
-                    return sum + num;
-                }, 0);
-                
-                // console.log('📊 SUMIFS:', sumColName, 'criteria:', criteria, 'matches:', matchingEntries.length, 'total:', total);
-                return total;
+                // Return the SUMIFS result with sheet name
+                return this.evaluateSUMIFS(sheetName, sumColumn, conditions);
             });
 
             // Convert column names to variables for evaluation
@@ -5082,6 +5056,26 @@ export const AppCore = {
             return parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
         };
 
+        // Process SUMIFS function - Excel syntax: SUMIFS('sheet_name', 'sum_column', 'condition_column1', 'condition_value1', ...)
+        evalExpr = evalExpr.replace(/SUMIFS\s*\(\s*["']([^"']+)["']\s*,\s*["']([^"']+)["']\s*,\s*["']([^"']+)["']\s*,\s*["']([^"']+)["']((?:\s*,\s*["']([^"']+)["']\s*,\s*["']([^"']+)["']\s*)*)\)/gi, (match, sheetName, sumColumn, condition1Column, condition1Value, remainingConditions) => {
+            console.log('🔍 Excel-style SUMIFS detected:', match);
+            
+            // Parse additional conditions
+            const conditions = [[condition1Column, condition1Value]];
+            if (remainingConditions) {
+                const additionalMatches = remainingConditions.match(/["']([^"']+)["']\s*,\s*["']([^"']+)["']/g);
+                if (additionalMatches) {
+                    additionalMatches.forEach(condMatch => {
+                        const [, col, val] = condMatch.match(/["']([^"']+)["']\s*,\s*["']([^"']+)["']/);
+                        conditions.push([col, val]);
+                    });
+                }
+            }
+            
+            // Return the SUMIFS result with sheet name
+            return this.evaluateSUMIFS(sheetName, sumColumn, conditions);
+        });
+
         // Process date operations: A+B, A-B, B+A, B-A where A and/or B are dates
         console.log('🔍 Looking for date operations in:', evalExpr);
         evalExpr = evalExpr.replace(/\b([A-Z]+)\s*[+\-]\s*([A-Z]+)\b/g, (match, var1, var2, op) => {
@@ -5418,6 +5412,187 @@ export const AppCore = {
             return this.formatNumber(result);
         } catch {
             return 'ERR';
+        }
+    },
+
+    /**
+     * Evaluate SUMIFS function - Excel syntax with sheet name
+     * Format: SUMIFS('sheet_name', 'sum_column', 'condition_column1', 'condition_value1', ...)
+     * Example: SUMIFS('RM DELIVERY', 'Accepted QTY', 'Item Description', 'Banana Saba', 'Month #', '10')
+     */
+    evaluateSUMIFS: function(sheetName, sumColumn, conditions) {
+        try {
+            console.log('🔍 Evaluating Excel-style SUMIFS:', {
+                sheetName,
+                sumColumn,
+                conditions
+            });
+
+            // Create cache key for this SUMIFS query
+            const conditionStrings = conditions.map(([col, val]) => `${col}=${val}`);
+            const cacheKey = `SUMIFS_${this.state.departmentId}_${sheetName}_${sumColumn}_${conditionStrings.join('&')}`;
+            
+            // Check cache first
+            if (this.state.cache[cacheKey] !== undefined) {
+                console.log('🎯 Using cached SUMIFS result:', this.state.cache[cacheKey]);
+                return this.state.cache[cacheKey];
+            }
+
+            // If not in cache, trigger async calculation and return 0 for now
+            // The actual result will be cached and available on next evaluation
+            this.calculateSUMIFSAsync(sheetName, sumColumn, conditions, cacheKey);
+            
+            // Return 0 initially, will be updated when async calculation completes
+            console.log('⏳ SUMIFS calculation started, returning 0 initially');
+            return 0;
+        } catch (error) {
+            console.error('❌ SUMIFS evaluation error:', error);
+            return 0;
+        }
+    },
+
+    /**
+     * Async calculation for SUMIFS that searches only in specified template/sheet
+     */
+    calculateSUMIFSAsync: async function(sheetName, sumColumn, conditions, cacheKey) {
+        try {
+            console.log('🔄 Starting async SUMIFS calculation for sheet:', sheetName);
+
+            // Find the specific template by name (case-insensitive)
+            const { data: template, error: templateError } = await SupabaseService.client
+                .from('encoding_templates')
+                .select('id, template_name')
+                .eq('department_id', this.state.departmentId)
+                .eq('template_type', 'encoding')
+                .ilike('template_name', sheetName)
+                .single();
+
+            if (templateError || !template) {
+                console.log(`📊 Template '${sheetName}' not found`);
+                this.state.cache[cacheKey] = 0;
+                return;
+            }
+
+            console.log(`📋 Found template: ${template.template_name} (ID: ${template.id})`);
+            
+            // Get column IDs for the sum and condition columns
+            const allColumnNames = [sumColumn, ...conditions.map(([col]) => col)];
+            const { data: columns, error: columnError } = await SupabaseService.client
+                .from('encoding_columns')
+                .select('id, column_name')
+                .eq('template_id', template.id)
+                .in('column_name', allColumnNames);
+
+            if (columnError || !columns) {
+                console.log('📊 Required columns not found in template');
+                this.state.cache[cacheKey] = 0;
+                return;
+            }
+
+            const columnMap = {};
+            columns.forEach(col => {
+                columnMap[col.column_name] = col.id;
+            });
+
+            // Start with all entries for this template
+            let matchingEntryIds = null;
+
+            // Apply each condition sequentially
+            for (const [conditionColumn, conditionValue] of conditions) {
+                if (!columnMap[conditionColumn]) {
+                    console.log(`📊 Column '${conditionColumn}' not found in template`);
+                    matchingEntryIds = [];
+                    break;
+                }
+
+                const { data: conditionEntries } = await SupabaseService.client
+                    .from('encoding_entry_values')
+                    .select('entry_id')
+                    .eq('column_id', columnMap[conditionColumn])
+                    .ilike('value_text', conditionValue);
+
+                if (!conditionEntries || conditionEntries.length === 0) {
+                    // No matches for this condition
+                    matchingEntryIds = [];
+                    break;
+                }
+
+                const conditionEntryIds = conditionEntries.map(e => e.entry_id);
+
+                if (matchingEntryIds === null) {
+                    // First condition
+                    matchingEntryIds = conditionEntryIds;
+                } else {
+                    // Intersect with previous conditions
+                    matchingEntryIds = matchingEntryIds.filter(id => conditionEntryIds.includes(id));
+                    if (matchingEntryIds.length === 0) {
+                        break; // No entries match all conditions
+                    }
+                }
+            }
+
+            if (matchingEntryIds === null || matchingEntryIds.length === 0) {
+                console.log('📊 No entries match all conditions');
+                this.state.cache[cacheKey] = 0;
+                return;
+            }
+
+            // Get sum values for the matching entries
+            let totalSum = 0;
+            if (columnMap[sumColumn]) {
+                const { data: sumValues, error: sumError } = await SupabaseService.client
+                    .from('encoding_entry_values')
+                    .select('value_number')
+                    .eq('column_id', columnMap[sumColumn])
+                    .in('entry_id', matchingEntryIds)
+                    .not('value_number', 'is', null);
+
+                if (!sumError && sumValues) {
+                    totalSum = sumValues.reduce((sum, item) => sum + (item.value_number || 0), 0);
+                    console.log(`💰 SUMIFS result for '${sheetName}': ${totalSum}`);
+                }
+            } else {
+                console.log(`📊 Sum column '${sumColumn}' not found in template`);
+            }
+
+            // Cache the result
+            this.state.cache[cacheKey] = totalSum;
+            console.log('💰 Final SUMIFS result cached:', totalSum);
+
+            // Trigger UI update if we're in monitoring mode
+            if (this.state.moduleName && this.state.moduleName.toLowerCase().includes('monitoring')) {
+                // Refresh the current view to show updated values
+                setTimeout(() => {
+                    this.refreshCurrentView();
+                }, 100);
+            }
+
+        } catch (error) {
+            console.error('❌ Async SUMIFS calculation error:', error);
+            this.state.cache[cacheKey] = 0;
+        }
+    },
+
+    /**
+     * Refresh the current view to show updated values
+     */
+    refreshCurrentView: function() {
+        try {
+            // Re-render the current table
+            if (this.state.virtualScroll.enabled) {
+                this.renderVirtualTable();
+            } else {
+                this.renderTable();
+            }
+            
+            // Update any computed values
+            Object.keys(this.state.cellFormulas).forEach(key => {
+                const [entryId, columnName] = key.split('|');
+                this.recalculateSingleFormula(entryId, columnName, this.state.cellFormulas[key]);
+            });
+            
+        } catch (error) {
+            console.error('❌ Error refreshing view:', error);
         }
     },
 
@@ -6042,51 +6217,25 @@ export const AppCore = {
                 return Math.min(...vals);
             });
 
-            // SUMIFS: Sum with multiple criteria across all entries
-            // Syntax: =SUMIFS(sum_column, criteria_col1, criteria_val1, criteria_col2, criteria_val2, ...)
-            evalExpr = evalExpr.replace(/\bSUMIFS\((.*?)\)/gi, (_, args) => {
-                const parts = args.split(',').map(a => a.trim());
-                if (parts.length < 3 || parts.length % 2 === 0) {
-                    throw new Error('SUMIFS requires sum_column and pairs of criteria_column, criteria_value');
+            // Excel-style SUMIFS: Sum with multiple criteria from specific sheet/template
+            // Syntax: =SUMIFS('Sheet Name', 'sum_column', 'criteria_col1', 'criteria_val1', 'criteria_col2', 'criteria_val2', ...)
+            evalExpr = evalExpr.replace(/\bSUMIFS\s*\(\s*["']([^"']+)["']\s*,\s*["']([^"']+)["']\s*,\s*["']([^"']+)["']\s*,\s*["']([^"']+)["']((?:\s*,\s*["']([^"']+)["']\s*,\s*["']([^"']+)["']\s*)*)\)/gi, (match, sheetName, sumColumn, condition1Column, condition1Value, remainingConditions) => {
+                console.log('🔍 Excel-style SUMIFS detected:', match);
+                
+                // Parse additional conditions
+                const conditions = [[condition1Column, condition1Value]];
+                if (remainingConditions) {
+                    const additionalMatches = remainingConditions.match(/["']([^"']+)["']\s*,\s*["']([^"']+)["']/g);
+                    if (additionalMatches) {
+                        additionalMatches.forEach(condMatch => {
+                            const [, col, val] = condMatch.match(/["']([^"']+)["']\s*,\s*["']([^"']+)["']/);
+                            conditions.push([col, val]);
+                        });
+                    }
                 }
                 
-                const sumColumn = parts[0];
-                const criteria = [];
-                for (let i = 1; i < parts.length; i += 2) {
-                    criteria.push({
-                        column: parts[i],
-                        value: parts[i + 1]?.replace(/^["']|["']$/g, '') // Remove quotes
-                    });
-                }
-                
-                // Resolve column names (handle variables)
-                let sumColName = sumColumn;
-                if (this.state.variableColumns && this.state.variableColumns[sumColumn]) {
-                    sumColName = this.state.variableColumns[sumColumn];
-                }
-                
-                // Filter entries that match all criteria
-                const matchingEntries = this.state.localEntries.filter(e => {
-                    return criteria.every(c => {
-                        let critColName = c.column;
-                        if (this.state.variableColumns && this.state.variableColumns[c.column]) {
-                            critColName = this.state.variableColumns[c.column];
-                        }
-                        const entryValue = String(e.values[critColName] ?? '').trim();
-                        const critValue = String(c.value).trim();
-                        return entryValue.toLowerCase() === critValue.toLowerCase();
-                    });
-                });
-                
-                // Sum the values from matching entries
-                const total = matchingEntries.reduce((sum, e) => {
-                    const raw = e.values[sumColName] ?? '0';
-                    const num = parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
-                    return sum + num;
-                }, 0);
-                
-                // console.log('📊 SUMIFS:', sumColName, 'criteria:', criteria, 'matches:', matchingEntries.length, 'total:', total);
-                return total;
+                // Return the SUMIFS result with sheet name
+                return this.evaluateSUMIFS(sheetName, sumColumn, conditions);
             });
 
             // Process date operations BEFORE column name replacement
