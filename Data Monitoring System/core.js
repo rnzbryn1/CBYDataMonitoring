@@ -26,6 +26,27 @@ export const AppCore = {
         // AUTO-UPDATE: Track cell formulas for recalculation
         cellFormulas:           {},             // { "entryId|columnName": "formula", ... }
         columnFormulas:         {},             // { "columnName": "formula" } for per-row calculations
+        // Debounce state for formula recalculation
+        formulaRecalcTimer:     null,           // Timer for debounced formula recalculation
+        pendingRecalculations:  [],             // Queue of pending recalculations
+        // Debounce state for auto-update monitoring
+        monitoringUpdateTimer:  null,           // Timer for debounced monitoring updates
+        pendingMonitoringUpdates: [],          // Queue of pending monitoring updates
+        // Compute state to prevent UI interference
+        isComputing:            false,          // Flag to indicate compute operation in progress
+        // Formula dependency tracking for optimization
+        formulaDependencies:    {},             // { "targetColumn": ["dep1", "dep2", ...] }
+        // Virtual scrolling for large datasets
+        virtualScroll: {
+            enabled: false,                      // Enable virtual scrolling for large datasets
+            itemHeight: 40,                      // Height of each row in pixels
+            containerHeight: 600,                // Height of visible container
+            bufferSize: 5,                       // Number of extra rows to render above/below viewport
+            scrollTop: 0,                         // Current scroll position
+            startIndex: 0,                        // First visible item index
+            endIndex: 0,                          // Last visible item index
+            visibleCount: 0                       // Number of visible items
+        },
         // Variable mapping system
         columnVariables:        {},             // { "columnName": "A", "columnName2": "B", ... }
         variableColumns:        {},             // { "A": "columnName", "B": "columnName2", ... }
@@ -125,9 +146,6 @@ export const AppCore = {
         window.previewSheet      = ()          => this.previewSheet();
         window.confirmImport     = ()          => this.confirmImport();
         window.deleteSelected    = ()          => this.deleteSelected();
-        window.applyCellColor = () => this.applyCellColor();
-        window.openColorModal = () => this.openColorModal();
-        window.closeColorModal = () => this.closeColorModal();
         window.openAddToGroupModal = () => this.openAddToGroupModal();
         window.confirmAddToGroup = () => this.confirmAddToGroup();
         window.toggleEntryForm = () => this.toggleEntryForm();
@@ -164,6 +182,7 @@ export const AppCore = {
 
         document.getElementById('ctxCompute')?.addEventListener('click', () => {
             console.log('Compute clicked'); 
+            this.state.isComputing = true; // Set compute flag
             this.openComputeModal();
         });
 
@@ -173,10 +192,7 @@ export const AppCore = {
             }
         });
 
-        document.getElementById('ctxColor')?.addEventListener('click', () => {
-            this.openColorModal();
-        });
-
+        
         document.getElementById('ctxAddColumnToGroup')?.addEventListener('click', () => {
             if (this.state.currentGroupName) {
                 this.openColumnModal(this.state.currentGroupName);
@@ -410,39 +426,55 @@ export const AppCore = {
             this.state.columnVariables = {};
             this.state.variableColumns = {};
 
-            // Load from Supabase with pagination
-            console.log('Fetching template...');
-            this.state.currentTemplate = await SupabaseService.getTemplate(templateId);
-            console.log('Template loaded:', this.state.currentTemplate.name);
+            // Check cache first for template
+            const templateCacheKey = `template-${templateId}`;
+            let template = this.state.cache[templateCacheKey];
             
-            // Load first page with server-side pagination
-            console.log('Fetching entries with pagination...');
-            const result = await SupabaseService.getEntries(
-                templateId, 
-                null, 
-                this.state.currentPage, 
-                this.state.pageSize
-            );
+            if (!template) {
+                console.log('Fetching template...');
+                template = await SupabaseService.getTemplate(templateId);
+                this.state.cache[templateCacheKey] = template;
+            } else {
+                console.log('Template loaded from cache');
+            }
             
-            console.log(`Loaded ${result.entries.length} entries, total: ${result.totalCount}`);
-            this.state.localEntries = result.entries;
-            this.state.totalCount = result.totalCount;
+            this.state.currentTemplate = template;
+            console.log('Template loaded:', template.name);
+            
+            // Load entries in parallel with formulas if not cached
+            const entriesCacheKey = `entries-${templateId}-${this.state.currentPage}-${this.state.pageSize}`;
+            let entries = this.state.cache[entriesCacheKey];
+            
+            if (!entries) {
+                console.log('Fetching entries with pagination...');
+                const result = await SupabaseService.getEntries(
+                    templateId, 
+                    null, 
+                    this.state.currentPage, 
+                    this.state.pageSize
+                );
+                entries = result;
+                this.state.cache[entriesCacheKey] = entries;
+                console.log(`Loaded ${entries.entries.length} entries, total: ${entries.totalCount}`);
+            } else {
+                console.log('Entries loaded from cache');
+            }
+            
+            this.state.localEntries = entries.entries;
+            this.state.totalCount = entries.totalCount;
             this.state.currentTemplateId = templateId;
 
+            // Update UI and render first
             this.updateActiveUI(templateId);
             this.renderAll();
 
-            // LOAD SAVED FORMULAS: Load cell and column formulas from database
-            await this.loadSavedFormulas();
-
-            // Re-render headers to show formula indicators after formulas are loaded
-            this.renderHeaders();
-
-            // Re-render entry form to hide computed columns after formulas are loaded
-            this.renderAll();
-
-            // Load saved column computations
-            await this.loadColumnComputations();
+            // Load formulas and computations in background
+            this.loadSavedFormulas().then(() => {
+                this.renderHeaders(); // Update headers with formula indicators
+                this.renderAll(); // Update form to hide computed columns
+            });
+            
+            this.loadColumnComputations(); // Run in background
             
             console.log('Template switch complete');
         } catch (error) {
@@ -643,7 +675,7 @@ export const AppCore = {
             return this.isColumnVisible(colDef.column_name);
         });
         
-        console.log('Total columns:', allColumns.length, 'Visible columns:', visibleColumns.length);
+        // console.log('Total columns:', allColumns.length, 'Visible columns:', visibleColumns.length);
         
         // Generate column variables first
         this.generateColumnVariables();
@@ -769,9 +801,9 @@ export const AppCore = {
         
         // Debug: Check header attributes
         const renderedHeaders = headers.querySelectorAll('th[data-col-id]');
-        console.log('Rendered headers with data-col-id:', renderedHeaders.length);
+        // console.log('Rendered headers with data-col-id:', renderedHeaders.length);
         renderedHeaders.forEach(th => {
-            console.log('Header:', th.dataset.colName, 'data-col-id:', th.dataset.colId);
+            // console.log('Header:', th.dataset.colName, 'data-col-id:', th.dataset.colId);
         });
         
         // Remove existing header context menu listener if exists
@@ -808,8 +840,8 @@ export const AppCore = {
         // Use columns from encoding_template_columns
         const columns = this.state.currentTemplate.columns || [];
 
-        console.log('📋 Entry Form - Processing columns:', columns.length);
-        console.log('📋 Entry Form - Column formulas:', this.state.columnFormulas);
+        // console.log('📋 Entry Form - Processing columns:', columns.length);
+        // console.log('📋 Entry Form - Column formulas:', this.state.columnFormulas);
 
         form.innerHTML = columns.map(col => {
             const colDef = col.encoding_columns; // join from template_columns
@@ -819,7 +851,7 @@ export const AppCore = {
             // Cell formulas are for single cells only and shouldn't hide the entire column from entry form
             const hasColumnFormula = this.state.columnFormulas[columnName];
 
-            console.log(`📋 Column: ${columnName}, hasColumnFormula: ${hasColumnFormula}, is_computed: ${colDef.is_computed}`);
+            // console.log(`📋 Column: ${columnName}, hasColumnFormula: ${hasColumnFormula}`);
 
             if (hasColumnFormula) {
                 console.log(`🚫 Skipping column from entry form: ${columnName}`);
@@ -851,7 +883,21 @@ export const AppCore = {
         const body = document.getElementById('tableData');
         if (!body) return;
 
-        // Clear table immediately to show responsiveness
+        // Check if virtual scrolling should be enabled
+        const shouldEnableVirtual = entries.length > 50;
+        
+        if (shouldEnableVirtual && !this.state.virtualScroll.enabled) {
+            // Enable virtual scrolling
+            this.state.virtualScroll.enabled = true;
+            this.initVirtualScroll();
+            this.renderVirtualTable();
+            return;
+        } else if (!shouldEnableVirtual && this.state.virtualScroll.enabled) {
+            // Disable virtual scrolling
+            this.state.virtualScroll.enabled = false;
+        }
+
+        // Regular rendering for small datasets
         body.innerHTML = '';
 
         const allColumns = this.state.currentTemplate.columns || [];
@@ -869,8 +915,8 @@ export const AppCore = {
             return;
         }
 
-        console.log(`Rendering page ${this.state.currentPage}: ${entries.length} entries (total: ${this.state.totalCount})`);
-        console.log('Visible columns for table:', visibleColumns.length);
+        // console.log(`Rendering page ${this.state.currentPage}: ${entries.length} entries (total: ${this.state.totalCount})`);
+        // console.log('Visible columns for table:', visibleColumns.length);
 
         // Use DocumentFragment for efficient DOM manipulation
         const fragment = document.createDocumentFragment();
@@ -878,13 +924,11 @@ export const AppCore = {
         entries.forEach(entry => {
             // For each entry, we need to get the values from valueDetails
             const valueMap = {};
-            const colorMap = {};
             if (entry.valueDetails) {
                 entry.valueDetails.forEach(v => {
                     // Handle null values and the string "null" - display as blank
                     const val = v.value ?? v.value_number;
                     valueMap[v.column_id] = (val === null || val === undefined || val === 'null') ? '' : val;
-                    colorMap[v.column_id] = v.cell_color || null;
                 });
             }
 
@@ -915,22 +959,13 @@ export const AppCore = {
             visibleColumns.forEach(col => {
                 const colDef = col.encoding_columns;
                 const val = valueMap[colDef.id] ?? '';
-                const cellColor = colorMap[colDef.id] || '';
                 const isDateType = colDef.column_type === 'date';
-                
-                // Debug logging for cell colors
-                if (cellColor) {
-                    console.log(`Rendering cell color for ${colDef.column_name}: ${cellColor}`);
-                }
                 
                 if (isDateType) {
                     // Render date input for date type columns
                     const td = document.createElement('td');
                     td.setAttribute('data-col-id', colDef.id);
                     td.setAttribute('data-col-name', colDef.column_name);
-                    if (cellColor) {
-                        td.style.backgroundColor = cellColor;
-                    }
                     
                     const dateInput = document.createElement('input');
                     dateInput.type = 'date';
@@ -1031,9 +1066,6 @@ export const AppCore = {
                     td.contentEditable = 'true';
                     td.setAttribute('data-col-id', colDef.id);
                     td.setAttribute('data-col-name', colDef.column_name);
-                    if (cellColor) {
-                        td.style.backgroundColor = cellColor;
-                    }
                     td.textContent = val;
                     tr.appendChild(td);
                 }
@@ -1249,10 +1281,15 @@ export const AppCore = {
             this.state.localEntries = await SupabaseService.getAllEntries(this.state.currentTemplate.id);
             this.renderTable(this.state.localEntries);
             
-            // Recalculate formulas for the new entry
+            console.log('SaveEmptyRow: Calling recalculateRowFormulas for new entry:', newEntry.id);
+            // IMPORTANT: Recalculate ALL column formulas for the new entry (not just dependent ones)
+            await this.recalculateRowFormulas(newEntry.id);
+            
+            // Also trigger auto-recalculation for changed columns to maintain dependency tracking
             for (const colId of Object.keys(values)) {
                 const colDef = this.state.currentTemplate.columns?.find(c => c.encoding_columns.id === colId);
                 if (colDef) {
+                    console.log('SaveEmptyRow: Calling autoRecalculateDependentFormulas for column:', colDef.encoding_columns.column_name);
                     await this.autoRecalculateDependentFormulas(colDef.encoding_columns.column_name, newEntry.id);
                 }
             }
@@ -1801,6 +1838,8 @@ export const AppCore = {
             }
         }
 
+        console.log('Inline cell blur:', info.colName, 'old:', oldValue, 'new:', newValue, 'entry:', info.entryId);
+
         // Only save and recalculate if the value actually changed
         if (newValue !== oldValue) {
             try {
@@ -1832,6 +1871,7 @@ export const AppCore = {
                 UI.showToast('Save failed: ' + err.message, 'error');
             }
 
+            console.log('Calling autoRecalculateDependentFormulas from inline edit for:', info.colName, info.entryId);
             // 🔄 AUTO UPDATE - Recalculate all dependent computations
             this.autoRecalculateDependentFormulas(info.colName, info.entryId);
 
@@ -1846,6 +1886,8 @@ export const AppCore = {
                 entryId: info.entryId,
                 columnName: info.colName
             }, 'update');
+        } else {
+            console.log('No change detected in inline cell, skipping auto-computation');
         }
     },
 
@@ -2267,8 +2309,7 @@ export const AppCore = {
                         await SupabaseService.addColumnToTemplate(
                             this.state.currentTemplate.id,
                             colId,
-                            displayOrder,
-                            false
+                            displayOrder
                         );
                     }
 
@@ -2292,14 +2333,14 @@ export const AppCore = {
                     delete this.state.cache[cacheKey];
                     
                     // Refresh template structure FIRST to get new columns
-                    console.log('🔄 Refreshing template structure after multiple column addition...');
+                    // console.log('🔄 Refreshing template structure after multiple column addition...');
                     this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
-                    console.log('📊 Updated template columns:', this.state.currentTemplate.columns?.length);
+                    // console.log('📊 Updated template columns:', this.state.currentTemplate.columns?.length);
                     
                     // Then reload entries with updated template structure
                     await this.loadEntries(this.state.currentTemplate.id);
 
-                    console.log('✅ Multiple column addition completed successfully');
+                    // console.log('✅ Multiple column addition completed successfully');
                     UI.showToast(`Added ${columnIds.length} columns! ${totalCopied} entries copied from encoding.`, 'success');
                     window.closeColumnModal();
                     
@@ -2405,14 +2446,14 @@ export const AppCore = {
                 delete this.state.cache[cacheKey];
                 
                 // Refresh template structure FIRST to get new columns
-                console.log('🔄 Refreshing template structure after column addition...');
+                // console.log('🔄 Refreshing template structure after column addition...');
                 this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
-                console.log('📊 Updated template columns:', this.state.currentTemplate.columns?.length);
+                // console.log('📊 Updated template columns:', this.state.currentTemplate.columns?.length);
                 
                 // Then reload entries with updated template structure
                 await this.loadEntries(this.state.currentTemplate.id);
                 
-                console.log('✅ Column addition completed successfully');
+                // console.log('✅ Column addition completed successfully');
                 UI.showToast(`Column added! ${copiedCount} entries copied from encoding.`);
             } else {
                 // For encoding templates, refresh template structure first then reload entries
@@ -2673,8 +2714,13 @@ export const AppCore = {
             
             // 7. Refresh Table using the now-defined function
             await core.loadEntries(core.state.currentTemplateId);
+            
+            // 8. IMPORTANT: Recalculate formulas for the new entry after data is loaded
+            // This ensures computed columns are updated properly
+            await core.recalculateRowFormulas(entry.id);
+            core.renderTable(core.state.localEntries);
 
-            // 8. AUTO-UPDATE MONITORING TEMPLATES
+            // 9. AUTO-UPDATE MONITORING TEMPLATES
             await core.autoUpdateMonitoring({ entryId: entry.id, values: values }, 'create');
 
         } catch (error) {
@@ -2772,28 +2818,23 @@ export const AppCore = {
         const header = columns.map(col => col.encoding_columns.column_name);
 
         // ============================
-        // 2. DATA + COLORS
+        // 2. DATA
         // ============================
         const data = [];
-        const colorMatrix = [];
 
         this.state.localEntries.forEach(entry => {
             const row = [];
-            const colorRow = [];
 
             columns.forEach(col => {
                 const colDef = col.encoding_columns;
                 const valObj = entry.valueDetails?.find(v => v.column_id === colDef.id);
 
                 const value = valObj?.value ?? valObj?.value_number ?? '';
-                const color = valObj?.cell_color || null;
 
                 row.push(value);
-                colorRow.push(color);
             });
 
             data.push(row);
-            colorMatrix.push(colorRow);
         });
 
         // ============================
@@ -3562,7 +3603,7 @@ export const AppCore = {
             if (index === 0) return; // skip checkbox column
             if (th.hasAttribute('colspan')) return; // skip group headers
 
-            console.log(`Setting draggable on th ${index}:`, th.textContent);
+            // console.log(`Setting draggable on th ${index}:`, th.textContent);
             th.setAttribute('draggable', true);
 
             th.addEventListener('dragstart', (e) => {
@@ -4228,7 +4269,7 @@ export const AppCore = {
                     return sum + num;
                 }, 0);
                 
-                console.log('📊 SUMIFS:', sumColName, 'criteria:', criteria, 'matches:', matchingEntries.length, 'total:', total);
+                // console.log('📊 SUMIFS:', sumColName, 'criteria:', criteria, 'matches:', matchingEntries.length, 'total:', total);
                 return total;
             });
 
@@ -4468,6 +4509,9 @@ export const AppCore = {
                     // Store in state immediately for instant indicator update
                     this.state.columnFormulas[this.state.currentColName] = formula;
 
+                    // Rebuild dependency graph when formulas change
+                    this.buildFormulaDependencyGraph();
+
                     // Re-render headers and entry form to show computed column indicators
                     this.renderHeaders();
                     this.renderAll();
@@ -4477,6 +4521,9 @@ export const AppCore = {
             }
 
             UI.showToast('Computed! Auto-update is now active for this formula.');
+            
+            // Reset compute flag
+            this.state.isComputing = false;
         }
     },
 
@@ -4839,6 +4886,10 @@ export const AppCore = {
             console.log(`Loaded ${loadedCount} formulas, skipped ${skippedCount} broken formulas`);
             console.log('Column formulas:', Object.keys(this.state.columnFormulas));
             console.log('Cell formulas:', Object.keys(this.state.cellFormulas));
+            
+            // Build dependency graph for optimized recalculation
+            this.buildFormulaDependencyGraph();
+            
             // Skip automatic formula recalculation on initial load for performance
             // Formulas will be recalculated when user edits data
             console.log('Skipping automatic formula recalculation for performance');
@@ -4940,8 +4991,8 @@ export const AppCore = {
     computeFormulaForEntry: function (entry, formula, columns) {
         let evalExpr = formula.startsWith('=') ? formula.slice(1) : formula;
 
-        console.log('🔧 Processing formula:', formula);
-        console.log('🔧 Cleaned expression:', evalExpr);
+        // console.log('🔧 Processing formula:', formula);
+        // console.log('🔧 Cleaned expression:', evalExpr);
 
         // Track if formula involves date columns for result formatting
         let involvesDateColumn = false;
@@ -5456,35 +5507,280 @@ export const AppCore = {
     // AUTO-UPDATE COMPUTATION (Real-time recalculation)
     // ============================================================
     /**
-     * Automatically recalculate all formulas that depend on a changed column
-     * Called whenever a cell value changes
+     * Build dependency graph for all column formulas
+     * Maps which columns each formula depends on
      */
+    buildFormulaDependencyGraph: function() {
+        this.state.formulaDependencies = {};
+        
+        Object.entries(this.state.columnFormulas || {}).forEach(([targetColumn, formula]) => {
+            const dependencies = this.extractColumnDependencies(formula);
+            this.state.formulaDependencies[targetColumn] = dependencies;
+        });
+        
+        // console.log('Formula dependencies built:', this.state.formulaDependencies);
+    },
+
+    /**
+     * Extract column dependencies from a formula string
+     * @param {string} formula - The formula to analyze
+     * @returns {Array} Array of column names this formula depends on
+     */
+    extractColumnDependencies: function(formula) {
+        const dependencies = [];
+        
+        // Get all column names and their variable mappings
+        const columnNames = Object.keys(this.state.variableColumns || {});
+        const variableNames = Object.values(this.state.variableColumns || {});
+        
+        // Check for direct column name references
+        columnNames.forEach(colName => {
+            // Use word boundary to avoid partial matches
+            const regex = new RegExp(`\\b${colName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+            if (regex.test(formula)) {
+                dependencies.push(colName);
+            }
+        });
+        
+        // Check for variable references (A, B, C, etc.)
+        variableNames.forEach(varName => {
+            // Use word boundary for variables
+            const regex = new RegExp(`\\b${varName}\\b`, 'i');
+            if (regex.test(formula)) {
+                const actualColumnName = this.state.variableColumns[varName];
+                if (actualColumnName && !dependencies.includes(actualColumnName)) {
+                    dependencies.push(actualColumnName);
+                }
+            }
+        });
+        
+        return [...new Set(dependencies)]; // Remove duplicates
+    },
+
+    /**
+     * Get formulas that depend on a specific column
+     * @param {string} changedColumn - The column that was changed
+     * @returns {Array} Array of target column formulas that should be recalculated
+     */
+    getDependentFormulas: function(changedColumn) {
+        const dependentFormulas = [];
+        
+        Object.entries(this.state.formulaDependencies).forEach(([targetColumn, dependencies]) => {
+            if (dependencies.includes(changedColumn)) {
+                dependentFormulas.push(targetColumn);
+            }
+        });
+        
+        return dependentFormulas;
+    },
+    /**
+     * Initialize virtual scrolling for large datasets
+     */
+    initVirtualScroll: function() {
+        const tableContainer = document.getElementById('tableContainer');
+        if (!tableContainer) return;
+
+        // Enable virtual scrolling for datasets larger than 50 entries
+        this.state.virtualScroll.enabled = this.state.localEntries.length > 50;
+        
+        if (!this.state.virtualScroll.enabled) {
+            return; // Use regular rendering for small datasets
+        }
+
+        // Calculate visible count based on container height
+        const visibleCount = Math.ceil(this.state.virtualScroll.containerHeight / this.state.virtualScroll.itemHeight);
+        this.state.virtualScroll.visibleCount = visibleCount;
+
+        // Add scroll event listener
+        tableContainer.addEventListener('scroll', this.handleVirtualScroll.bind(this));
+        
+        // Set container styles
+        tableContainer.style.height = `${this.state.virtualScroll.containerHeight}px`;
+        tableContainer.style.overflow = 'auto';
+        
+        console.log('Virtual scrolling enabled for', this.state.localEntries.length, 'entries');
+    },
+
+    /**
+     * Handle virtual scroll events
+     */
+    handleVirtualScroll: function(event) {
+        if (!this.state.virtualScroll.enabled) return;
+
+        const scrollTop = event.target.scrollTop;
+        const itemHeight = this.state.virtualScroll.itemHeight;
+        const containerHeight = this.state.virtualScroll.containerHeight;
+        const bufferSize = this.state.virtualScroll.bufferSize;
+
+        // Calculate visible range
+        const startIndex = Math.floor(scrollTop / itemHeight);
+        const endIndex = Math.min(
+            startIndex + Math.ceil(containerHeight / itemHeight) + bufferSize,
+            this.state.localEntries.length - 1
+        );
+
+        // Only re-render if the visible range changed
+        if (startIndex !== this.state.virtualScroll.startIndex || 
+            endIndex !== this.state.virtualScroll.endIndex) {
+            
+            this.state.virtualScroll.scrollTop = scrollTop;
+            this.state.virtualScroll.startIndex = Math.max(0, startIndex - bufferSize);
+            this.state.virtualScroll.endIndex = endIndex;
+            
+            this.renderVirtualTable();
+        }
+    },
+
+    /**
+     * Calculate virtual scrolling indices
+     */
+    calculateVirtualIndices: function() {
+        if (!this.state.virtualScroll.enabled) {
+            return { startIndex: 0, endIndex: this.state.localEntries.length - 1 };
+        }
+
+        const scrollTop = this.state.virtualScroll.scrollTop;
+        const itemHeight = this.state.virtualScroll.itemHeight;
+        const containerHeight = this.state.virtualScroll.containerHeight;
+        const bufferSize = this.state.virtualScroll.bufferSize;
+
+        const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - bufferSize);
+        const visibleCount = Math.ceil(containerHeight / itemHeight);
+        const endIndex = Math.min(
+            startIndex + visibleCount + (bufferSize * 2),
+            this.state.localEntries.length - 1
+        );
+
+        return { startIndex, endIndex };
+    },
+
+    /**
+     * Render virtual table with only visible rows
+     */
+    renderVirtualTable: function() {
+        const tableBody = document.getElementById('tableData');
+        if (!tableBody) return;
+
+        const { startIndex, endIndex } = this.calculateVirtualIndices();
+        const visibleEntries = this.state.localEntries.slice(startIndex, endIndex + 1);
+
+        // Clear existing content
+        tableBody.innerHTML = '';
+
+        // Create spacer for top offset
+        if (startIndex > 0) {
+            const topSpacer = document.createElement('tr');
+            topSpacer.style.height = `${startIndex * this.state.virtualScroll.itemHeight}px`;
+            topSpacer.innerHTML = '<td colspan="100%" style="border: none; padding: 0;"></td>';
+            tableBody.appendChild(topSpacer);
+        }
+
+        // Render visible rows
+        visibleEntries.forEach((entry, index) => {
+            const actualIndex = startIndex + index;
+            const row = this.createTableRow(entry, actualIndex);
+            tableBody.appendChild(row);
+        });
+
+        // Create spacer for bottom offset
+        const remainingHeight = (this.state.localEntries.length - endIndex - 1) * this.state.virtualScroll.itemHeight;
+        if (remainingHeight > 0) {
+            const bottomSpacer = document.createElement('tr');
+            bottomSpacer.style.height = `${remainingHeight}px`;
+            bottomSpacer.innerHTML = '<td colspan="100%" style="border: none; padding: 0;"></td>';
+            tableBody.appendChild(bottomSpacer);
+        }
+    },
+
+    /**
+     * Create table row for virtual scrolling
+     */
+    createTableRow: function(entry, index) {
+        const row = document.createElement('tr');
+        row.dataset.entryId = entry.id;
+        row.style.height = `${this.state.virtualScroll.itemHeight}px`;
+
+        // Add checkbox column
+        const checkboxCell = document.createElement('td');
+        checkboxCell.innerHTML = `<input type="checkbox" class="row-checkbox" data-entry-id="${entry.id}">`;
+        row.appendChild(checkboxCell);
+
+        // Add data cells
+        const columns = this.state.currentTemplate.columns || [];
+        const visibleColumns = columns.filter(col => {
+            const colDef = col.encoding_columns;
+            return this.isColumnVisible(colDef.column_name);
+        });
+
+        visibleColumns.forEach(col => {
+            const cell = document.createElement('td');
+            const colName = col.encoding_columns.column_name;
+            const value = entry.values[colName] || '';
+            
+            cell.dataset.columnName = colName;
+            cell.dataset.columnId = col.encoding_columns.id;
+            cell.textContent = value;
+            
+            // Add formula indicator if applicable
+            if (this.state.columnFormulas[colName]) {
+                cell.classList.add('formula-cell');
+            }
+            
+            row.appendChild(cell);
+        });
+
+        return row;
+    },
     autoRecalculateDependentFormulas: async function (changedColumnName, changedEntryId) {
         if (!this.state.currentTemplate) return;
 
-        console.log('autoRecalculateDependentFormulas called for:', changedColumnName, changedEntryId);
-        console.log('Cell formulas:', Object.keys(this.state.cellFormulas || {}));
-        console.log('Column formulas:', Object.keys(this.state.columnFormulas || {}));
-
-        // Recalculate ALL cell formulas for this entry (match by column name like column formulas)
-        let cellFormulaCount = 0;
-        Object.entries(this.state.cellFormulas || {}).forEach(([key, formula]) => {
-            const [entryId, targetColName] = key.split('|');
-            // Match by column name regardless of entryId (like column formulas work)
-            // This handles broken formulas with undefined entryIds
-            if (targetColName === changedColumnName || entryId === changedEntryId || entryId === 'undefined') {
-                console.log('Recalculating cell formula:', targetColName, formula);
-                this.recalculateSingleFormula(changedEntryId, targetColName, formula);
-                cellFormulaCount++;
-            }
-        });
-        console.log('Recalculated', cellFormulaCount, 'cell formulas for entry:', changedEntryId);
-
-        // Recalculate all column formulas for this entry
-        if (this.state.columnFormulas && Object.keys(this.state.columnFormulas).length > 0) {
-            console.log('Recalculating column formulas for entry:', changedEntryId);
-            await this.recalculateRowFormulas(changedEntryId);
+        // Add to pending recalculations queue
+        const recalcKey = `${changedEntryId}|${changedColumnName}`;
+        if (!this.state.pendingRecalculations.includes(recalcKey)) {
+            this.state.pendingRecalculations.push(recalcKey);
         }
+
+        // Clear existing timer
+        if (this.state.formulaRecalcTimer) {
+            clearTimeout(this.state.formulaRecalcTimer);
+        }
+
+        // Set new timer to batch recalculations (500ms delay)
+        this.state.formulaRecalcTimer = setTimeout(async () => {
+            // Process all pending recalculations
+            const uniqueEntries = [...new Set(this.state.pendingRecalculations.map(key => key.split('|')[0]))];
+            
+            // Build dependency graph if not already built
+            if (Object.keys(this.state.formulaDependencies).length === 0) {
+                this.buildFormulaDependencyGraph();
+            }
+            
+            for (const entryId of uniqueEntries) {
+                // Get all changed columns for this entry
+                const changedColumns = this.state.pendingRecalculations
+                    .filter(key => key.startsWith(`${entryId}|`))
+                    .map(key => key.split('|')[1]);
+                
+                // Find all formulas that depend on any of the changed columns
+                const formulasToRecalculate = new Set();
+                changedColumns.forEach(colName => {
+                    const dependentFormulas = this.getDependentFormulas(colName);
+                    dependentFormulas.forEach(formula => formulasToRecalculate.add(formula));
+                });
+                
+                // Recalculate only the affected formulas
+                for (const targetColumn of formulasToRecalculate) {
+                    const formula = this.state.columnFormulas[targetColumn];
+                    if (formula) {
+                        await this.recalculateSingleFormula(entryId, targetColumn, formula);
+                    }
+                }
+            }
+
+            // Clear the queue
+            this.state.pendingRecalculations = [];
+            this.state.formulaRecalcTimer = null;
+        }, 500); // 500ms debounce delay
     },
 
     /**
@@ -5533,8 +5829,8 @@ export const AppCore = {
      * Recalculate all per-row formulas for a specific entry
      */
     recalculateRowFormulas: async function (entryId) {
-        console.log('🔄 recalculateRowFormulas called for entry:', entryId);
-        console.log('📊 Available column formulas:', this.state.columnFormulas);
+        // console.log('🔄 recalculateRowFormulas called for entry:', entryId);
+        // console.log('📊 Available column formulas:', this.state.columnFormulas);
         
         const entry = this.state.localEntries.find(e => e.id === entryId);
         if (!entry) {
@@ -5542,15 +5838,20 @@ export const AppCore = {
             return;
         }
         
-        console.log('✅ Entry found:', entry.id);
-        console.log('📋 Entry values:', entry.values);
+        // console.log('✅ Entry found:', entry.id);
+        // console.log('📋 Entry values:', entry.values);
 
         const columns = this.state.currentTemplate?.columns || [];
 
         // Use for...of to properly await async operations
         for (const [columnName, formula] of Object.entries(this.state.columnFormulas || {})) {
-            console.log('🧮 Applying column formula:', columnName, '=', formula);
+            // console.log('🧮 Applying column formula:', columnName, '=', formula);
             await this.recalculateSingleFormula(entryId, columnName, formula);
+        }
+        
+        // Refresh virtual table if enabled to show updated computed values
+        if (this.state.virtualScroll.enabled) {
+            this.renderVirtualTable();
         }
     },
 
@@ -5568,8 +5869,8 @@ export const AppCore = {
         const computeRow = (entry) => {
             let evalExpr = formula.startsWith('=') ? formula.slice(1) : formula;
 
-            console.log('🔧 Processing formula in recalculateSingleFormula:', formula);
-            console.log('🔧 Cleaned expression:', evalExpr);
+            // console.log('🔧 Processing formula in recalculateSingleFormula:', formula);
+            // console.log('🔧 Cleaned expression:', evalExpr);
 
             // Helper: parse date from column name or value
             const parseDate = (arg) => {
@@ -5784,32 +6085,32 @@ export const AppCore = {
                     return sum + num;
                 }, 0);
                 
-                console.log('📊 SUMIFS:', sumColName, 'criteria:', criteria, 'matches:', matchingEntries.length, 'total:', total);
+                // console.log('📊 SUMIFS:', sumColName, 'criteria:', criteria, 'matches:', matchingEntries.length, 'total:', total);
                 return total;
             });
 
             // Process date operations BEFORE column name replacement
-            console.log('🔍 Looking for date operations in:', evalExpr);
+            // console.log('🔍 Looking for date operations in:', evalExpr);
             
             // Create a more flexible regex that handles column names with spaces
             // First, get all column names to build a proper regex
             const columnNames = columns.map(c => c.encoding_columns.column_name);
-            console.log('📋 Available columns:', columnNames);
+            // console.log('📋 Available columns:', columnNames);
             const escapedColumnNames = columnNames.map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
             const columnPattern = escapedColumnNames.join('|');
             
             // Build regex for date operations with column names that may have spaces
             const dateOperationRegex = new RegExp(`(${columnPattern})\\s*[\\+\\-]\\s*(${columnPattern})`, 'g');
             
-            console.log('🔍 Built regex pattern:', dateOperationRegex);
-            console.log('🔍 Testing regex against:', evalExpr);
+            // console.log('🔍 Built regex pattern:', dateOperationRegex);
+            // console.log('🔍 Testing regex against:', evalExpr);
             
             // Test if regex matches
             const testMatch = evalExpr.match(dateOperationRegex);
-            console.log('🧪 Regex test matches:', testMatch);
+            // console.log('🧪 Regex test matches:', testMatch);
             
             evalExpr = evalExpr.replace(dateOperationRegex, (match, var1, var2, op) => {
-                console.log('🎯 Found operation:', match, 'var1:', var1, 'var2:', var2);
+            // console.log('🎯 Found operation:', match, 'var1:', var1, 'var2:', var2);
                 const originalOp = match.includes('+') ? '+' : '-';
                 
                 // Helper: check if column is date type
@@ -5820,10 +6121,10 @@ export const AppCore = {
                 
                 // Helper: get date value from column
                 const getDateValue = (colName) => {
-                    console.log('🔍 Getting date value for column:', colName);
-                    console.log('📊 Entry values:', entry.values);
+                    // console.log('🔍 Getting date value for column:', colName);
+                    // console.log('📊 Entry values:', entry.values);
                     const raw = entry.values[colName];
-                    console.log('📄 Raw value for', colName, ':', raw);
+                    // console.log('📄 Raw value for', colName, ':', raw);
                     if (!raw) return null;
                     
                     // Parse date - handle DD/MM/YYYY format
@@ -5847,27 +6148,27 @@ export const AppCore = {
                 // Check if variables are date columns
                 const var1IsDate = isDateColumn(var1);
                 const var2IsDate = isDateColumn(var2);
-                console.log('📅 Variable types -', var1, ':', var1IsDate ? 'date' : 'not date', ',', var2, ':', var2IsDate ? 'date' : 'not date');
+                // console.log('📅 Variable types -', var1, ':', var1IsDate ? 'date' : 'not date', ',', var2, ':', var2IsDate ? 'date' : 'not date');
                 
                 // Case 1: Date subtraction (A-E) where both are dates - return day difference
                 if (var1IsDate && var2IsDate && originalOp === '-') {
-                    console.log('🔍 Date subtraction detected:', var1, '-', var2);
+                    // console.log('🔍 Date subtraction detected:', var1, '-', var2);
                     const date1 = getDateValue(var1);
                     const date2 = getDateValue(var2);
                     
-                    console.log('📅 Date1:', date1, 'Date2:', date2);
-                    console.log('📅 Date1 valid:', date1 && !isNaN(date1.getTime()));
-                    console.log('📅 Date2 valid:', date2 && !isNaN(date2.getTime()));
+                    // console.log('📅 Date1:', date1, 'Date2:', date2);
+                    // console.log('📅 Date1 valid:', date1 && !isNaN(date1.getTime()));
+                    // console.log('📅 Date2 valid:', date2 && !isNaN(date2.getTime()));
                     
                     if (date1 && date2 && !isNaN(date1.getTime()) && !isNaN(date2.getTime())) {
                         const diffTime = date1 - date2;
                         const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                        console.log('⏰ Time difference:', diffTime, 'ms');
-                        console.log('📊 Day difference:', diffDays, 'days');
+                        // console.log('⏰ Time difference:', diffTime, 'ms');
+                        // console.log('📊 Day difference:', diffDays, 'days');
                         // Ensure 0 is returned when dates are the same
                         return diffDays === 0 ? 0 : diffDays;
                     } else {
-                        console.log('❌ Invalid dates detected');
+                        // console.log('❌ Invalid dates detected');
                     }
                 }
                 
@@ -5987,16 +6288,21 @@ export const AppCore = {
                         // For date columns, update the date input value
                         const dateInput = targetCell.querySelector('input[type="date"]');
                         if (dateInput) {
-                            // Convert MM/DD/YYYY to YYYY-MM-DD for date input
-                            let dateValue = newResult ?? '';
-                            if (newResult && newResult.includes('/')) {
-                                const parts = newResult.split('/');
-                                if (parts.length === 3) {
-                                    const [month, day, year] = parts.map(p => parseInt(p, 10));
-                                    dateValue = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                            // Don't set ERR value to date input - it causes HTML validation errors
+                            if (newResult === 'ERR' || newResult === null || newResult === undefined || newResult === '') {
+                                dateInput.value = '';
+                            } else {
+                                // Convert MM/DD/YYYY to YYYY-MM-DD for date input
+                                let dateValue = newResult;
+                                if (newResult && newResult.includes('/')) {
+                                    const parts = newResult.split('/');
+                                    if (parts.length === 3) {
+                                        const [month, day, year] = parts.map(p => parseInt(p, 10));
+                                        dateValue = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                                    }
                                 }
+                                dateInput.value = dateValue;
                             }
-                            dateInput.value = dateValue;
                         } else {
                             // If no date input found, fallback to text content
                             targetCell.textContent = newResult;
@@ -6009,7 +6315,7 @@ export const AppCore = {
             }
         }
 
-        // Save to database
+        // Save to database and update entry data
         try {
             if (targetColDef && newResult !== 'ERR') {
                 // For date columns, ensure proper date format for database storage
@@ -6028,9 +6334,34 @@ export const AppCore = {
                 const payload = {};
                 payload[targetColDef.id] = dbValue;
                 await SupabaseService.updateEntryValues(entryId, payload);
+                
+                // IMPORTANT: Update entry data so virtual scrolling can render the computed value
+                if (entry) {
+                    if (!entry.values) entry.values = {};
+                    entry.values[targetColumnName] = newResult;
+                    
+                    // Also update valueDetails for consistency
+                    if (!entry.valueDetails) entry.valueDetails = [];
+                    const existingDetail = entry.valueDetails.find(v => v.column_id === targetColDef.id);
+                    if (existingDetail) {
+                        existingDetail.value = dbValue;
+                    } else {
+                        entry.valueDetails.push({
+                            column_id: targetColDef.id,
+                            value: dbValue
+                        });
+                    }
+                }
+                
             } else if (targetColDef && newResult === 'ERR') {
                 // Skip saving ERR to database - just show in UI
                 console.log('Skipping database save for ERR value in column:', targetColumnName);
+                
+                // Still update entry data for UI consistency
+                if (entry) {
+                    if (!entry.values) entry.values = {};
+                    entry.values[targetColumnName] = newResult;
+                }
             }
         } catch (err) {
             console.error('Failed to save formula result:', err);
@@ -6050,132 +6381,6 @@ export const AppCore = {
         if (this.state.historyStack.length > 100) {
             this.state.historyStack.shift();
         }
-    },
-
-    //-----------------------------------------------------------------------------------------
-    //------------Color cells------------------
-    //-----------------------------------------------------------------------------------------
-    openColorModal: function () {
-        if (!this.state.currentCell) return;        
-
-        // 🔥 HIDE CONTEXT MENU
-        const menu = document.getElementById('contextMenu');
-        if (menu) menu.style.display = 'none';
-
-        document.getElementById('colorModal').style.display = 'block';
-
-        this.initColorPalette();
-        this.bindPaletteEvents();
-
-        this.state.selectedColor = "#ff0000";
-    },
-
-    closeColorModal: function () {
-        document.getElementById('colorModal').style.display = 'none';
-    },
-
-    applyCellColor: async function () {
-        const color = this.state.selectedColor || "#ff0000";
-        const target = document.querySelector('.target-btn.active')?.dataset.target;
-
-        const td = this.state.currentCell;
-        if (!td) return;
-
-        const row = td.closest('tr');
-        const table = document.getElementById('tableData');
-
-        const cellColors = {};
-
-        if (target === 'single') {
-            td.style.backgroundColor = color;
-            const info = this.getTableCellInfo(td);
-            if (info) {
-                cellColors[`${info.entryId}_${info.colId}`] = color;
-            }
-        }
-
-        if (target === 'row') {
-            row.querySelectorAll('td[data-col-id]')
-                .forEach(cell => {
-                    cell.style.backgroundColor = color;
-                    const info = this.getTableCellInfo(cell);
-                    if (info) {
-                        cellColors[`${info.entryId}_${info.colId}`] = color;
-                    }
-                });
-        }
-
-        if (target === 'column') {
-            const colIndex = Array.from(td.parentNode.children).indexOf(td);
-
-            table.querySelectorAll('tr').forEach(r => {
-                const cells = r.querySelectorAll('td[data-col-id]');
-                if (cells[colIndex - 1]) { // -1 dahil may checkbox column
-                    cells[colIndex - 1].style.backgroundColor = color;
-                    const info = this.getTableCellInfo(cells[colIndex - 1]);
-                    if (info) {
-                        cellColors[`${info.entryId}_${info.colId}`] = color;
-                    }
-                }
-            });
-        }
-
-        // Save colors to database
-        if (Object.keys(cellColors).length > 0) {
-            try {
-                await SupabaseService.updateCellColors(cellColors);
-                
-                // Clear cache to force reload with new colors
-                const cacheKey = `template-${this.state.currentTemplate.id}`;
-                delete this.state.cache[cacheKey];
-                
-                UI.showToast('Cell colors saved');
-            } catch (err) {
-                UI.showToast('Failed to save colors: ' + err.message, 'error');
-            }
-        }
-
-        this.closeColorModal();
-    },
-
-    initColorPalette: function () {
-        const palette = document.getElementById('colorPalette');
-        if (!palette) return;
-
-        const colors = [
-            "#000000","#444","#666","#999","#bbb","#ddd","#eee","#FFFFFF",
-            "#ff0000","#ff9900","#ffff00","#00ff00","#00ffff","#0000ff","#9900ff","#ff00ff",
-            "#f4cccc","#fce5cd","#fff2cc","#d9ead3","#d0e0e3","#cfe2f3","#d9d2e9","#ead1dc",
-            "#ea9999","#f9cb9c","#ffe599","#b6d7a8","#a2c4c9","#9fc5e8","#b4a7d6","#d5a6bd",
-            "#e06666","#f6b26b","#ffd966","#93c47d","#76a5af","#6fa8dc","#8e7cc3","#c27ba0",
-            "#cc0000","#e69138","#f1c232","#6aa84f","#45818e","#3d85c6","#674ea7","#a64d79"
-        ];
-
-        palette.innerHTML = colors.map(c => `
-            <div class="color-swatch" 
-                data-color="${c}" 
-                style="background:${c}">
-            </div>
-        `).join('');
-    },
-
-    bindPaletteEvents: function () {
-        if (this.state.paletteInitialized) return;
-
-        document.addEventListener('click', (e) => {
-            const swatch = e.target.closest('.color-swatch');
-            if (!swatch) return;
-
-            document.querySelectorAll('.color-swatch')
-                .forEach(s => s.classList.remove('active'));
-
-            swatch.classList.add('active');
-
-            // save selected color
-            this.state.selectedColor = swatch.dataset.color;
-        });
-
-        this.state.paletteInitialized = true;
     },
 
     //-----------------------------------------------------------------------------------------
@@ -6220,26 +6425,56 @@ export const AppCore = {
             return; // Only auto-update from encoding templates
         }
 
-        try {
-            const monitoringTemplates = await this.findRelatedMonitoringTemplates();
-            
-            if (monitoringTemplates.length === 0) {
-                console.log('No monitoring templates found for auto-update');
-                return;
+        // Add to pending monitoring updates queue
+        const updateKey = `${changedData.entryId || 'new'}-${operation}`;
+        if (!this.state.pendingMonitoringUpdates.includes(updateKey)) {
+            this.state.pendingMonitoringUpdates.push(updateKey);
+        }
+
+        // Clear existing timer
+        if (this.state.monitoringUpdateTimer) {
+            clearTimeout(this.state.monitoringUpdateTimer);
+        }
+
+        // Set new timer to batch monitoring updates (1000ms delay for slower updates)
+        this.state.monitoringUpdateTimer = setTimeout(async () => {
+            try {
+                // Run monitoring updates in background without blocking UI
+                const monitoringPromise = this.performMonitoringUpdate(changedData, operation);
+                
+                // Don't await - let it run in background
+                monitoringPromise.catch(error => {
+                    console.error('Background monitoring update failed:', error);
+                });
+            } catch (error) {
+                console.error('Error in auto-update monitoring:', error);
             }
 
-            console.log(`Auto-updating ${monitoringTemplates.length} monitoring templates...`);
+            // Clear the queue immediately
+            this.state.pendingMonitoringUpdates = [];
+            this.state.monitoringUpdateTimer = null;
+        }, 1000); // 1000ms debounce delay for monitoring updates
+    },
 
-            for (const monitoringTemplate of monitoringTemplates) {
-                await this.syncDataToMonitoringTemplate(monitoringTemplate, changedData, operation);
-                const monitoringCacheKey = `template-${monitoringTemplate.id}`;
-                delete this.state.cache[monitoringCacheKey];
-            }
+    /**
+     * Perform the actual monitoring update in background
+     */
+    performMonitoringUpdate: async function(changedData, operation) {
+        const monitoringTemplates = await this.findRelatedMonitoringTemplates();
+        
+        if (monitoringTemplates.length === 0) {
+            return;
+        }
 
+        for (const monitoringTemplate of monitoringTemplates) {
+            await this.syncDataToMonitoringTemplate(monitoringTemplate, changedData, operation);
+            const monitoringCacheKey = `template-${monitoringTemplate.id}`;
+            delete this.state.cache[monitoringCacheKey];
+        }
+
+        // Show toast only if not during compute operation
+        if (!this.state.isComputing) {
             UI.showToast(`Updated ${monitoringTemplates.length} monitoring template(s)`, 'success');
-        } catch (error) {
-            console.error('Error in auto-update monitoring:', error);
-            UI.showToast('Auto-update failed: ' + error.message, 'error');
         }
     },
 
@@ -6262,7 +6497,7 @@ export const AppCore = {
             const columnMappings = this.findColumnMappings(encodingColumns, monitoringColumns);
 
             if (columnMappings.length === 0) {
-                console.log(`No matching columns found for monitoring template: ${monitoringTemplate.name}`);
+                // console.log(`No matching columns found for monitoring template: ${monitoringTemplate.name}`);
                 return;
             }
 
@@ -6422,7 +6657,7 @@ export const AppCore = {
     isColumnVisible: function (columnName) {
         // If no visibility settings exist, default to visible
         if (Object.keys(this.state.columnVisibility).length === 0) {
-            console.log(`Column ${columnName}: No visibility settings, defaulting to visible`);
+            // console.log(`Column ${columnName}: No visibility settings, defaulting to visible`);
             return true;
         }
         
@@ -6905,6 +7140,8 @@ export const AppCore = {
     //-----------------------------------------------------------------------------------------
     //------------function para mapunta agad sa last row------------------
     //-----------------------------------------------------------------------------------------
+
+    // Add any additional functions here if needed
 };
 
 // Ensure AppCore is globally available
