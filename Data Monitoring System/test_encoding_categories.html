@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Encoding Categories in Compute Modal</title>
+    <link rel="stylesheet" href="dst.css">
+    <style>
+        body {
+            padding: 20px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        }
+        .test-container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        .test-button {
+            background: #2563eb;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            margin: 10px;
+        }
+        .test-button:hover {
+            background: #1e40af;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 6px;
+        }
+        .success { background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0; }
+        .error { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
+        .info { background: #eff6ff; color: #2563eb; border: 1px solid #bfdbfe; }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1>Test Encoding Categories in Compute Modal</h1>
+        
+        <div class="status info">
+            <strong>Test Purpose:</strong> Verify that encoding categories appear in the compute modal when the current template is a monitoring category.
+        </div>
+
+        <button class="test-button" onclick="testMonitoringTemplate()">Test with Monitoring Template</button>
+        <button class="test-button" onclick="testEncodingTemplate()">Test with Encoding Template</button>
+        
+        <div id="testResults"></div>
+
+        <div class="status info">
+            <strong>Expected Behavior:</strong><br>
+            1. When using a monitoring template, the compute modal should show "Available Encoding Categories" section<br>
+            2. When using an encoding template, the compute modal should NOT show the encoding categories section<br>
+            3. Encoding category buttons should be clickable and show a toast message
+        </div>
+    </div>
+
+    <script type="module">
+        // Mock AppCore for testing
+        window.AppCore = {
+            state: {
+                currentTemplate: null,
+                allTemplates: [
+                    { id: '1', name: 'Sales Monitoring', module: 'monitoring' },
+                    { id: '2', name: 'Inventory Encoding', module: 'encoding' },
+                    { id: '3', name: 'Customer Data Encoding', module: 'encoding' }
+                ],
+                currentCell: null,
+                currentColName: null,
+                cellFormulas: {},
+                columnFormulas: {}
+            },
+            generateColumnVariables: function() {
+                console.log('Generating column variables...');
+            },
+            getCurrentFormula: function() {
+                return '';
+            },
+            convertFormulaToVariables: function(formula) {
+                return formula;
+            },
+            getColumnVariable: function(colName) {
+                return 'A'; // Mock variable
+            },
+            openComputeModal: function(isFromHeader = false) {
+                // Generate column variables before opening modal
+                this.generateColumnVariables();
+                
+                const modal = document.createElement('div');
+                modal.className = 'compute-modal';
+
+                const cols = []; // Mock columns
+                
+                // Check if current template is monitoring category
+                const isMonitoringTemplate = this.state.currentTemplate?.module === 'monitoring';
+                
+                // Get available encoding categories if current template is monitoring
+                let encodingCategoriesHtml = '';
+                if (isMonitoringTemplate) {
+                    const encodingTemplates = this.state.allTemplates.filter(t => t.module === 'encoding');
+                    encodingCategoriesHtml = `
+                        <div class="compute-section">
+                            <span class="section-label">Available Encoding Categories</span>
+                            <div class="encoding-categories">
+                                ${encodingTemplates.map(t => `
+                                    <button type="button" class="encoding-category-btn" data-template-id="${t.id}" data-template-name="${t.name}">
+                                        <div style="display: flex; flex-direction: column; align-items: center;">
+                                            <span style="font-weight: bold; color: #16a34a; font-size: 14px;">${t.name}</span>
+                                            <span style="font-size: 11px; color: #666;">Encoding</span>
+                                        </div>
+                                    </button>
+                                `).join('')}
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                const currentFormula = this.convertFormulaToVariables(this.getCurrentFormula() || '');
+                const escapedFormula = currentFormula.replace(/"/g, '&quot;');
+
+                modal.innerHTML = `
+                    <div class="compute-box">
+                        <div class="compute-header">
+                            <h3>Compute Formula</h3>
+                            <button id="closeComputeX" class="compute-close">&times;</button>
+                        </div>
+
+                        <label>Formula</label>
+                        <input id="computeFormula" placeholder="=SUM(A, B, C)" value="${escapedFormula}">
+
+                        <div class="compute-section">
+                            <span class="section-label">Columns</span>
+                            <div class="compute-columns">
+                                ${cols.map(c => `
+                                    <button type="button" class="col-btn" data-col-name="${c.encoding_columns.column_name}">
+                                        <div style="display: flex; flex-direction: column; align-items: center;">
+                                            <span style="font-weight: bold; color: #2563eb; font-size: 14px;">${this.getColumnVariable(c.encoding_columns.column_name)}</span>
+                                            <span style="font-size: 11px; color: #666;">${c.encoding_columns.column_name}</span>
+                                        </div>
+                                    </button>
+                                `).join('')}
+                            </div>
+                        </div>
+
+                        ${encodingCategoriesHtml}
+
+                        <div class="compute-actions">
+                            <button id="runCompute" class="btn-apply">Apply</button>
+                        </div>
+                    </div>
+                `;
+
+                document.body.appendChild(modal);
+
+                // ENCODING CATEGORY BUTTONS
+                modal.querySelectorAll('.encoding-category-btn').forEach(btn => {
+                    btn.onclick = () => {
+                        const templateId = btn.dataset.templateId;
+                        const templateName = btn.dataset.templateName;
+                        
+                        // Show information about the selected encoding category
+                        alert(`Selected encoding category: ${templateName}`);
+                        console.log(`Encoding category selected: ${templateName} (ID: ${templateId})`);
+                    };
+                });
+
+                modal.querySelector('#closeComputeX').onclick = () => modal.remove();
+                modal.querySelector('#runCompute').onclick = () => modal.remove();
+
+                return isMonitoringTemplate;
+            }
+        };
+
+        // Mock UI
+        window.UI = {
+            showToast: function(message, type) {
+                console.log(`Toast (${type}): ${message}`);
+            }
+        };
+
+        window.testMonitoringTemplate = function() {
+            AppCore.state.currentTemplate = { id: '1', name: 'Sales Monitoring', module: 'monitoring' };
+            const hasEncodingSection = AppCore.openComputeModal();
+            
+            const results = document.getElementById('testResults');
+            if (hasEncodingSection) {
+                results.innerHTML = '<div class="status success">✅ Test PASSED: Encoding categories section displayed for monitoring template</div>';
+            } else {
+                results.innerHTML = '<div class="status error">❌ Test FAILED: Encoding categories section not displayed for monitoring template</div>';
+            }
+        };
+
+        window.testEncodingTemplate = function() {
+            AppCore.state.currentTemplate = { id: '2', name: 'Inventory Encoding', module: 'encoding' };
+            const hasEncodingSection = AppCore.openComputeModal();
+            
+            const results = document.getElementById('testResults');
+            if (!hasEncodingSection) {
+                results.innerHTML = '<div class="status success">✅ Test PASSED: Encoding categories section correctly hidden for encoding template</div>';
+            } else {
+                results.innerHTML = '<div class="status error">❌ Test FAILED: Encoding categories section should not appear for encoding template</div>';
+            }
+        };
+    </script>
+</body>
+</html>

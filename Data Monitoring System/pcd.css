@@ -1129,6 +1129,30 @@ td.cell-focused {
     color: white;
 }
 
+/* Encoding category buttons - green */
+.encoding-categories {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.encoding-category-btn {
+    font-size: 12px;
+    padding: 5px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: 0.15s ease;
+    font-family: 'Courier New', monospace;
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    color: #166534;
+}
+
+.encoding-category-btn:hover {
+    background: #16a34a;
+    color: white;
+}
+
 
 /* =========================
    ACTION BUTTONS
