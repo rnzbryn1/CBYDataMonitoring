@@ -63,15 +63,13 @@ export const SupabaseService = {
       .select(`
         id,
         display_order,
-        is_mandatory,
         encoding_columns (
           id,
           column_name,
           column_type,
           is_required,
           display_order,
-          group_name,
-          is_computed
+          group_name
         )
       `)
       .eq('template_id', templateId)
@@ -261,21 +259,7 @@ export const SupabaseService = {
     if (error) throw error;
   },
 
-  /**
-   * Update column is_computed flag
-   * @param {string} columnId
-   * @param {boolean} isComputed
-   * @returns {Promise<void>}
-   */
-  async updateColumnComputedFlag(columnId, isComputed) {
-    const { error } = await this.client
-      .from('encoding_columns')
-      .update({ is_computed: isComputed })
-      .eq('id', columnId);
-
-    if (error) throw error;
-  },
-
+  
   /**
    * Update column group_name
    * @param {string} columnId
@@ -320,8 +304,7 @@ export const SupabaseService = {
         encoding_columns (
           id,
           column_name,
-          column_type,
-          is_computed
+          column_type
         )
       `)
       .in('template_id', templateIds);
@@ -572,17 +555,15 @@ export const SupabaseService = {
    * @param {string} templateId
    * @param {string} columnId
    * @param {number} displayOrder
-   * @param {boolean} isMandatory
    * @returns {Promise<Object>} New mapping
    */
-  async addColumnToTemplate(templateId, columnId, displayOrder = null, isMandatory = false) {
+  async addColumnToTemplate(templateId, columnId, displayOrder = null) {
     const { data, error } = await this.client
       .from('encoding_template_columns')
       .insert([{
         template_id: templateId,
         column_id: columnId,
-        display_order: displayOrder,
-        is_mandatory: isMandatory
+        display_order: displayOrder
       }])
       .select()
       .single();
@@ -674,7 +655,6 @@ export const SupabaseService = {
         column_id,
         value,
         value_number,
-        cell_color,
         encoding_columns (
           id,
           column_name,
@@ -751,7 +731,6 @@ export const SupabaseService = {
           column_id,
           value,
           value_number,
-          cell_color,
           encoding_columns (
             id,
             column_name,
@@ -918,11 +897,6 @@ export const SupabaseService = {
         updated_at: new Date().toISOString()
       };
 
-      // Include cell color if provided for this column
-      if (cellColors && cellColors[columnId]) {
-        update.cell_color = cellColors[columnId];
-      }
-
       return update;
     });
 
@@ -936,31 +910,7 @@ export const SupabaseService = {
     }
   },
 
-  /**
-   * Update cell color for specific cells
-   * @param {Object} cellColors - { entryId_columnId: color, ... }
-   * @returns {Promise<void>}
-   */
-  async updateCellColors(cellColors) {
-    const updates = Object.entries(cellColors).map(([key, color]) => {
-      const [entryId, columnId] = key.split('_');
-      return {
-        entry_id: entryId,
-        column_id: columnId,
-        cell_color: color,
-        updated_at: new Date().toISOString()
-      };
-    });
-
-    if (updates.length > 0) {
-      const { error } = await this.client
-        .from('encoding_entry_values')
-        .upsert(updates, { onConflict: 'entry_id,column_id' });
-      
-      if (error) throw error;
-    }
-  },
-
+  
   /**
    * Save column computation setting
    * @param {string} templateId
@@ -968,154 +918,172 @@ export const SupabaseService = {
    * @param {string} functionType - 'sum', 'average', 'max', 'min', 'count'
    * @param {string} displayPosition - 'top', 'bottom'
    */
-  async saveColumnComputation(templateId, columnId, functionType, displayPosition = 'bottom') {
-    const { error } = await this.client
-      .from('column_computation')
-      .upsert({
-        template_id: templateId,
-        column_id: columnId,
-        function_type: functionType,
-        display_position: displayPosition,
-        updated_at: new Date().toISOString()
-      }, { onConflict: 'template_id,column_id' });
-    
-    if (error) throw error;
-  },
+  // =====================================================
+  // UNIFIED TEMPLATE FORMULAS (State Persistence)
+  // =====================================================
 
   /**
-   * Get column computations for a template
+   * Save template formula (unified for cell, column, and computation formulas)
    * @param {string} templateId
-   * @returns {Promise<Array>} Array of column computation settings
+   * @param {string} columnId
+   * @param {string} formulaType - 'cell', 'column', or 'computation'
+   * @param {string} formula
+   * @param {string|null} entryId - null for column/computation formulas
+   * @param {string|null} functionType - only for computation type
+   * @param {string} displayPosition - only for computation type
+   * @returns {Promise<Object>}
    */
-  async getColumnComputations(templateId) {
+  async saveTemplateFormula(templateId, columnId, formulaType, formula, entryId = null, functionType = null, displayPosition = 'bottom') {
+    const formulaData = {
+      id: crypto.randomUUID(), // Generate UUID for id column
+      template_id: templateId,
+      column_id: columnId,
+      entry_id: entryId,
+      formula_type: formulaType,
+      formula: formula,
+      updated_at: new Date().toISOString()
+    };
+
+    // Add computation-specific fields
+    if (formulaType === 'computation') {
+      formulaData.function_type = functionType;
+      formulaData.display_position = displayPosition;
+    }
+
+    // Use the actual unique constraint from database: template_id, column_id, entry_id
     const { data, error } = await this.client
-      .from('column_computation')
-      .select('*')
-      .eq('template_id', templateId);
+      .from('template_formulas')
+      .upsert(formulaData, { onConflict: 'template_id,column_id,entry_id' })
+      .select()
+      .single();
     
     if (error) throw error;
     return data;
   },
 
   /**
-   * Delete column computation for a template
+   * Get all formulas for a template
    * @param {string} templateId
-   * @param {string} columnId
+   * @param {string|null} formulaType - optional filter by type
+   * @returns {Promise<Array>}
    */
-  async deleteColumnComputation(templateId, columnId) {
-    const { error } = await this.client
-      .from('column_computation')
-      .delete()
-      .eq('template_id', templateId)
-      .eq('column_id', columnId);
-    
-    if (error) throw error;
-  },
-
-  // =====================================================
-  // CELL AND COLUMN FORMULAS (State Persistence)
-  // =====================================================
-
-  /**
-   * Save a cell formula (for a specific entry and column)
-   * @param {string} templateId
-   * @param {string} entryId
-   * @param {string} columnId
-   * @param {string} formula - e.g., "=Price * Quantity"
-   */
-  async saveCellFormula(templateId, entryId, columnId, formula) {
-    const { error } = await this.client
-      .from('cell_formulas')
-      .upsert({
-        template_id: templateId,
-        entry_id: entryId,
-        column_id: columnId,
-        formula: formula,
-        formula_type: 'cell',
-        updated_at: new Date().toISOString()
-      }, { onConflict: 'template_id,entry_id,column_id' });
-    
-    if (error) throw error;
-  },
-
-  /**
-   * Save a column formula (applied to all rows in a column)
-   * Handles both creating new and updating existing column formulas
-   * @param {string} templateId
-   * @param {string} columnId
-   * @param {string} formula - e.g., "=Price * Quantity"
-   */
-  async saveColumnFormula(templateId, columnId, formula) {
-    // First, try to delete any existing column formula for this template+column
-    // This ensures we properly update when entry_id is NULL
-    await this.client
-      .from('cell_formulas')
-      .delete()
-      .eq('template_id', templateId)
-      .eq('column_id', columnId)
-      .is('entry_id', null);
-
-    // Now insert the new formula
-    const { error } = await this.client
-      .from('cell_formulas')
-      .insert({
-        template_id: templateId,
-        entry_id: null,
-        column_id: columnId,
-        formula: formula,
-        formula_type: 'column',
-        updated_at: new Date().toISOString()
-      });
-
-    if (error) throw error;
-  },
-
-  /**
-   * Get all formulas for a template (both cell and column formulas)
-   * @param {string} templateId
-   * @returns {Promise<Array>} Array of formula records
-   */
-  async getFormulas(templateId) {
-    const { data, error } = await this.client
-      .from('cell_formulas')
+  async getTemplateFormulas(templateId, formulaType = null) {
+    let query = this.client
+      .from('template_formulas')
       .select('*')
       .eq('template_id', templateId);
+    
+    if (formulaType) {
+      query = query.eq('formula_type', formulaType);
+    }
+    
+    const { data, error } = await query;
     
     if (error) throw error;
     return data || [];
   },
 
   /**
-   * Delete a cell formula
+   * Delete template formula
    * @param {string} templateId
-   * @param {string} entryId
    * @param {string} columnId
+   * @param {string|null} entryId - null for column/computation formulas
+   * @param {string|null} formulaType - optional filter by type
    */
-  async deleteCellFormula(templateId, entryId, columnId) {
-    const { error } = await this.client
-      .from('cell_formulas')
+  async deleteTemplateFormula(templateId, columnId, entryId = null, formulaType = null) {
+    let query = this.client
+      .from('template_formulas')
       .delete()
       .eq('template_id', templateId)
-      .eq('entry_id', entryId)
       .eq('column_id', columnId);
+    
+    if (entryId !== null) {
+      query = query.eq('entry_id', entryId);
+    }
+    
+    if (formulaType) {
+      query = query.eq('formula_type', formulaType);
+    }
+    
+    const { error } = await query;
     
     if (error) throw error;
   },
 
+  // =====================================================
+  // LEGACY COMPATIBILITY FUNCTIONS (Deprecated)
+  // =====================================================
+
   /**
-   * Delete a column formula
-   * @param {string} templateId
-   * @param {string} columnId
+   * Legacy compatibility - Save column computation
+   * @deprecated Use saveTemplateFormula with type 'computation'
+   */
+  async saveColumnComputation(templateId, columnId, functionType, displayPosition = 'bottom') {
+    return await this.saveTemplateFormula(
+      templateId, 
+      columnId, 
+      'computation', 
+      '', 
+      null, 
+      functionType, 
+      displayPosition
+    );
+  },
+
+  /**
+   * Legacy compatibility - Get column computations
+   * @deprecated Use getTemplateFormulas with type 'computation'
+   */
+  async getColumnComputations(templateId) {
+    return await this.getTemplateFormulas(templateId, 'computation');
+  },
+
+  /**
+   * Legacy compatibility - Delete column computation
+   * @deprecated Use deleteTemplateFormula with type 'computation'
+   */
+  async deleteColumnComputation(templateId, columnId) {
+    return await this.deleteTemplateFormula(templateId, columnId, null, 'computation');
+  },
+
+  /**
+   * Legacy compatibility - Save cell formula
+   * @deprecated Use saveTemplateFormula with type 'cell'
+   */
+  async saveCellFormula(templateId, entryId, columnId, formula) {
+    return await this.saveTemplateFormula(templateId, columnId, 'cell', formula, entryId);
+  },
+
+  /**
+   * Legacy compatibility - Save column formula
+   * @deprecated Use saveTemplateFormula with type 'column'
+   */
+  async saveColumnFormula(templateId, columnId, formula) {
+    return await this.saveTemplateFormula(templateId, columnId, 'column', formula);
+  },
+
+  /**
+   * Legacy compatibility - Get formulas
+   * @deprecated Use getTemplateFormulas
+   */
+  async getFormulas(templateId) {
+    return await this.getTemplateFormulas(templateId);
+  },
+
+  /**
+   * Legacy compatibility - Delete cell formula
+   * @deprecated Use deleteTemplateFormula with type 'cell'
+   */
+  async deleteCellFormula(templateId, entryId, columnId) {
+    return await this.deleteTemplateFormula(templateId, columnId, entryId, 'cell');
+  },
+
+  /**
+   * Legacy compatibility - Delete column formula
+   * @deprecated Use deleteTemplateFormula with type 'column'
    */
   async deleteColumnFormula(templateId, columnId) {
-    const { error } = await this.client
-      .from('cell_formulas')
-      .delete()
-      .eq('template_id', templateId)
-      .eq('column_id', columnId)
-      .is('entry_id', null);
-    
-    if (error) throw error;
+    return await this.deleteTemplateFormula(templateId, columnId, null, 'column');
   },
 
   /**
@@ -1129,10 +1097,6 @@ export const SupabaseService = {
       status: newStatus,
       updated_at: new Date().toISOString()
     };
-
-    if (newStatus === 'verified') {
-      updates.verified_at = new Date().toISOString();
-    }
 
     const { data, error } = await this.client
       .from('encoding_entries')
@@ -1199,10 +1163,6 @@ export const SupabaseService = {
           metric_name,
           operation_id,
           column_id,
-          computation_operations (
-            operation_name,
-            display_name
-          ),
           encoding_columns (
             column_name
           )
@@ -1338,20 +1298,7 @@ export const SupabaseService = {
   // UTILITY FUNCTIONS
   // =====================================================
 
-  /**
-   * Get all computation operations
-   * @returns {Promise<Array>} Available operations
-   */
-  async getOperations() {
-    const { data, error } = await this.client
-      .from('computation_operations')
-      .select('*')
-      .order('operation_name', { ascending: true });
-    
-    if (error) throw error;
-    return data;
-  },
-
+  
   /**
    * Compute SUM for a column
    * @param {string} columnId
