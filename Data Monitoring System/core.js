@@ -3817,6 +3817,25 @@ export const AppCore = {
 
         const cols = this.state.currentTemplate?.columns || [];
         
+        // Check if current template is monitoring category
+        const isMonitoringTemplate = this.state.currentTemplate?.module === 'monitoring';
+        
+        // Get available encoding categories if current template is monitoring
+        let encodingCategoriesHtml = '';
+        if (isMonitoringTemplate) {
+            const encodingTemplates = this.state.allTemplates.filter(t => t.module === 'encoding');
+            encodingCategoriesHtml = `
+                <div class="compute-section" style="margin-top: 16px;">
+                    <span class="section-label">Available Encoding Categories</span>
+                    <div class="encoding-categories" style="margin-top: 8px;">
+                        ${encodingTemplates.map(t => `
+                            <button type="button" class="encoding-category-btn" data-template-id="${t.id}" data-template-name="${t.name}">${t.name}</button>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+        
         // Get current formula for the selected cell/column and convert to variables
         const currentFormula = this.convertFormulaToVariables(this.getCurrentFormula() || '');
         // Escape quotes for HTML attribute to prevent truncation
@@ -3871,6 +3890,8 @@ export const AppCore = {
                         `).join('')}
                     </div>
                 </div>
+
+                ${encodingCategoriesHtml}
 
                 <div class="compute-section">
                     <span class="section-label">Math</span>
@@ -3960,6 +3981,26 @@ export const AppCore = {
                 input.selectionStart = input.selectionEnd = pos;
 
                 input.focus();
+            };
+        });
+
+        // ENCODING CATEGORY BUTTONS
+        modal.querySelectorAll('.encoding-category-btn').forEach(btn => {
+            btn.onclick = () => {
+                const templateId = btn.dataset.templateId;
+                const templateName = btn.dataset.templateName;
+                
+                // Set the formula bar with the template name in apostrophe format
+                const input = modal.querySelector('#computeFormula');
+                if (input) {
+                    input.value = `'${templateName}'`;
+                    input.focus();
+                }
+                
+                // Show information about the selected encoding category
+                UI.showToast(`Set formula: '${templateName}'`, 'success');
+                
+                console.log(`Encoding category selected: ${templateName} (ID: ${templateId})`);
             };
         });
 
