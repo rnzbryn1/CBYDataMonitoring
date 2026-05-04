@@ -465,85 +465,67 @@ export const SupabaseService = {
     
     if (monitoringError) throw monitoringError;
     
-    if (!monitoringEntries || monitoringEntries.length === 0) {
-      // Create monitoring entries with matching created_at timestamps to preserve order
-      const entriesToInsert = allEncodingEntries.map(encEntry => ({
-        template_id: monitoringTemplateId,
-        department_id: departmentId,
-        status: 'draft',
-        created_at: encEntry.created_at,
-        reference_number: encEntry.id
-      }));
-
-      const { data: newEntries, error: createError } = await this.client
-        .from('encoding_entries')
-        .insert(entriesToInsert)
-        .select();
+    // Ensure monitoring entries exist for all encoding entries
+    let monitoringEntriesToUse = monitoringEntries || [];
+    
+    if (!monitoringEntriesToUse || monitoringEntriesToUse.length < allEncodingEntries.length) {
+      // Create missing monitoring entries
+      const startIndex = monitoringEntriesToUse ? monitoringEntriesToUse.length : 0;
+      const entriesToInsert = [];
       
-      if (createError) throw createError;
-      
-      // Copy values from encoding entries to newly created monitoring entries
-      const valuesToInsert = [];
-      for (let i = 0; i < newEntries.length; i++) {
-        const monitoringEntryId = newEntries[i].id;
-        const encEntryId = allEncodingEntries[i].id;
-        const encValue = valueMap[encEntryId];
-        
-        if (!encValue) continue; // Skip if no value for this column
-        
-        const valueData = {};
-        if (encValue.value !== null) valueData.value = encValue.value;
-        if (encValue.value_number !== null) valueData.value_number = encValue.value_number;
-        
-        valuesToInsert.push({
-          entry_id: monitoringEntryId,
-          column_id: columnId,
-          ...valueData
+      for (let i = startIndex; i < allEncodingEntries.length; i++) {
+        const encEntry = allEncodingEntries[i];
+        entriesToInsert.push({
+          template_id: monitoringTemplateId,
+          department_id: departmentId,
+          status: 'draft',
+          created_at: encEntry.created_at,
+          reference_number: encEntry.id
         });
       }
       
-      if (valuesToInsert.length > 0) {
-        const { error: insertError } = await this.client
-          .from('encoding_entry_values')
-          .insert(valuesToInsert);
+      if (entriesToInsert.length > 0) {
+        const { data: newEntries, error: createError } = await this.client
+          .from('encoding_entries')
+          .insert(entriesToInsert)
+          .select();
         
-        if (insertError) throw insertError;
+        if (createError) throw createError;
+        
+        // Add new entries to the list
+        monitoringEntriesToUse = [...(monitoringEntriesToUse || []), ...newEntries];
       }
-      
-      return valuesToInsert.length;
-    } else {
-      // Monitoring entries already exist, add values by position
-      const valuesToInsert = [];
-      const maxEntries = Math.min(monitoringEntries.length, allEncodingEntries.length);
-      
-      for (let i = 0; i < maxEntries; i++) {
-        const monitoringEntryId = monitoringEntries[i].id;
-        const encEntryId = allEncodingEntries[i].id;
-        const encValue = valueMap[encEntryId];
-        
-        if (!encValue) continue; // Skip if no value for this column
-        
-        const valueData = {};
-        if (encValue.value !== null) valueData.value = encValue.value;
-        if (encValue.value_number !== null) valueData.value_number = encValue.value_number;
-        
-        valuesToInsert.push({
-          entry_id: monitoringEntryId,
-          column_id: columnId,
-          ...valueData
-        });
-      }
-      
-      if (valuesToInsert.length > 0) {
-        const { error: insertError } = await this.client
-          .from('encoding_entry_values')
-          .insert(valuesToInsert);
-        
-        if (insertError) throw insertError;
-      }
-      
-      return valuesToInsert.length;
     }
+    
+    // Copy values from encoding entries to monitoring entries by position
+    const valuesToInsert = [];
+    for (let i = 0; i < allEncodingEntries.length; i++) {
+      const monitoringEntryId = monitoringEntriesToUse[i].id;
+      const encEntryId = allEncodingEntries[i].id;
+      const encValue = valueMap[encEntryId];
+      
+      if (!encValue) continue; // Skip if no value for this column
+      
+      const valueData = {};
+      if (encValue.value !== null) valueData.value = encValue.value;
+      if (encValue.value_number !== null) valueData.value_number = encValue.value_number;
+      
+      valuesToInsert.push({
+        entry_id: monitoringEntryId,
+        column_id: columnId,
+        ...valueData
+      });
+    }
+    
+    if (valuesToInsert.length > 0) {
+      const { error: insertError } = await this.client
+        .from('encoding_entry_values')
+        .insert(valuesToInsert);
+      
+      if (insertError) throw insertError;
+    }
+    
+    return valuesToInsert.length;
   },
 
   // =====================================================

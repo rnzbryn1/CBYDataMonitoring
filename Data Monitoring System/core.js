@@ -2330,9 +2330,12 @@ export const AppCore = {
                         totalCopied += copiedCount;
                     }
 
-                    // Clear cache to force refresh after copy
+                    // Clear ALL caches to force refresh after copy
                     delete this.state.cache[cacheKey];
-                    
+                    this.clearCache(this.state.currentTemplate.id);
+                    // Also clear entries cache to prevent stale data when switching categories
+                    delete this.state.cache[`entries-${this.state.currentTemplate.id}-${this.state.currentPage}-${this.state.pageSize}`];
+
                     // Refresh template structure FIRST to get new columns
                     // console.log('🔄 Refreshing template structure after multiple column addition...');
                     this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
@@ -2442,15 +2445,18 @@ export const AppCore = {
                     columnId,
                     this.state.departmentId
                 );
-                
-                // Clear cache again to force refresh after copy
+
+                // Clear ALL caches to force refresh after copy
                 delete this.state.cache[cacheKey];
-                
+                this.clearCache(this.state.currentTemplate.id);
+                // Also clear entries cache to prevent stale data when switching categories
+                delete this.state.cache[`entries-${this.state.currentTemplate.id}-${this.state.currentPage}-${this.state.pageSize}`];
+
                 // Refresh template structure FIRST to get new columns
                 // console.log('🔄 Refreshing template structure after column addition...');
                 this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
                 // console.log('📊 Updated template columns:', this.state.currentTemplate.columns?.length);
-                
+
                 // Then reload entries with updated template structure
                 await this.loadEntries(this.state.currentTemplate.id);
                 
@@ -6637,11 +6643,20 @@ export const AppCore = {
             await this.syncDataToMonitoringTemplate(monitoringTemplate, changedData, operation);
             const monitoringCacheKey = `template-${monitoringTemplate.id}`;
             delete this.state.cache[monitoringCacheKey];
+            // Clear query cache for monitoring template
+            this.clearCache(monitoringTemplate.id);
+            // Clear entries cache for monitoring template
+            delete this.state.cache[`entries-${monitoringTemplate.id}-${this.state.currentPage}-${this.state.pageSize}`];
         }
 
-        // If a monitoring template is currently active, recalculate its SUMIFS formulas
+        // If a monitoring template is currently active, refresh the UI
         if (this.state.currentTemplate && this.state.currentTemplate.module === 'monitoring') {
+            // Reload entries from database
+            await this.loadEntries(this.state.currentTemplate.id);
+            // Recalculate formulas
             await this.applyLoadedFormulas();
+            // Re-render the table
+            this.renderTable(this.state.localEntries);
         }
 
         // Show toast only if not during compute operation
