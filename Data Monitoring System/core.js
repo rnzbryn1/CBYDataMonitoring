@@ -1566,6 +1566,12 @@ export const AppCore = {
                 }
 
                 // 🔄 AUTO-UPDATE - Recalculate dependent formulas for each changed cell
+                const uniqueEntryIds = [...new Set(changedCells.map(({ entryId }) => entryId))];
+                for (const entryId of uniqueEntryIds) {
+                    // IMPORTANT: Recalculate ALL column formulas for the entry (same as entry form)
+                    await this.recalculateRowFormulas(entryId);
+                }
+                
                 changedCells.forEach(({ entryId, colName }) => {
                     this.autoRecalculateDependentFormulas(colName, entryId);
                 });
@@ -1873,6 +1879,10 @@ export const AppCore = {
             }
 
             console.log('Calling autoRecalculateDependentFormulas from inline edit for:', info.colName, info.entryId);
+            
+            // IMPORTANT: Recalculate ALL column formulas for the entry (same as entry form)
+            await this.recalculateRowFormulas(info.entryId);
+            
             // 🔄 AUTO UPDATE - Recalculate all dependent computations
             this.autoRecalculateDependentFormulas(info.colName, info.entryId);
 
@@ -1969,6 +1979,9 @@ export const AppCore = {
 
         // 🔄 AUTO-UPDATE - Recalculate for each changed entry and column
         for (const [entryId, values] of changedEntries) {
+            // IMPORTANT: Recalculate ALL column formulas for the entry (same as entry form)
+            await this.recalculateRowFormulas(entryId);
+            
             for (const colId of Object.keys(values)) {
                 const colName = this.state.currentTemplate.columns.find(
                     c => c.encoding_columns.id === colId
