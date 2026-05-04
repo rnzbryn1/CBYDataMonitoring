@@ -5718,11 +5718,12 @@ export const AppCore = {
      */
     extractColumnDependencies: function(formula) {
         const dependencies = [];
-        
+
         // Get all column names and their variable mappings
-        const columnNames = Object.keys(this.state.variableColumns || {});
-        const variableNames = Object.values(this.state.variableColumns || {});
-        
+        // variableColumns is { "A": "columnName", "B": "columnName2", ... }
+        const variableNames = Object.keys(this.state.variableColumns || {});
+        const columnNames = Object.values(this.state.variableColumns || {});
+
         // Check for direct column name references
         columnNames.forEach(colName => {
             // Use word boundary to avoid partial matches
@@ -5731,7 +5732,7 @@ export const AppCore = {
                 dependencies.push(colName);
             }
         });
-        
+
         // Check for variable references (A, B, C, etc.)
         variableNames.forEach(varName => {
             // Use word boundary for variables
@@ -5743,7 +5744,7 @@ export const AppCore = {
                 }
             }
         });
-        
+
         return [...new Set(dependencies)]; // Remove duplicates
     },
 
