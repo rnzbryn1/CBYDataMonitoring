@@ -26,16 +26,21 @@ export const AppCore = {
         historyStack: [],
         // AUTO-UPDATE: Track cell formulas for recalculation
         cellFormulas:           {},             // { "entryId|columnName": "formula", ... }
+        cellFormulasVersion:    0,              // Version counter for cache invalidation
         columnFormulas:         {},             // { "columnName": "formula" } for per-row calculations
         // Debounce state for formula recalculation
         formulaRecalcTimer:     null,           // Timer for debounced formula recalculation
         pendingRecalculations:  [],             // Queue of pending recalculations
+        // COL compute formula cache for performance
+        _colComputeFormulaCache: null,          // Cached list of formulas with COL functions
+        _colComputeFormulaCacheVersion: 0,      // Cache version for invalidation
         // Debounce state for auto-update monitoring
         monitoringUpdateTimer:  null,           // Timer for debounced monitoring updates
         pendingMonitoringUpdates: [],          // Queue of pending monitoring update keys
         pendingMonitoringUpdatesData: {},      // Accumulated data changes per entryId for batch updates
         // Compute state to prevent UI interference
         isComputing:            false,          // Flag to indicate compute operation in progress
+        activeColumnComputes:   {},             // { "columnName": { func, position }, ... } all column computations
         // Formula dependency tracking for optimization
         formulaDependencies:    {},             // { "targetColumn": ["dep1", "dep2", ...] }
         // Virtual scrolling for large datasets
@@ -427,6 +432,10 @@ export const AppCore = {
             // Clear variable mappings when switching templates
             this.state.columnVariables = {};
             this.state.variableColumns = {};
+            this.state.activeColumnComputes = {};
+            this.state.activeColumnCompute = null; // Clear the active display computation
+            // Clear COL compute cache
+            this.invalidateColComputeCache();
 
             // Check cache first for template
             const templateCacheKey = `template-${templateId}`;
@@ -1092,6 +1101,11 @@ export const AppCore = {
         
         // Render empty row for Excel-style entry
         this.renderEmptyRow();
+
+        // Re-render column computations since they were cleared by body.innerHTML
+        if (Object.keys(this.state.activeColumnComputes || {}).length > 0) {
+            this.updateAllColumnComputations();
+        }
     },
 
     renderEmptyRow: function () {
@@ -2805,17 +2819,15 @@ export const AppCore = {
         // ============================
         const computeRow = new Array(header.length).fill('');
 
-        if (this.state.activeColumnCompute) {
-            const { column, func } = this.state.activeColumnCompute;
-
-            const colIndex = header.indexOf(column);
+        // Process ALL active column computations
+        Object.entries(this.state.activeColumnComputes || {}).forEach(([columnName, config]) => {
+            const colIndex = header.indexOf(columnName);
 
             if (colIndex !== -1) {
                 const values = data.map(r => parseFloat(r[colIndex]) || 0);
 
                 let result = 0;
-
-                switch (func) {
+                switch (config.func) {
                     case 'sum':
                         result = values.reduce((a,b)=>a+b,0);
                         break;
@@ -2823,19 +2835,19 @@ export const AppCore = {
                         result = values.length ? values.reduce((a,b)=>a+b,0)/values.length : 0;
                         break;
                     case 'max':
-                        result = Math.max(...values);
+                        result = values.length ? Math.max(...values) : 0;
                         break;
                     case 'min':
-                        result = Math.min(...values);
+                        result = values.length ? Math.min(...values) : 0;
                         break;
                     case 'count':
                         result = values.length;
                         break;
                 }
 
-                computeRow[colIndex] = `${func.toUpperCase()}: ${result}`;
+                computeRow[colIndex] = `${config.func.toUpperCase()}: ${result}`;
             }
-        }
+        });
 
         // ============================
         // 4. FINAL DATA (HEADER + COMPUTE + DATA)
@@ -3795,6 +3807,45 @@ export const AppCore = {
             `;
         }
         
+        // Build available column computations HTML
+        let columnComputationsHtml = '';
+        const activeComputes = this.state.activeColumnComputes || {};
+        const computeKeys = Object.keys(activeComputes);
+        if (computeKeys.length > 0) {
+            columnComputationsHtml = `
+                <div class="compute-section" style="margin-top: 16px;">
+                    <span class="section-label">Available Column Computations</span>
+                    <div class="compute-columns" style="margin-top: 8px;">
+                        ${computeKeys.map(colName => {
+                            const config = activeComputes[colName];
+                            const variable = this.getColumnVariable(colName);
+                            const values = this.state.localEntries.map(entry => {
+                                const raw = entry.values?.[colName] ?? '';
+                                return parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
+                            });
+                            let result = 0;
+                            switch(config.func) {
+                                case 'sum': result = values.reduce((a,b)=>a+b,0); break;
+                                case 'average': result = values.length ? values.reduce((a,b)=>a+b,0)/values.length : 0; break;
+                                case 'max': result = values.length ? Math.max(...values) : 0; break;
+                                case 'min': result = values.length ? Math.min(...values) : 0; break;
+                                case 'count': result = values.length; break;
+                            }
+                            result = this.formatNumber(result);
+                            const funcLabel = config.func.toUpperCase();
+                            return `<button type="button" class="col-compute-btn col-btn" data-col-name="${colName}" data-func="${config.func}" data-variable="${variable}">
+                                <div style="display: flex; flex-direction: column; align-items: center;">
+                                    <span style="font-weight: bold; color: #059669; font-size: 13px;">COL${funcLabel}(${variable})</span>
+                                    <span style="font-size: 11px; color: #666;">${colName}</span>
+                                    <span style="font-size: 11px; color: #059669;">= ${result}</span>
+                                </div>
+                            </button>`;
+                        }).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
         // Get current formula for the selected cell/column and convert to variables
         const currentFormula = this.convertFormulaToVariables(this.getCurrentFormula() || '');
         // Escape quotes for HTML attribute to prevent truncation
@@ -3851,6 +3902,8 @@ export const AppCore = {
                 </div>
 
                 ${encodingCategoriesHtml}
+
+                ${columnComputationsHtml}
 
                 <div class="compute-section">
                     <span class="section-label">Math</span>
@@ -3920,6 +3973,33 @@ export const AppCore = {
             };
         });
 
+        // COLUMN COMPUTATION BUTTONS
+        modal.querySelectorAll('.col-compute-btn').forEach(btn => {
+            btn.onclick = () => {
+                const start = input.selectionStart ?? input.value.length;
+                const end = input.selectionEnd ?? input.value.length;
+
+                const func = btn.dataset.func;
+                const variable = btn.dataset.variable;
+                const funcLabel = func.toUpperCase();
+                const insertText = `COL${funcLabel}(${variable})`;
+
+                const before = input.value.substring(0, start);
+                const after = input.value.substring(end);
+
+                const insideFunc = /\w+\([^()]*$/.test(before);
+                const insert = insideFunc
+                    ? (before.endsWith('(') ? '' : ', ') + insertText
+                    : (before.trim() === '' ? '' : ' ') + insertText;
+
+                input.value = before + insert + after;
+
+                const newPos = start + insert.length;
+                input.selectionStart = input.selectionEnd = newPos;
+
+                input.focus();
+            };
+        });
 
         // FUNCTION BUTTONS
         modal.querySelectorAll('.func-btn').forEach(btn => {
@@ -4229,6 +4309,34 @@ export const AppCore = {
                 return Math.min(...vals);
             });
 
+            // Column-level aggregate functions (computed over ALL entries)
+            const computeColumnAggregate = (arg, func) => {
+                let actualColName = arg.trim();
+                if (this.state.variableColumns && this.state.variableColumns[actualColName]) {
+                    actualColName = this.state.variableColumns[actualColName];
+                }
+                const values = this.state.localEntries.map(e => {
+                    const raw = e.values?.[actualColName] ?? '';
+                    return parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
+                });
+                switch(func.toLowerCase()) {
+                    case 'sum': return values.reduce((a,b)=>a+b,0);
+                    case 'avg':
+                    case 'average': return values.length ? values.reduce((a,b)=>a+b,0)/values.length : 0;
+                    case 'max': return values.length ? Math.max(...values) : 0;
+                    case 'min': return values.length ? Math.min(...values) : 0;
+                    case 'count': return values.length;
+                    default: return 0;
+                }
+            };
+
+            evalExpr = evalExpr.replace(/\bCOLSUM\((.*?)\)/gi, (_, args) => computeColumnAggregate(args, 'sum'));
+            evalExpr = evalExpr.replace(/\bCOLAVG\((.*?)\)/gi, (_, args) => computeColumnAggregate(args, 'avg'));
+            evalExpr = evalExpr.replace(/\bCOLAVERAGE\((.*?)\)/gi, (_, args) => computeColumnAggregate(args, 'average'));
+            evalExpr = evalExpr.replace(/\bCOLMAX\((.*?)\)/gi, (_, args) => computeColumnAggregate(args, 'max'));
+            evalExpr = evalExpr.replace(/\bCOLMIN\((.*?)\)/gi, (_, args) => computeColumnAggregate(args, 'min'));
+            evalExpr = evalExpr.replace(/\bCOLCOUNT\((.*?)\)/gi, (_, args) => computeColumnAggregate(args, 'count'));
+
             // SUMIFS with ! notation and legacy syntax — evaluated from cache
             let idx = evalExpr.indexOf('SUMIFS(');
             while (idx !== -1) {
@@ -4343,6 +4451,9 @@ export const AppCore = {
             const formulaKey = `${entryId}|${this.state.currentColName}`;
             console.log('Storing cell formula with key:', formulaKey);
             this.state.cellFormulas[formulaKey] = formula;
+            
+            // Invalidate COL compute cache since formulas changed
+            this.invalidateColComputeCache();
 
             // 💾 SAVE TO DATABASE: Persist cell formula
             const colDef = columns.find(c => c.encoding_columns.column_name === this.state.currentColName)?.encoding_columns;
@@ -4560,6 +4671,9 @@ export const AppCore = {
                     entryId,
                     colDef.id
                 );
+                
+                // Invalidate COL compute cache since formulas changed
+                this.invalidateColComputeCache();
 
                 // Re-render headers only to update formula indicator immediately
                 this.renderHeaders();
@@ -4691,6 +4805,10 @@ export const AppCore = {
             func: funcType,
             position: position
         };
+        this.state.activeColumnComputes[columnName] = {
+            func: funcType,
+            position: position
+        };
 
         // Save to Supabase
         try {
@@ -4713,46 +4831,16 @@ export const AppCore = {
     },
 
     updateColumnComputation: function () {
-        const config = this.state.activeColumnCompute;
-        if (!config) return;
-
-        const { column, func } = config;
-
-        const values = this.state.localEntries.map(entry => {
-            const raw = entry.values?.[column] ?? '';
-            return parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
-        });
-
-        let result = 0;
-
-        switch (func) {
-            case 'sum':
-                result = values.reduce((a,b)=>a+b,0);
-                break;
-            case 'average':
-                result = values.length ? values.reduce((a,b)=>a+b,0)/values.length : 0;
-                break;
-            case 'max':
-                result = Math.max(...values);
-                break;
-            case 'min':
-                result = Math.min(...values);
-                break;
-            case 'count':
-                result = values.length;
-                break;
-        }
-
-        result = this.formatNumber(result); 
-        this.renderColumnFooter(column, func, result, config.position);
+        // Use the new function that handles all computations
+        this.updateAllColumnComputations();
     },
 
     renderColumnFooter: function (columnName, func, result, position) {
         const table = document.getElementById('tableData');
         if (!table) return;
 
-        // remove old footer
-        const old = table.querySelector('.column-footer');
+        // Remove only this specific column's footer (if exists)
+        const old = table.querySelector(`.column-footer[data-column="${columnName}"]`);
         if (old) old.remove();
 
         const cols = this.state.currentTemplate.columns;
@@ -4764,6 +4852,7 @@ export const AppCore = {
 
         const tr = document.createElement('tr');
         tr.className = 'column-footer';
+        tr.dataset.column = columnName; // Add data attribute to identify this column's footer
 
         // kung may index column (#), dagdag offset
         const firstRow = table.querySelector('tr');
@@ -4805,21 +4894,90 @@ export const AppCore = {
             const computations = await SupabaseService.getColumnComputations(this.state.currentTemplate.id);
             const columns = this.state.currentTemplate.columns || [];
 
+            // Clear previous computations
+            this.state.activeColumnComputes = {};
+            this.state.activeColumnCompute = null;
+
+            // Remove any existing column footers from the table
+            const table = document.getElementById('tableData');
+            if (table) {
+                table.querySelectorAll('.column-footer').forEach(el => el.remove());
+            }
+
+            if (computations.length === 0) {
+                return; // No computations to load
+            }
+
+            // Process all computations
             computations.forEach(comp => {
                 const colDef = columns.find(c => c.encoding_columns.id === comp.column_id);
                 if (colDef) {
                     const columnName = colDef.encoding_columns.column_name;
-                    this.state.activeColumnCompute = {
-                        column: columnName,
+                    this.state.activeColumnComputes[columnName] = {
                         func: comp.function_type,
                         position: comp.display_position || 'bottom'
                     };
-                    this.updateColumnComputation();
                 }
             });
+
+            // Set the first one as the "active" one for UI purposes (delete button, etc.)
+            const firstComp = computations[0];
+            const firstColDef = columns.find(c => c.encoding_columns.id === firstComp.column_id);
+            if (firstColDef) {
+                this.state.activeColumnCompute = {
+                    column: firstColDef.encoding_columns.column_name,
+                    func: firstComp.function_type,
+                    position: firstComp.display_position || 'bottom'
+                };
+            }
+
+            // Render all column computations
+            this.updateAllColumnComputations();
+
         } catch (err) {
             console.error('Failed to load column computations:', err);
         }
+    },
+
+    /**
+     * Update and render ALL active column computations
+     */
+    updateAllColumnComputations: function () {
+        const table = document.getElementById('tableData');
+        if (!table) return;
+
+        // Remove all existing column footers
+        table.querySelectorAll('.column-footer').forEach(el => el.remove());
+
+        // Render each column computation
+        Object.entries(this.state.activeColumnComputes || {}).forEach(([columnName, config]) => {
+            const values = this.state.localEntries.map(entry => {
+                const raw = entry.values?.[columnName] ?? '';
+                return parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
+            });
+
+            let result = 0;
+            switch (config.func) {
+                case 'sum':
+                    result = values.reduce((a,b)=>a+b,0);
+                    break;
+                case 'average':
+                    result = values.length ? values.reduce((a,b)=>a+b,0)/values.length : 0;
+                    break;
+                case 'max':
+                    result = values.length ? Math.max(...values) : 0;
+                    break;
+                case 'min':
+                    result = values.length ? Math.min(...values) : 0;
+                    break;
+                case 'count':
+                    result = values.length;
+                    break;
+            }
+
+            result = this.formatNumber(result);
+            this.renderColumnFooter(columnName, config.func, result, config.position);
+        });
     },
 
     loadSavedFormulas: async function () {
@@ -4858,6 +5016,9 @@ export const AppCore = {
             console.log(`Loaded ${loadedCount} formulas, skipped ${skippedCount} broken formulas`);
             console.log('Column formulas:', Object.keys(this.state.columnFormulas));
             console.log('Cell formulas:', Object.keys(this.state.cellFormulas));
+            
+            // Invalidate cache since formulas changed
+            this.invalidateColComputeCache();
             
             // Build dependency graph for optimized recalculation
             this.buildFormulaDependencyGraph();
@@ -5470,6 +5631,34 @@ export const AppCore = {
             return Math.min(...vals);
         });
 
+        // Column-level aggregate functions (computed over ALL entries)
+        const computeColumnAggregate = (arg, func) => {
+            let actualColName = arg.trim();
+            if (this.state.variableColumns && this.state.variableColumns[actualColName]) {
+                actualColName = this.state.variableColumns[actualColName];
+            }
+            const values = this.state.localEntries.map(e => {
+                const raw = e.values?.[actualColName] ?? '';
+                return parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
+            });
+            switch(func.toLowerCase()) {
+                case 'sum': return values.reduce((a,b)=>a+b,0);
+                case 'avg':
+                case 'average': return values.length ? values.reduce((a,b)=>a+b,0)/values.length : 0;
+                case 'max': return values.length ? Math.max(...values) : 0;
+                case 'min': return values.length ? Math.min(...values) : 0;
+                case 'count': return values.length;
+                default: return 0;
+            }
+        };
+
+        evalExpr = evalExpr.replace(/\bCOLSUM\((.*?)\)/gi, (_, args) => computeColumnAggregate(args, 'sum'));
+        evalExpr = evalExpr.replace(/\bCOLAVG\((.*?)\)/gi, (_, args) => computeColumnAggregate(args, 'avg'));
+        evalExpr = evalExpr.replace(/\bCOLAVERAGE\((.*?)\)/gi, (_, args) => computeColumnAggregate(args, 'average'));
+        evalExpr = evalExpr.replace(/\bCOLMAX\((.*?)\)/gi, (_, args) => computeColumnAggregate(args, 'max'));
+        evalExpr = evalExpr.replace(/\bCOLMIN\((.*?)\)/gi, (_, args) => computeColumnAggregate(args, 'min'));
+        evalExpr = evalExpr.replace(/\bCOLCOUNT\((.*?)\)/gi, (_, args) => computeColumnAggregate(args, 'count'));
+
         // SUMIF: SUMIF(range, criteria, [sum_range])
         evalExpr = evalExpr.replace(/\bSUMIF\((.*?)\)/gi, (_, args) => {
             const parts = args.split(',').map(a => a.trim());
@@ -5574,8 +5763,11 @@ export const AppCore = {
         const config = this.state.activeColumnCompute;
         const newPosition = config.position === 'top' ? 'bottom' : 'top';
 
-        // Update state
+        // Update state in both places
         config.position = newPosition;
+        if (this.state.activeColumnComputes[config.column]) {
+            this.state.activeColumnComputes[config.column].position = newPosition;
+        }
 
         // Save to Supabase
         try {
@@ -5596,7 +5788,7 @@ export const AppCore = {
             return;
         }
 
-        // Re-render footer in new position
+        // Re-render all footers (this will update position for the active one)
         this.updateColumnComputation();
         UI.showToast(`Position changed to ${newPosition}`);
     },
@@ -5627,13 +5819,30 @@ export const AppCore = {
         }
 
         // Clear state
-        this.state.activeColumnCompute = null;
+        const deletedColumn = config?.column;
+        if (deletedColumn) {
+            delete this.state.activeColumnComputes[deletedColumn];
+        }
 
-        // Remove footer from UI (check both thead and tbody)
+        // Remove specific footer from UI
         const table = document.getElementById('tableData');
-        if (table) {
-            const footer = table.querySelector('.column-footer');
+        if (table && deletedColumn) {
+            const footer = table.querySelector(`.column-footer[data-column="${deletedColumn}"]`);
             if (footer) footer.remove();
+        }
+
+        // Set a new active computation if any remain
+        const remainingKeys = Object.keys(this.state.activeColumnComputes);
+        if (remainingKeys.length > 0) {
+            const newActiveColumn = remainingKeys[0];
+            const newActiveConfig = this.state.activeColumnComputes[newActiveColumn];
+            this.state.activeColumnCompute = {
+                column: newActiveColumn,
+                func: newActiveConfig.func,
+                position: newActiveConfig.position
+            };
+        } else {
+            this.state.activeColumnCompute = null;
         }
 
         UI.showToast('Column computation deleted');
@@ -5701,6 +5910,18 @@ export const AppCore = {
                 }
             }
         });
+
+        // 🔥 NEW: Check for column computation references (COLSUM, COLAVG, etc.)
+        // These are functions like COLSUM(A), COLAVG(B) that depend on the underlying column
+        const colComputePattern = /\bCOL(SUM|AVG|AVERAGE|MAX|MIN|COUNT)\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)/gi;
+        let match;
+        while ((match = colComputePattern.exec(formula)) !== null) {
+            const varName = match[2]; // The variable inside COLSUM(...)
+            const actualColumnName = this.state.variableColumns?.[varName];
+            if (actualColumnName && !dependencies.includes(actualColumnName)) {
+                dependencies.push(actualColumnName);
+            }
+        }
 
         return [...new Set(dependencies)]; // Remove duplicates
     },
@@ -5838,6 +6059,11 @@ export const AppCore = {
             bottomSpacer.innerHTML = '<td colspan="100%" style="border: none; padding: 0;"></td>';
             tableBody.appendChild(bottomSpacer);
         }
+
+        // Re-render column computations since they were cleared by innerHTML
+        if (Object.keys(this.state.activeColumnComputes || {}).length > 0) {
+            this.updateAllColumnComputations();
+        }
     },
 
     /**
@@ -5923,6 +6149,20 @@ export const AppCore = {
                         await this.recalculateSingleFormula(entryId, targetColumn, formula);
                     }
                 }
+
+                // 🔥 Update column computations first (so COLSUM, etc. get fresh values)
+                if (Object.keys(this.state.activeColumnComputes || {}).length > 0) {
+                    console.log('📊 Updating all column computations before recalculating cells');
+                    this.updateAllColumnComputations();
+                    
+                    // 🔥 Then recalculate only cell formulas with COL functions
+                    await this.recalculateColComputeCellFormulas();
+                }
+                
+                // 🔥 Also recalculate cell formulas that directly depend on the changed columns
+                for (const colName of changedColumns) {
+                    await this.recalculateCellFormulas(colName, entryId);
+                }
             }
 
             // Clear the queue
@@ -5932,45 +6172,102 @@ export const AppCore = {
     },
 
     /**
-     * Recalculate a specific cell formula when its dependency changes
+     * Get cell formulas that depend on column computations (COLSUM, etc.)
+     * Cached for performance with large datasets
      */
-    recalculateCellFormulas: function (changedColumnName, changedEntryId) {
+    getCellFormulasWithColCompute: function () {
+        // Check if cache is valid
+        if (this.state._colComputeFormulaCache && 
+            this.state._colComputeFormulaCacheVersion === this.state.cellFormulasVersion) {
+            return this.state._colComputeFormulaCache;
+        }
+        
+        // Build cache - find all formulas with COL functions
+        const colComputeFormulas = [];
+        const colPattern = /\bCOL(?:SUM|AVG|AVERAGE|MAX|MIN|COUNT)\s*\(/i;
+        
+        for (const [key, formula] of Object.entries(this.state.cellFormulas || {})) {
+            if (colPattern.test(formula)) {
+                const [entryId, targetColName] = key.split('|');
+                colComputeFormulas.push({ key, entryId, targetColName, formula });
+            }
+        }
+        
+        // Store cache
+        this.state._colComputeFormulaCache = colComputeFormulas;
+        this.state._colComputeFormulaCacheVersion = this.state.cellFormulasVersion || Date.now();
+        
+        return colComputeFormulas;
+    },
+
+    /**
+     * Invalidate the COL compute formula cache when formulas change
+     */
+    invalidateColComputeCache: function () {
+        this.state._colComputeFormulaCache = null;
+        this.state.cellFormulasVersion = Date.now();
+    },
+
+    /**
+     * Recalculate only cell formulas that have COL functions
+     * Optimized for large datasets - only recalculates formulas that depend on column computations
+     */
+    recalculateColComputeCellFormulas: async function () {
+        const colComputeFormulas = this.getCellFormulasWithColCompute();
+        
+        if (colComputeFormulas.length === 0) {
+            return; // No formulas with COL functions
+        }
+        
+        console.log(`🔄 Recalculating ${colComputeFormulas.length} cell formulas with COL functions`);
+        
+        // Recalculate only formulas with COL functions
+        for (const { entryId, targetColName, formula } of colComputeFormulas) {
+            const entry = this.state.localEntries.find(e => e.id === entryId);
+            if (entry) {
+                await this.recalculateSingleFormula(entryId, targetColName, formula);
+            }
+        }
+    },
+
+    /**
+     * Recalculate cell formulas that depend on a specific column
+     * For large datasets: only recalculates affected formulas
+     */
+    recalculateCellFormulas: async function (changedColumnName, changedEntryId) {
         const table = document.getElementById('tableData');
         if (!table) return;
 
-        const columns = this.state.currentTemplate?.columns || [];
-
-        // Escape special regex characters in column name
         const escapedColName = changedColumnName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-        // Also check for variable name (in case formula uses variables)
-        const variableName = Object.keys(this.state.variableColumns || {}).find(v => this.state.variableColumns[v] === changedColumnName);
+        const colNameRegex = new RegExp(escapedColName, 'i');
+        
+        const variableName = Object.keys(this.state.variableColumns || {})
+            .find(v => this.state.variableColumns[v] === changedColumnName);
         const escapedVarName = variableName ? variableName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : null;
+        const varNameRegex = escapedVarName ? new RegExp(escapedVarName, 'i') : null;
 
-        // Find all cells with formulas and check if they depend on the changed column
-        Object.entries(this.state.cellFormulas || {}).forEach(([key, formula]) => {
+        // Collect formulas to recalculate
+        const formulasToRecalculate = [];
+
+        for (const [key, formula] of Object.entries(this.state.cellFormulas || {})) {
             const [entryId, targetColName] = key.split('|');
             
-            // Build regex to find if this column is in the formula
-            // Match column name or variable name anywhere in the formula (case-insensitive)
-            const colNameRegex = new RegExp(escapedColName, 'i');
+            // Check if formula directly references the changed column
             const dependsOnColumn = colNameRegex.test(formula);
+            const dependsOnVariable = varNameRegex ? varNameRegex.test(formula) : false;
             
-            let dependsOnVariable = false;
-            if (escapedVarName) {
-                const varNameRegex = new RegExp(escapedVarName, 'i');
-                dependsOnVariable = varNameRegex.test(formula);
-            }
-            
-            if (dependsOnColumn || dependsOnVariable) {
-                // This formula depends on the changed column
-                // Recalculate it if it's in the same entry or if it's a global formula
-                const entry = this.state.localEntries.find(e => e.id === entryId || e.id === changedEntryId);
-                if (entry && (entryId === changedEntryId || entryId === 'GLOBAL')) {
-                    this.recalculateSingleFormula(changedEntryId, targetColName, formula);
+            if ((dependsOnColumn || dependsOnVariable) && entryId === changedEntryId) {
+                const entry = this.state.localEntries.find(e => e.id === entryId);
+                if (entry) {
+                    formulasToRecalculate.push({ entryId, targetColName, formula });
                 }
             }
-        });
+        }
+
+        // Recalculate only affected formulas
+        for (const { entryId, targetColName, formula } of formulasToRecalculate) {
+            await this.recalculateSingleFormula(entryId, targetColName, formula);
+        }
     },
 
     /**
@@ -6192,6 +6489,34 @@ export const AppCore = {
                 const vals = args.split(',').map(a => getVal(a, entry));
                 return Math.min(...vals);
             });
+
+            // Column-level aggregate functions (computed over ALL entries)
+            const computeColumnAggregate = (arg, func) => {
+                let actualColName = arg.trim();
+                if (this.state.variableColumns && this.state.variableColumns[actualColName]) {
+                    actualColName = this.state.variableColumns[actualColName];
+                }
+                const values = this.state.localEntries.map(e => {
+                    const raw = e.values?.[actualColName] ?? '';
+                    return parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
+                });
+                switch(func.toLowerCase()) {
+                    case 'sum': return values.reduce((a,b)=>a+b,0);
+                    case 'avg':
+                    case 'average': return values.length ? values.reduce((a,b)=>a+b,0)/values.length : 0;
+                    case 'max': return values.length ? Math.max(...values) : 0;
+                    case 'min': return values.length ? Math.min(...values) : 0;
+                    case 'count': return values.length;
+                    default: return 0;
+                }
+            };
+
+            evalExpr = evalExpr.replace(/\bCOLSUM\((.*?)\)/gi, (_, args) => computeColumnAggregate(args, 'sum'));
+            evalExpr = evalExpr.replace(/\bCOLAVG\((.*?)\)/gi, (_, args) => computeColumnAggregate(args, 'avg'));
+            evalExpr = evalExpr.replace(/\bCOLAVERAGE\((.*?)\)/gi, (_, args) => computeColumnAggregate(args, 'average'));
+            evalExpr = evalExpr.replace(/\bCOLMAX\((.*?)\)/gi, (_, args) => computeColumnAggregate(args, 'max'));
+            evalExpr = evalExpr.replace(/\bCOLMIN\((.*?)\)/gi, (_, args) => computeColumnAggregate(args, 'min'));
+            evalExpr = evalExpr.replace(/\bCOLCOUNT\((.*?)\)/gi, (_, args) => computeColumnAggregate(args, 'count'));
 
             // SUMIFS with ! notation and legacy syntax — evaluated from cache
             let idx = evalExpr.indexOf('SUMIFS(');
