@@ -32,7 +32,8 @@ export const AppCore = {
         pendingRecalculations:  [],             // Queue of pending recalculations
         // Debounce state for auto-update monitoring
         monitoringUpdateTimer:  null,           // Timer for debounced monitoring updates
-        pendingMonitoringUpdates: [],          // Queue of pending monitoring updates
+        pendingMonitoringUpdates: [],          // Queue of pending monitoring update keys
+        pendingMonitoringUpdatesData: {},      // Accumulated data changes per entryId for batch updates
         // Compute state to prevent UI interference
         isComputing:            false,          // Flag to indicate compute operation in progress
         // Formula dependency tracking for optimization
@@ -1516,10 +1517,10 @@ export const AppCore = {
                     this.updateColumnComputation();
                 }
 
-                // 🔄 AUTO-UPDATE MONITORING TEMPLATES
+                // 🔄 AUTO-UPDATE MONITORING TEMPLATES (fire all quickly, let debounce batch them)
                 for (const { entryId, colName } of changedCells) {
                     const values = changedEntries.get(entryId) || {};
-                    await this.autoUpdateMonitoring({ 
+                    this.autoUpdateMonitoring({ 
                         values,
                         entryId,
                         columnName: colName
@@ -1929,9 +1930,9 @@ export const AppCore = {
             this.updateColumnComputation();
         }
 
-        // 🔄 AUTO-UPDATE MONITORING TEMPLATES
+        // 🔄 AUTO-UPDATE MONITORING TEMPLATES (fire all quickly, let debounce batch them)
         for (const [entryId, values] of changedEntries) {
-            await this.autoUpdateMonitoring({ 
+            this.autoUpdateMonitoring({ 
                 values: values,
                 entryId: entryId
             }, 'update');
@@ -3409,9 +3410,9 @@ export const AppCore = {
                 this.updateColumnComputation();
             }
 
-            // 🔄 AUTO-UPDATE MONITORING TEMPLATES for each deleted entry
+            // 🔄 AUTO-UPDATE MONITORING TEMPLATES for each deleted entry (fire all quickly, let debounce batch them)
             for (const id of checked) {
-                await this.autoUpdateMonitoring({ 
+                this.autoUpdateMonitoring({ 
                     entryId: id,
                     operation: 'delete',
                     entryValues: entryValuesById[id]
@@ -6537,6 +6538,7 @@ export const AppCore = {
 
     /**
      * Auto-update monitoring templates when encoding data changes
+     * Accumulates changes and batches them to prevent data scrambling
      * @param {Object} changedData - Object containing the changed entry data
      * @param {string} operation - 'create', 'update', or 'delete'
      */
@@ -6548,10 +6550,35 @@ export const AppCore = {
         // Invalidate encoding cache so SUMIFS gets fresh data
         this.invalidateEncodingCache(this.state.currentTemplate.name);
 
-        // Add to pending monitoring updates queue
-        const updateKey = `${changedData.entryId || 'new'}-${operation}`;
+        const entryId = changedData.entryId || 'new';
+        const updateKey = `${entryId}-${operation}`;
+
+        // Track update keys to prevent duplicate queue entries
         if (!this.state.pendingMonitoringUpdates.includes(updateKey)) {
             this.state.pendingMonitoringUpdates.push(updateKey);
+        }
+
+        // ACCUMULATE all data changes per entryId for batch processing
+        if (!this.state.pendingMonitoringUpdatesData[entryId]) {
+            this.state.pendingMonitoringUpdatesData[entryId] = {
+                values: {},
+                operation: operation
+            };
+        }
+
+        // Merge new values into accumulated values for this entry
+        if (changedData.values) {
+            Object.assign(this.state.pendingMonitoringUpdatesData[entryId].values, changedData.values);
+        }
+
+        // Preserve entryValues for delete operations
+        if (changedData.entryValues) {
+            this.state.pendingMonitoringUpdatesData[entryId].entryValues = changedData.entryValues;
+        }
+
+        // If any operation for this entry is delete, the final operation becomes delete
+        if (operation === 'delete') {
+            this.state.pendingMonitoringUpdatesData[entryId].operation = 'delete';
         }
 
         // Clear existing timer
@@ -6559,38 +6586,47 @@ export const AppCore = {
             clearTimeout(this.state.monitoringUpdateTimer);
         }
 
-        // Set new timer to batch monitoring updates (1000ms delay for slower updates)
+        // Set new timer to batch monitoring updates (50ms for near-immediate reflection)
         this.state.monitoringUpdateTimer = setTimeout(async () => {
             try {
-                // Run monitoring updates in background without blocking UI
-                const monitoringPromise = this.performMonitoringUpdate(changedData, operation);
-                
-                // Don't await - let it run in background
-                monitoringPromise.catch(error => {
-                    console.error('Background monitoring update failed:', error);
-                });
+                await this.performMonitoringUpdate();
             } catch (error) {
-                console.error('Error in auto-update monitoring:', error);
+                console.error('Background monitoring update failed:', error);
             }
 
-            // Clear the queue immediately
+            // Clear the queues
             this.state.pendingMonitoringUpdates = [];
+            this.state.pendingMonitoringUpdatesData = {};
             this.state.monitoringUpdateTimer = null;
-        }, 1000); // 1000ms debounce delay for monitoring updates
+        }, 50); // 50ms debounce for immediate batch updates
     },
 
     /**
      * Perform the actual monitoring update in background
+     * Processes ALL accumulated changes in a single batch
      */
-    performMonitoringUpdate: async function(changedData, operation) {
+    performMonitoringUpdate: async function() {
         const monitoringTemplates = await this.findRelatedMonitoringTemplates();
         
         if (monitoringTemplates.length === 0) {
             return;
         }
 
+        // Get all accumulated pending entries
+        const pendingEntries = Object.entries(this.state.pendingMonitoringUpdatesData);
+        if (pendingEntries.length === 0) {
+            return;
+        }
+
         for (const monitoringTemplate of monitoringTemplates) {
-            await this.syncDataToMonitoringTemplate(monitoringTemplate, changedData, operation);
+            for (const [entryId, data] of pendingEntries) {
+                const changedData = {
+                    entryId,
+                    values: data.values,
+                    entryValues: data.entryValues
+                };
+                await this.syncDataToMonitoringTemplate(monitoringTemplate, changedData, data.operation);
+            }
             this.clearCache(monitoringTemplate.id);
         }
 
