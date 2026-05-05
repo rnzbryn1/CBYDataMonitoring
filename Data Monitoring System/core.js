@@ -1541,6 +1541,11 @@ export const AppCore = {
                     }, 'update');
                 }
 
+                // 🔄 UPDATE COLUMN COMPUTATIONS when data changes
+                if (Object.keys(this.state.activeColumnComputes || {}).length > 0) {
+                    this.updateAllColumnComputations();
+                }
+
                 UI.showToast(`Cleared ${selected.length} cell(s)`);
                 return;
             }
@@ -1845,6 +1850,11 @@ export const AppCore = {
                 entryId: info.entryId,
                 columnName: info.colName
             }, 'update');
+
+            // 🔄 UPDATE COLUMN COMPUTATIONS when any data changes
+            if (Object.keys(this.state.activeColumnComputes || {}).length > 0) {
+                this.updateAllColumnComputations();
+            }
         } else {
             console.log('No change detected in inline cell, skipping auto-computation');
         }
@@ -1942,6 +1952,11 @@ export const AppCore = {
         // AUTO UPDATE COLUMN COMPUTE   
         if (this.state.activeColumnCompute) {
             this.updateColumnComputation();
+        }
+
+        // 🔄 UPDATE COLUMN COMPUTATIONS when data changes
+        if (Object.keys(this.state.activeColumnComputes || {}).length > 0) {
+            this.updateAllColumnComputations();
         }
 
         // 🔄 AUTO-UPDATE MONITORING TEMPLATES (fire all quickly, let debounce batch them)
@@ -2061,6 +2076,11 @@ export const AppCore = {
             UI.showToast('Entry updated successfully!');
             this.clearCache(this.state.currentTemplateId);
             await this.loadEntries(this.state.currentTemplateId);
+            
+            // 🔄 UPDATE COLUMN COMPUTATIONS when entry is edited
+            if (Object.keys(this.state.activeColumnComputes || {}).length > 0) {
+                this.updateAllColumnComputations();
+            }
         } catch (error) {
             console.error('Error updating entry:', error);
             UI.showToast('Error updating entry', 'error');
@@ -2689,9 +2709,12 @@ export const AppCore = {
             await this.recalculateRowFormulas(entry.id);
             this.renderTable(this.state.localEntries);
 
-            // 8. Update column compute if active
+            // 8. Update column computations if active
             if (this.state.activeColumnCompute) {
                 this.updateColumnComputation();
+            }
+            if (Object.keys(this.state.activeColumnComputes || {}).length > 0) {
+                this.updateAllColumnComputations();
             }
 
             // 9. AUTO-UPDATE MONITORING TEMPLATES
@@ -4835,43 +4858,45 @@ export const AppCore = {
         this.updateAllColumnComputations();
     },
 
-    renderColumnFooter: function (columnName, func, result, position) {
+    renderCombinedColumnFooter: function (computations, position) {
         const table = document.getElementById('tableData');
         if (!table) return;
 
-        // Remove only this specific column's footer (if exists)
-        const old = table.querySelector(`.column-footer[data-column="${columnName}"]`);
-        if (old) old.remove();
-
         const cols = this.state.currentTemplate.columns;
-
-        // hanapin index ng target column
-        const colIndex = cols.findIndex(
-            c => c.encoding_columns.column_name === columnName
-        );
-
-        const tr = document.createElement('tr');
-        tr.className = 'column-footer';
-        tr.dataset.column = columnName; // Add data attribute to identify this column's footer
-
+        
         // kung may index column (#), dagdag offset
         const firstRow = table.querySelector('tr');
         const actualCells = firstRow ? firstRow.children.length : cols.length;
-
         const offset = actualCells - cols.length;
-
         const totalCols = cols.length + offset;
 
+        const tr = document.createElement('tr');
+        tr.className = 'column-footer';
+        tr.dataset.position = position; // Add data attribute to identify position
+
+        // Create cells for all columns
         for (let i = 0; i < totalCols; i++) {
             const td = document.createElement('td');
-
-            // exact position
-            if (i === colIndex + offset) {
-                td.textContent = `${func.toUpperCase()}: ${result}`;
-                td.style.fontWeight = 'bold';
-                td.style.background = '#f1f5f9';
+            
+            // Check if this column index has any computations
+            const colIndex = i - offset;
+            if (colIndex >= 0 && colIndex < cols.length) {
+                const columnName = cols[colIndex].encoding_columns.column_name;
+                const columnComputations = computations.filter(comp => comp.columnName === columnName);
+                
+                if (columnComputations.length > 0) {
+                    // Combine all computations for this column
+                    const computationTexts = columnComputations.map(comp => 
+                        `${comp.func.toUpperCase()}: ${comp.result}`
+                    );
+                    td.innerHTML = computationTexts.join('<br>');
+                    td.style.fontWeight = 'bold';
+                    td.style.background = '#f1f5f9';
+                    td.style.verticalAlign = 'top';
+                    td.style.padding = '8px 4px';
+                }
             }
-
+            
             tr.appendChild(td);
         }
 
@@ -4885,6 +4910,15 @@ export const AppCore = {
             if (tbody) tbody.appendChild(tr);
             else table.appendChild(tr);
         }
+    },
+
+    renderColumnFooter: function (columnName, func, result, position) {
+        // Legacy function - now uses combined rendering
+        this.renderCombinedColumnFooter([{
+            columnName,
+            func,
+            result
+        }], position);
     },
 
     loadColumnComputations: async function () {
@@ -4949,7 +4983,13 @@ export const AppCore = {
         // Remove all existing column footers
         table.querySelectorAll('.column-footer').forEach(el => el.remove());
 
-        // Render each column computation
+        // Group computations by position
+        const computationsByPosition = {
+            top: [],
+            bottom: []
+        };
+
+        // Calculate all computations and group by position
         Object.entries(this.state.activeColumnComputes || {}).forEach(([columnName, config]) => {
             const values = this.state.localEntries.map(entry => {
                 const raw = entry.values?.[columnName] ?? '';
@@ -4976,7 +5016,18 @@ export const AppCore = {
             }
 
             result = this.formatNumber(result);
-            this.renderColumnFooter(columnName, config.func, result, config.position);
+            computationsByPosition[config.position].push({
+                columnName,
+                func: config.func,
+                result
+            });
+        });
+
+        // Render combined footer rows for each position
+        Object.entries(computationsByPosition).forEach(([position, computations]) => {
+            if (computations.length > 0) {
+                this.renderCombinedColumnFooter(computations, position);
+            }
         });
     },
 
@@ -6154,9 +6205,20 @@ export const AppCore = {
                 if (Object.keys(this.state.activeColumnComputes || {}).length > 0) {
                     console.log('📊 Updating all column computations before recalculating cells');
                     this.updateAllColumnComputations();
-                    
-                    // 🔥 Then recalculate only cell formulas with COL functions
+                }
+                
+                // 🔥 Always recalculate cell formulas with COL functions if they exist
+                const colComputeFormulas = this.getCellFormulasWithColCompute();
+                if (colComputeFormulas.length > 0) {
+                    console.log('📊 Recalculating cell formulas with COL functions');
                     await this.recalculateColComputeCellFormulas();
+                    
+                    // 🔥 Update column computations again after COL functions are recalculated
+                    // This ensures compute specific columns reflect updated COL function values
+                    if (Object.keys(this.state.activeColumnComputes || {}).length > 0) {
+                        console.log('📊 Updating column computations after COL function recalculation');
+                        this.updateAllColumnComputations();
+                    }
                 }
                 
                 // 🔥 Also recalculate cell formulas that directly depend on the changed columns
