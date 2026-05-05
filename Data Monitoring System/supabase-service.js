@@ -131,13 +131,13 @@ export const SupabaseService = {
    * @returns {Promise<void>}
    */
   async deleteTemplate(templateId) {
-    // Delete monitoring computed metrics that reference this template as source
-    const { error: metricsError } = await this.client
-      .from('monitoring_computed_metrics')
+    // Delete template formulas first (foreign key dependency)
+    const { error: formulasError } = await this.client
+      .from('template_formulas')
       .delete()
-      .eq('source_template_id', templateId);
+      .eq('template_id', templateId);
     
-    if (metricsError) throw metricsError;
+    if (formulasError) throw formulasError;
 
     // Delete entries first (cascade delete their values)
     const { error: entriesError } = await this.client

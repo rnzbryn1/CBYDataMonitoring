@@ -51,6 +51,7 @@
                 <button onclick="openImportModal()">Import Excel</button>
                 <button class="add-cat-btn" onclick="toggleColumnSelector()" title="Show/Hide Columns">Columns</button>
                 <button class="add-cat-btn" onclick="openColumnModal()" data-admin-only>+ Add Column</button>
+                <button onclick="saveEmptyRow()" id="saveEmptyRowBtn" class="save-btn" style="display: none;">Add Row</button>
             </div>
         </section>
 
@@ -62,9 +63,6 @@
                     <tbody id="emptyRowInputs" style="display: none;"></tbody>
                     <tbody id="tableData"></tbody>
                 </table>
-            </div>
-            <div style="margin-top: 10px; text-align: right;">
-                <button onclick="saveEmptyRow()" id="saveEmptyRowBtn" class="save-btn" style="display: none;">Add Row</button>
             </div>
         </section>
 

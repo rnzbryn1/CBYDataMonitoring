@@ -253,7 +253,6 @@ h3 {
     cursor: pointer;
     transition: background 0.15s;
     white-space: nowrap;
-    align-self: end;
 }
 
 .save-btn:hover { background: #1d4ed8; }
