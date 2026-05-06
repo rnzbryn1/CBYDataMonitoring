@@ -17,7 +17,7 @@
     <!-- HEADER -->
     <header class="header">
         <h1>Sales Order Desk</h1>
-        <button class="add-cat-btn" onclick="openModal()" data-admin-only>+ New Category</button>
+        <button class="add-cat-btn" onclick="openModal()" data-admin-only>+ New Template</button>
     </header>
 
     <!-- CATEGORY CARDS -->
@@ -30,8 +30,11 @@
     <!-- WORKSPACE -->
     <div id="moduleWorkspace" style="display:none;">
         <!-- ENTRY FORM -->
-        <section class="card">
-            <h3 id="entryFormTitle">Entry Form</h3>
+        <section class="card" id="entryFormSection">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                <h3 id="entryFormTitle" style="margin: 0;">Entry Form</h3>
+                <button onclick="toggleEntryForm()" id="toggleEntryFormBtn" style="background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 6px; cursor: pointer; font-size: 14px; padding: 6px 12px; color: #475569;" title="Hide/Show Entry Form">▼ Hide</button>
+            </div>
             <div id="dynamicForm" class="grid-form"></div>
         </section>
 
@@ -43,7 +46,9 @@
                 <button onclick="sortByDate()">Sort by Date</button>
                 <button onclick="exportToExcel()">Export Excel</button>
                 <button onclick="openImportModal()">Import Excel</button>
+                <button class="add-cat-btn" onclick="toggleColumnSelector()" title="Show/Hide Columns">Columns</button>
                 <button class="add-cat-btn" onclick="openColumnModal()" data-admin-only>+ Add Column</button>
+                <button onclick="saveEmptyRow()" id="saveEmptyRowBtn" class="save-btn" style="display: none;">Add Row</button>
             </div>
         </section>
 
@@ -52,6 +57,7 @@
             <div class="table-wrapper">
                 <table>
                     <thead id="tableHeaders"></thead>
+                    <tbody id="emptyRowInputs" style="display: none;"></tbody>
                     <tbody id="tableData"></tbody>
                 </table>
             </div>
@@ -66,11 +72,16 @@
 <div id="categoryModal" class="modal">
     <div class="modal-content">
         <span class="close-btn" onclick="closeModal()">&times;</span>
-        <h3>New Category</h3>
+        <h3>New Template</h3>
         <input type="text" id="newCategoryName" placeholder="e.g. Pickup, Encoding, Sales">
+        <label>Template Type</label>
+        <select id="newTemplateType">
+            <option value="encoding">Encoding (data input source)</option>
+            <option value="monitoring">Monitoring (compiled/computed data)</option>
+        </select>
         <div class="modal-actions">
             <button onclick="closeModal()">Cancel</button>
-            <button onclick="createNewCategory()">Create</button>
+            <button onclick="createNewTemplate()">Create</button>
         </div>
     </div>
 </div>
@@ -89,6 +100,9 @@
                 <option value="number">Number</option>
                 <option value="date">Date</option>
             </select>
+            <label style="font-size:12px;color:#666;margin-top:10px;display:block;">
+                <input type="text" id="columnGroup" placeholder="Group name (optional for header grouping)">
+            </label>
         </div>
         
         <!-- For monitoring templates: select existing column from encoding -->
@@ -104,7 +118,7 @@
         
         <div class="modal-actions">
             <button onclick="closeColumnModal()">Cancel</button>
-            <button onclick="addColumnToActive()">Add</button>
+            <button onclick="addColumnToTemplate()">Add</button>
         </div>
     </div>
 </div>
@@ -179,6 +193,13 @@
     <button id="ctxEdit">Edit Row</button>
     <button id="ctxCompute">Compute</button>
     <button id="ctxDelete" class="delete">Delete Row</button>
+</div>
+
+<div id="headerContextMenu" class="context-menu">
+    <button id="ctxEditColumn">Edit Column</button>
+    <button id="ctxDeleteColumn" class="delete">Delete Column</button>
+    <button id="ctxRenameGroup">Rename Group</button>
+    <button id="ctxAddToGroup">Add to Group</button>
 </div>
 
 <!-- LOADING OVERLAY -->

@@ -38,6 +38,7 @@ export const AppCore = {
         monitoringUpdateTimer:  null,           // Timer for debounced monitoring updates
         pendingMonitoringUpdates: [],          // Queue of pending monitoring update keys
         pendingMonitoringUpdatesData: {},      // Accumulated data changes per entryId for batch updates
+        clearCacheTimeout:      null,          // Timer for debounced cache clearing
         // Compute state to prevent UI interference
         isComputing:            false,          // Flag to indicate compute operation in progress
         activeColumnComputes:   {},             // { "columnName": { func, position }, ... } all column computations
@@ -607,31 +608,65 @@ export const AppCore = {
         }
     },
 
-    clearCache: function(templateId = null) {
+    clearCache: function(templateId = null, debounceMs = 100) {
+        // Clear existing timeout if any
+        if (this.state.clearCacheTimeout) {
+            clearTimeout(this.state.clearCacheTimeout);
+        }
+        
+        // Set new timeout for debounced cache clearing
+        this.state.clearCacheTimeout = setTimeout(() => {
+            if (templateId) {
+                // Clear queryCache for specific template
+                const keysToDelete = [];
+                for (const key of this.state.queryCache.keys()) {
+                    if (key.includes(templateId)) {
+                        keysToDelete.push(key);
+                    }
+                }
+                keysToDelete.forEach(key => this.state.queryCache.delete(key));
+                
+                // Clear template-specific cache
+                delete this.state.cache[`template_${templateId}`];
+                delete this.state.cache[`entries_${templateId}`];
+                delete this.state.cache[`columns_${templateId}`];
+            } else {
+                // Clear all caches
+                this.state.queryCache.clear();
+                this.state.cache = {};
+            }
+            console.log('🗑️ Cache cleared');
+            this.state.clearCacheTimeout = null;
+        }, debounceMs);
+    },
+
+    clearCacheImmediate: function(templateId = null) {
+        // Clear any pending debounced cache clear
+        if (this.state.clearCacheTimeout) {
+            clearTimeout(this.state.clearCacheTimeout);
+            this.state.clearCacheTimeout = null;
+        }
+        
         if (templateId) {
             // Clear queryCache for specific template
             const keysToDelete = [];
             for (const key of this.state.queryCache.keys()) {
-                if (key.startsWith(`${templateId}-`)) {
+                if (key.includes(templateId)) {
                     keysToDelete.push(key);
                 }
             }
             keysToDelete.forEach(key => this.state.queryCache.delete(key));
-
-            // Clear legacy this.state.cache for specific template
-            delete this.state.cache[`template-${templateId}`];
-            const entriesPrefix = `entries-${templateId}-`;
-            for (const key of Object.keys(this.state.cache)) {
-                if (key.startsWith(entriesPrefix)) {
-                    delete this.state.cache[key];
-                }
-            }
+            
+            // Clear template-specific cache
+            delete this.state.cache[`template_${templateId}`];
+            delete this.state.cache[`entries_${templateId}`];
+            delete this.state.cache[`columns_${templateId}`];
         } else {
-            // Clear all cache
+            // Clear all caches
             this.state.queryCache.clear();
             this.state.cache = {};
         }
-        console.log('🗑️ Cache cleared');
+        console.log('🗑️ Cache cleared immediately');
     },
 
     loadEntries: async function (templateId) {
@@ -1034,9 +1069,6 @@ export const AppCore = {
                         console.log('Date input changed:', colName, '=', e.target.value, 'for entry:', entryId);
                         
                         try {
-                            // Clear cache when entry is updated
-                            this.clearCache(this.state.currentTemplateId);
-                            
                             await SupabaseService.updateEntryValues(entryId, {
                                 [colId]: e.target.value
                             });
@@ -1509,7 +1541,6 @@ export const AppCore = {
                             });
                         }
 
-                        this.clearCache(this.state.currentTemplate.id);
                     } catch (err) {
                         UI.showToast('Delete failed: ' + err.message, 'error');
                     }
@@ -1863,7 +1894,6 @@ export const AppCore = {
                     }
                 }
 
-                this.clearCache(this.state.currentTemplate.id);
             } catch (err) {
                 UI.showToast('Save failed: ' + err.message, 'error');
             }
@@ -1965,12 +1995,12 @@ export const AppCore = {
                         }
                     });
                 }
-                this.clearCache(this.state.currentTemplate.id);
             } catch (err) {
                 UI.showToast('Save failed: ' + err.message, 'error');
             }
         }
 
+        // AUTO-UPDATE - Recalculate for each changed entry and column
         // 🔄 AUTO-UPDATE - Recalculate for each changed entry and column
         for (const [entryId, values] of changedEntries) {
             // IMPORTANT: Recalculate ALL column formulas for the entry (same as entry form)
@@ -2051,7 +2081,6 @@ export const AppCore = {
                 });
             }
 
-            this.clearCache(this.state.currentTemplate.id);
         } catch (err) {
             UI.showToast('Save failed: ' + err.message, 'error');
         }
@@ -2111,7 +2140,6 @@ export const AppCore = {
             
             this.closeEditModal();
             UI.showToast('Entry updated successfully!');
-            this.clearCache(this.state.currentTemplateId);
             await this.loadEntries(this.state.currentTemplateId);
             
             // 🔄 UPDATE COLUMN COMPUTATIONS when entry is edited
@@ -2202,7 +2230,7 @@ export const AppCore = {
         try {
             await SupabaseService.deleteTemplate(id);
             this.state.allTemplates = this.state.allTemplates.filter(t => t.id !== id);
-            this.clearCache(id);
+            this.clearCacheImmediate(id);
             
             if (this.state.currentTemplate?.id === id) {
                 this.state.currentTemplate = null;
@@ -2282,9 +2310,11 @@ export const AppCore = {
                 addColumnBtn.disabled = true;
                 addColumnBtn.innerText = 'Adding...';
             }
-            // Refresh template state first to ensure we have latest columns
-            this.clearCache(this.state.currentTemplate.id);
-            this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
+            // Get current template state without clearing cache initially
+            // Cache will be cleared after column operations to ensure fresh data
+            if (!this.state.currentTemplate.columns) {
+                this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
+            }
 
             let columnId;
 
@@ -2345,13 +2375,9 @@ export const AppCore = {
                         totalCopied += copiedCount;
                     }
 
-                    // Clear ALL caches to force refresh after copy
+                    // Clear cache once and refresh template structure
                     this.clearCache(this.state.currentTemplate.id);
-
-                    // Refresh template structure FIRST to get new columns
-                    // console.log('🔄 Refreshing template structure after multiple column addition...');
                     this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
-                    // console.log('📊 Updated template columns:', this.state.currentTemplate.columns?.length);
                     
                     // Then reload entries with updated template structure
                     await this.loadEntries(this.state.currentTemplate.id);
@@ -2441,7 +2467,7 @@ export const AppCore = {
                 newDisplayOrder
             );
 
-            // Refresh template again to get new column
+            // Clear cache once and refresh template structure
             this.clearCache(this.state.currentTemplate.id);
             this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
 
@@ -2458,22 +2484,11 @@ export const AppCore = {
                     this.state.departmentId
                 );
 
-                // Clear ALL caches to force refresh after copy
-                this.clearCache(this.state.currentTemplate.id);
-
-                // Refresh template structure FIRST to get new columns
-                // console.log('🔄 Refreshing template structure after column addition...');
-                this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
-                // console.log('📊 Updated template columns:', this.state.currentTemplate.columns?.length);
-
                 // Then reload entries with updated template structure
                 await this.loadEntries(this.state.currentTemplate.id);
-                
-                // console.log('✅ Column addition completed successfully');
                 UI.showToast(`Column added! ${copiedCount} entries copied from encoding.`);
             } else {
-                // For encoding templates, refresh template structure first then reload entries
-                this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
+                // For encoding templates, reload entries
                 await this.loadEntries(this.state.currentTemplate.id);
                 UI.showToast('Column added!');
             }
@@ -2651,8 +2666,6 @@ export const AppCore = {
             // Refresh
             this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
 
-            this.clearCache(this.state.currentTemplate.id);
-
             this.renderAll();
             UI.showToast('Column deleted.');
         } catch (error) {
@@ -2779,8 +2792,6 @@ export const AppCore = {
             const deletedEntry = this.state.localEntries.find(e => e.id === id);
             const deletedEntryValues = deletedEntry?.values;
 
-            // Clear cache when entry is deleted
-            this.clearCache(this.state.currentTemplateId);
             this.state.localEntries = await SupabaseService.getAllEntries(this.state.currentTemplate.id);
             this.renderTable(this.state.localEntries);
 
@@ -3421,8 +3432,6 @@ export const AppCore = {
 
             console.log(`All values inserted. Reloading entries...`);
 
-            // Reload entries
-            this.clearCache(this.state.currentTemplate.id);
             // Refresh the table with new data
             await this.loadEntries(this.state.currentTemplate.id);
             this.closeImportModal();
@@ -3475,8 +3484,6 @@ export const AppCore = {
             await SupabaseService.deleteEntries(checked);
             console.log(`Deleted ${checked.length} entries`);
 
-            // Clear cache when entries are deleted
-            this.clearCache(this.state.currentTemplateId);
             this.state.localEntries = await SupabaseService.getAllEntries(this.state.currentTemplate.id);
             this.renderTable(this.state.localEntries);
 
@@ -4823,7 +4830,6 @@ export const AppCore = {
 
     forceClearFormulaCache: async function () {
         // Clear all formula-related cache and state
-        this.clearCache(this.state.currentTemplate.id);
         
         // Clear formula memory to prevent old formulas from persisting
         this.state.cellFormulas = {};
@@ -7607,7 +7613,6 @@ export const AppCore = {
             document.getElementById('addToGroupModal').style.display = 'none';
             
             // Refresh template data
-            this.clearCache(this.state.currentTemplate.id);
             this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
             
             // Re-render table
@@ -7642,7 +7647,6 @@ export const AppCore = {
             await SupabaseService.updateColumnGroup(this.state.currentColId, null);
             
             // Refresh template data
-            this.clearCache(this.state.currentTemplate.id);
             this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
             
             // Re-render table

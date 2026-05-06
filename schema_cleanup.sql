@@ -139,29 +139,6 @@ CREATE INDEX IF NOT EXISTS idx_encoding_columns_department
   ON encoding_columns(department_id, display_order);
 
 -- =====================================================
--- STEP 6: Add cell_color column to encoding_entry_values
--- =====================================================
--- This allows cell background colors to be saved and persisted
-
-ALTER TABLE encoding_entry_values 
-  ADD COLUMN IF NOT EXISTS cell_color TEXT;
-
--- =====================================================
--- STEP 7: Add column_computation table
--- =====================================================
--- This allows column computation settings to be saved and persisted
-
-CREATE TABLE IF NOT EXISTS column_computation (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  template_id UUID NOT NULL REFERENCES encoding_templates(id) ON DELETE CASCADE,
-  column_id UUID NOT NULL REFERENCES encoding_columns(id) ON DELETE CASCADE,
-  function_type TEXT NOT NULL CHECK (function_type IN ('sum', 'average', 'max', 'min', 'count')),
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  UNIQUE (template_id, column_id)
-);
-
--- =====================================================
 -- VERIFICATION QUERIES
 -- =====================================================
 
