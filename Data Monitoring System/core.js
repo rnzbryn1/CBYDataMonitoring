@@ -1617,6 +1617,43 @@ export const AppCore = {
             const colorBtn = document.getElementById('ctxColor');
             const deleteCompBtn = document.getElementById('ctxDeleteComputation');
 
+            const isFooterCell = td.closest('.column-footer') !== null;
+
+            if (isFooterCell) {
+                // Footer cells: only show delete computation for the clicked column
+                if (addColToGroupBtn) addColToGroupBtn.style.display = 'none';
+                if (editBtn) editBtn.style.display = 'none';
+                if (deleteBtn) deleteBtn.style.display = 'none';
+                if (computeBtn) computeBtn.style.display = 'none';
+                if (computeColBtn) computeColBtn.style.display = 'none';
+                if (colorBtn) colorBtn.style.display = 'none';
+
+                const clickedColName = td.dataset.colName;
+                const colCompute = clickedColName ? this.state.activeColumnComputes?.[clickedColName] : null;
+
+                if (deleteCompBtn) {
+                    deleteCompBtn.style.display = colCompute ? 'flex' : 'none';
+                }
+
+                if (colCompute) {
+                    this.state.activeColumnCompute = {
+                        column: clickedColName,
+                        func: colCompute.func,
+                        position: colCompute.position
+                    };
+                }
+
+                this.state.currentGroupName = null;
+                this.state.currentCell = td;
+                this.state.currentColName = clickedColName;
+                this.state.currentRowId = null;
+
+                menu.style.display = 'block';
+                menu.style.top = e.pageY + 'px';
+                menu.style.left = e.pageX + 'px';
+                return;
+            }
+
             if (addColToGroupBtn) addColToGroupBtn.style.display = 'none';
             if (editBtn) editBtn.style.display = 'flex';
             if (deleteBtn) deleteBtn.style.display = 'flex';
@@ -2747,7 +2784,10 @@ export const AppCore = {
             this.state.localEntries = await SupabaseService.getAllEntries(this.state.currentTemplate.id);
             this.renderTable(this.state.localEntries);
 
-            // AUTO UPDATE COLUMN COMPUTE   
+            // 🔥 Recalculate global formulas (UNIQUE) after deletion since the dataset changed
+            await this.recalculateGlobalFormulas();
+
+            // AUTO UPDATE COLUMN COMPUTE
             if (this.state.activeColumnCompute) {
                 this.updateColumnComputation();
             }
@@ -3439,6 +3479,9 @@ export const AppCore = {
             this.clearCache(this.state.currentTemplateId);
             this.state.localEntries = await SupabaseService.getAllEntries(this.state.currentTemplate.id);
             this.renderTable(this.state.localEntries);
+
+            // 🔥 Recalculate global formulas (UNIQUE) after bulk deletion since the dataset changed
+            await this.recalculateGlobalFormulas();
 
             // 🔄 AUTO-UPDATE: Recalculate column computations after deletion
             if (this.state.activeColumnCompute) {
@@ -4167,8 +4210,9 @@ export const AppCore = {
         const expr = formula.slice(1);
         const columns = this.state.currentTemplate?.columns || [];
 
-        // Pre-fetch encoding data for SUMIFS before synchronous evaluation
+        // Pre-fetch encoding data for SUMIFS and UNIQUE before synchronous evaluation
         await this.prefetchSUMIFSDataForFormula(formula);
+        await this.prefetchUniqueDataForFormula(formula);
 
         const computeRow = (entry) => {
             let evalExpr = expr;
@@ -4359,6 +4403,30 @@ export const AppCore = {
             evalExpr = evalExpr.replace(/\bCOLMAX\((.*?)\)/gi, (_, args) => computeColumnAggregate(args, 'max'));
             evalExpr = evalExpr.replace(/\bCOLMIN\((.*?)\)/gi, (_, args) => computeColumnAggregate(args, 'min'));
             evalExpr = evalExpr.replace(/\bCOLCOUNT\((.*?)\)/gi, (_, args) => computeColumnAggregate(args, 'count'));
+
+            // UNIQUE: returns comma-separated unique values from a column across all entries
+            evalExpr = evalExpr.replace(/\bUNIQUE\((.*?)\)/gi, (_, args) => {
+                const parsedArgs = this.parseQuotedArgs(args);
+                const firstRef = this.parseSheetRef(parsedArgs[0] || args.trim());
+
+                let allEntries = this.state.localEntries || [];
+                let actualColName = parsedArgs[0] || args.trim();
+
+                if (firstRef) {
+                    const normalizedName = firstRef.sheet.trim().toLowerCase();
+                    allEntries = this.state.encodingDataCache[normalizedName] || [];
+                    actualColName = firstRef.column;
+                } else if (this.state.variableColumns && this.state.variableColumns[actualColName]) {
+                    actualColName = this.state.variableColumns[actualColName];
+                }
+
+                const uniqueValues = [...new Set(
+                    allEntries
+                        .map(e => String(e.values?.[actualColName] ?? '').trim())
+                        .filter(v => v !== '' && v !== '0' && v !== 'undefined' && v !== 'null')
+                )];
+                return JSON.stringify(uniqueValues.join(', '));
+            });
 
             // SUMIFS with ! notation and legacy syntax — evaluated from cache
             let idx = evalExpr.indexOf('SUMIFS(');
@@ -4886,7 +4954,7 @@ export const AppCore = {
                 
                 if (columnComputations.length > 0) {
                     // Combine all computations for this column
-                    const computationTexts = columnComputations.map(comp => 
+                    const computationTexts = columnComputations.map(comp =>
                         `${comp.func.toUpperCase()}: ${comp.result}`
                     );
                     td.innerHTML = computationTexts.join('<br>');
@@ -4894,6 +4962,7 @@ export const AppCore = {
                     td.style.background = '#f1f5f9';
                     td.style.verticalAlign = 'top';
                     td.style.padding = '8px 4px';
+                    td.dataset.colName = columnName;
                 }
             }
             
@@ -5074,12 +5143,14 @@ export const AppCore = {
             // Build dependency graph for optimized recalculation
             this.buildFormulaDependencyGraph();
 
-            // Pre-fetch encoding data for any SUMIFS references
+            // Pre-fetch encoding data for any SUMIFS and UNIQUE references
             for (const formula of Object.values(this.state.columnFormulas || {})) {
                 await this.prefetchSUMIFSDataForFormula(formula);
+                await this.prefetchUniqueDataForFormula(formula);
             }
             for (const formula of Object.values(this.state.cellFormulas || {})) {
                 await this.prefetchSUMIFSDataForFormula(formula);
+                await this.prefetchUniqueDataForFormula(formula);
             }
 
             // Skip automatic formula recalculation on initial load for performance
@@ -5098,8 +5169,9 @@ export const AppCore = {
             const colDef = columns.find(c => c.encoding_columns.column_name === columnName);
             if (!colDef) continue;
 
-            // Pre-fetch encoding data for SUMIFS before synchronous evaluation
+            // Pre-fetch encoding data for SUMIFS and UNIQUE before synchronous evaluation
             await this.prefetchSUMIFSDataForFormula(formula);
+            await this.prefetchUniqueDataForFormula(formula);
 
             // Compute all values first and update UI immediately
             const computedResults = this.state.localEntries.map(entry => {
@@ -5305,6 +5377,31 @@ export const AppCore = {
                 sheetNames.add(firstRef.sheet);
             } else {
                 sheetNames.add(this.unquote(args[0]));
+            }
+        }
+
+        for (const sheetName of sheetNames) {
+            await this.getEncodingDataFromCache(sheetName);
+        }
+    },
+
+    /**
+     * Pre-fetch encoding data for all UNIQUE references in a formula
+     */
+    prefetchUniqueDataForFormula: async function(formula) {
+        if (!formula || !formula.includes('UNIQUE')) return;
+
+        const sheetNames = new Set();
+
+        const matches = formula.match(/UNIQUE\s*\(([\s\S]*?)\)/gi) || [];
+        for (const match of matches) {
+            const argsStr = match.replace(/UNIQUE\s*\(/i, '').replace(/\)\s*$/, '');
+            const args = this.parseQuotedArgs(argsStr);
+            if (args.length < 1) continue;
+
+            const firstRef = this.parseSheetRef(args[0]);
+            if (firstRef) {
+                sheetNames.add(firstRef.sheet);
             }
         }
 
@@ -5710,6 +5807,31 @@ export const AppCore = {
         evalExpr = evalExpr.replace(/\bCOLMIN\((.*?)\)/gi, (_, args) => computeColumnAggregate(args, 'min'));
         evalExpr = evalExpr.replace(/\bCOLCOUNT\((.*?)\)/gi, (_, args) => computeColumnAggregate(args, 'count'));
 
+        // UNIQUE: returns comma-separated unique values from a column across all entries
+        evalExpr = evalExpr.replace(/\bUNIQUE\((.*?)\)/gi, (_, args) => {
+            const parsedArgs = this.parseQuotedArgs(args);
+            const firstRef = this.parseSheetRef(parsedArgs[0] || args.trim());
+
+            let allEntries = this.state.localEntries || [];
+            let actualColName = parsedArgs[0] || args.trim();
+
+            if (firstRef) {
+                // Cross-template reference: read from cached external data
+                const normalizedName = firstRef.sheet.trim().toLowerCase();
+                allEntries = this.state.encodingDataCache[normalizedName] || [];
+                actualColName = firstRef.column;
+            } else if (this.state.variableColumns && this.state.variableColumns[actualColName]) {
+                actualColName = this.state.variableColumns[actualColName];
+            }
+
+            const uniqueValues = [...new Set(
+                allEntries
+                    .map(e => String(e.values?.[actualColName] ?? '').trim())
+                    .filter(v => v !== '' && v !== '0' && v !== 'undefined' && v !== 'null')
+            )];
+            return JSON.stringify(uniqueValues.join(', '));
+        });
+
         // SUMIF: SUMIF(range, criteria, [sum_range])
         evalExpr = evalExpr.replace(/\bSUMIF\((.*?)\)/gi, (_, args) => {
             const parts = args.split(',').map(a => a.trim());
@@ -5875,13 +5997,6 @@ export const AppCore = {
             delete this.state.activeColumnComputes[deletedColumn];
         }
 
-        // Remove specific footer from UI
-        const table = document.getElementById('tableData');
-        if (table && deletedColumn) {
-            const footer = table.querySelector(`.column-footer[data-column="${deletedColumn}"]`);
-            if (footer) footer.remove();
-        }
-
         // Set a new active computation if any remain
         const remainingKeys = Object.keys(this.state.activeColumnComputes);
         if (remainingKeys.length > 0) {
@@ -5895,6 +6010,9 @@ export const AppCore = {
         } else {
             this.state.activeColumnCompute = null;
         }
+
+        // Re-render all remaining computation footers
+        this.updateAllColumnComputations();
 
         UI.showToast('Column computation deleted');
     },
@@ -6227,6 +6345,9 @@ export const AppCore = {
                 }
             }
 
+            // 🔥 Recalculate global formulas (UNIQUE) for ALL entries since they depend on global data
+            await this.recalculateGlobalFormulas();
+
             // Clear the queue
             this.state.pendingRecalculations = [];
             this.state.formulaRecalcTimer = null;
@@ -6355,7 +6476,10 @@ export const AppCore = {
             // console.log('🧮 Applying column formula:', columnName, '=', formula);
             await this.recalculateSingleFormula(entryId, columnName, formula);
         }
-        
+
+        // 🔥 Recalculate global formulas (UNIQUE) for all other entries since they depend on the entire dataset
+        await this.recalculateGlobalFormulas(entryId);
+
         // Refresh virtual table if enabled to show updated computed values
         if (this.state.virtualScroll.enabled) {
             this.renderVirtualTable();
@@ -6372,8 +6496,9 @@ export const AppCore = {
         const columns = this.state.currentTemplate?.columns || [];
         const self = this; // Capture 'this' for nested functions
 
-        // Pre-fetch encoding data for SUMIFS before synchronous evaluation
+        // Pre-fetch encoding data for SUMIFS and UNIQUE before synchronous evaluation
         await this.prefetchSUMIFSDataForFormula(formula);
+        await this.prefetchUniqueDataForFormula(formula);
 
         // Execute the formula evaluation logic (similar to applyFormula)
         const computeRow = (entry) => {
@@ -6579,6 +6704,30 @@ export const AppCore = {
             evalExpr = evalExpr.replace(/\bCOLMAX\((.*?)\)/gi, (_, args) => computeColumnAggregate(args, 'max'));
             evalExpr = evalExpr.replace(/\bCOLMIN\((.*?)\)/gi, (_, args) => computeColumnAggregate(args, 'min'));
             evalExpr = evalExpr.replace(/\bCOLCOUNT\((.*?)\)/gi, (_, args) => computeColumnAggregate(args, 'count'));
+
+            // UNIQUE: returns comma-separated unique values from a column across all entries
+            evalExpr = evalExpr.replace(/\bUNIQUE\((.*?)\)/gi, (_, args) => {
+                const parsedArgs = this.parseQuotedArgs(args);
+                const firstRef = this.parseSheetRef(parsedArgs[0] || args.trim());
+
+                let allEntries = this.state.localEntries || [];
+                let actualColName = parsedArgs[0] || args.trim();
+
+                if (firstRef) {
+                    const normalizedName = firstRef.sheet.trim().toLowerCase();
+                    allEntries = this.state.encodingDataCache[normalizedName] || [];
+                    actualColName = firstRef.column;
+                } else if (this.state.variableColumns && this.state.variableColumns[actualColName]) {
+                    actualColName = this.state.variableColumns[actualColName];
+                }
+
+                const uniqueValues = [...new Set(
+                    allEntries
+                        .map(e => String(e.values?.[actualColName] ?? '').trim())
+                        .filter(v => v !== '' && v !== '0' && v !== 'undefined' && v !== 'null')
+                )];
+                return JSON.stringify(uniqueValues.join(', '));
+            });
 
             // SUMIFS with ! notation and legacy syntax — evaluated from cache
             let idx = evalExpr.indexOf('SUMIFS(');
@@ -6873,6 +7022,24 @@ export const AppCore = {
             }
         } catch (err) {
             console.error('Failed to save formula result:', err);
+        }
+    },
+
+    /**
+     * Recalculate global formulas (UNIQUE, etc.) for ALL entries
+     * These formulas depend on data across the entire dataset, not just one row
+     * @param {string} skipEntryId - Optional entry ID to skip (already recalculated)
+     */
+    recalculateGlobalFormulas: async function(skipEntryId = null) {
+        const globalFormulas = Object.entries(this.state.columnFormulas || {})
+            .filter(([_, formula]) => formula && /UNIQUE\s*\(/i.test(formula));
+
+        for (const [columnName, formula] of globalFormulas) {
+            for (const entry of this.state.localEntries) {
+                if (entry.id !== skipEntryId) {
+                    await this.recalculateSingleFormula(entry.id, columnName, formula);
+                }
+            }
         }
     },
 
