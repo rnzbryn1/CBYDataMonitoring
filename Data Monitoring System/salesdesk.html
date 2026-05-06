@@ -244,7 +244,7 @@
 
 <div id="headerContextMenu" class="context-menu">
     <button id="ctxEditColumn">Edit Column</button>
-    <button id="ctxDeleteColumn" class="delete">Delete Column</button>
+    <button id="hctxDeleteColumn" class="delete" onclick="handleHeaderDeleteColumn()">Delete Column</button>
     <button id="ctxRenameGroup">Rename Group</button>
     <button id="ctxAddToGroup">Add to Group</button>
 </div>
@@ -256,5 +256,14 @@
 </div>
 
 <script type="module" src="salesdesk.js"></script>
+
+<!-- Global function references for onclick handlers -->
+<script>
+window.handleHeaderDeleteColumn = function() {
+    if (typeof AppCore !== 'undefined' && AppCore.handleHeaderDeleteColumn) {
+        AppCore.handleHeaderDeleteColumn();
+    }
+};
+</script>
 </body>
 </html>

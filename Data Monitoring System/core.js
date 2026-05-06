@@ -2344,10 +2344,17 @@ export const AppCore = {
             }
 
             let columnId;
+            let shouldCopyData = false;
+            let activeTab = null;
 
             if (isMonitoring) {
                 // Check which tab is active for monitoring templates
-                const activeTab = document.querySelector('.tab-btn.active').getAttribute('data-tab');
+                const activeTabElement = document.querySelector('.tab-btn.active');
+                activeTab = activeTabElement ? activeTabElement.getAttribute('data-tab') : null;
+                
+                // Debug logging
+                console.log('Active tab:', activeTab);
+                console.log('Is monitoring:', isMonitoring);
                 
                 if (activeTab === 'existing') {
                     // For monitoring templates: select existing column from encoding
@@ -2365,6 +2372,9 @@ export const AppCore = {
                         UI.showToast('This column is already added to the template.', 'error');
                         return;
                     }
+                    
+                    // Set flag to copy data since we're adding an existing encoding column
+                    shouldCopyData = true;
                 } else if (activeTab === 'copyMultiple') {
                     // For monitoring templates: copy multiple columns from encoding
                     const checkedCheckboxes = document.querySelectorAll('.column-checkbox:checked');
@@ -2383,7 +2393,18 @@ export const AppCore = {
 
                     // Add each selected column
                     for (const colId of columnIds) {
+                        // Check if column already exists in template
+                        const existingColumn = this.state.currentTemplate.columns?.find(
+                            col => col.encoding_columns.id === colId
+                        );
+                        
+                        if (existingColumn) {
+                            console.log('DUPLICATE PREVENTED in copyMultiple:', colId, 'already exists as:', existingColumn.encoding_columns.column_name);
+                            continue;
+                        }
+                        
                         displayOrder++;
+                        console.log('Adding column in copyMultiple loop:', { colId, displayOrder });
                         await SupabaseService.addColumnToTemplate(
                             this.state.currentTemplate.id,
                             colId,
@@ -2421,14 +2442,26 @@ export const AppCore = {
                     // Final render to ensure everything is updated
                     this.renderAll();
                     return;
-                } else {
-                    // For monitoring templates: create new column
+                } else if (activeTab === 'new' || !activeTab) {
+                    // For monitoring templates: create new column (fallback to 'new' tab if no active tab found)
                     const name = document.getElementById('monitoringNewColumnName').value.trim();
                     const columnType = document.getElementById('monitoringNewColumnType').value;
                     const groupName = document.getElementById('monitoringColumnGroup').value.trim() || null;
                     
+                    console.log('Creating new column with name:', name);
+                    
                     if (!name) {
                         UI.showToast('Column name is required.', 'error');
+                        return;
+                    }
+
+                    // Validation: Check if column with this name already exists in template
+                    const existingColumnByName = this.state.currentTemplate.columns?.find(
+                        col => col.encoding_columns.column_name.toLowerCase() === name.toLowerCase()
+                    );
+                    
+                    if (existingColumnByName) {
+                        UI.showToast('A column with this name already exists in template.', 'error');
                         return;
                     }
 
@@ -2437,7 +2470,7 @@ export const AppCore = {
                         this.state.departmentId,
                         name,
                         columnType,
-                        0, // display order will be set when adding to template
+                        newDisplayOrder,
                         false, // isRequired
                         groupName // Use group name instead of parent_column_id
                     );
@@ -2499,18 +2532,35 @@ export const AppCore = {
             }
 
             // Add to current template with display order to add at the end
-            await SupabaseService.addColumnToTemplate(
-                this.state.currentTemplate.id,
-                columnId,
-                newDisplayOrder
-            );
+            // Only execute this for single column additions (not copyMultiple which handles its own additions)
+            if (columnId !== undefined && activeTab !== 'copyMultiple') {
+                // Comprehensive validation: Check if column already exists in template
+                const existingColumn = this.state.currentTemplate.columns?.find(
+                    col => col.encoding_columns.id === columnId
+                );
+                
+                if (existingColumn) {
+                    console.log('DUPLICATE PREVENTED: Column already exists in template:', { columnId, columnName: existingColumn.encoding_columns.column_name });
+                    UI.showToast('This column is already added to the template.', 'error');
+                    return; // Early return to prevent any further processing
+                }
+                
+                console.log('Adding column to template (single column path):', { columnId, newDisplayOrder, activeTab });
+                await SupabaseService.addColumnToTemplate(
+                    this.state.currentTemplate.id,
+                    columnId,
+                    newDisplayOrder
+                );
+            }
 
             // Clear cache once and refresh template structure
             this.clearCache(this.state.currentTemplate.id);
             this.state.currentTemplate = await SupabaseService.getTemplate(this.state.currentTemplate.id);
 
-            // If monitoring template, copy data from encoding entries
-            if (isMonitoring) {
+            // If monitoring template, copy data from encoding entries (only when adding existing encoding columns)
+            console.log('Data copying check:', { isMonitoring, shouldCopyData, columnId, activeTab });
+            if (isMonitoring && shouldCopyData && columnId !== undefined) {
+                console.log('Executing data copying...');
                 // Show loading overlay
                 if (loadingOverlay) {
                     loadingOverlay.style.display = 'flex';
@@ -2525,8 +2575,12 @@ export const AppCore = {
                 // Then reload entries with updated template structure
                 await this.loadEntries(this.state.currentTemplate.id);
                 UI.showToast(`Column added! ${copiedCount} entries copied from encoding.`);
-            } else {
+            } else if (!isMonitoring) {
                 // For encoding templates, reload entries
+                await this.loadEntries(this.state.currentTemplate.id);
+                UI.showToast('Column added!');
+            } else {
+                // For monitoring templates with new columns or copyMultiple (already handled), just reload entries
                 await this.loadEntries(this.state.currentTemplate.id);
                 UI.showToast('Column added!');
             }
@@ -2540,7 +2594,16 @@ export const AppCore = {
                 document.getElementById('newColumnType').value = 'text';
                 document.getElementById('columnGroup').value = '';
             } else {
+                // Clear all monitoring template form fields
                 document.getElementById('existingColumnSelect').value = '';
+                document.getElementById('monitoringNewColumnName').value = '';
+                document.getElementById('monitoringNewColumnType').value = 'text';
+                document.getElementById('monitoringColumnGroup').value = '';
+                
+                // Clear checkboxes in copyMultiple tab
+                document.querySelectorAll('.column-checkbox:checked').forEach(checkbox => {
+                    checkbox.checked = false;
+                });
             }
             
             window.closeColumnModal();
@@ -2686,6 +2749,8 @@ export const AppCore = {
     },
 
     deleteColumn: async function (columnId, columnName) {
+        console.log('Deleting column:', { columnId, columnName, templateId: this.state.currentTemplate?.id, module: this.state.currentTemplate?.module });
+        
         if (!confirm(`Delete column "${columnName}"? This affects all records.`)) return;
 
         try {
@@ -2698,7 +2763,10 @@ export const AppCore = {
             // Also delete from encoding_columns table (only for encoding templates)
             // For monitoring templates, keep the column for reuse in other templates
             if (this.state.currentTemplate.module !== 'monitoring') {
+                console.log('Deleting column from encoding_columns table');
                 await SupabaseService.deleteColumn(columnId);
+            } else {
+                console.log('Keeping column for reuse (monitoring template)');
             }
 
             // Refresh
@@ -2707,6 +2775,7 @@ export const AppCore = {
             this.renderAll();
             UI.showToast('Column deleted.');
         } catch (error) {
+            console.error('Delete column error:', error);
             UI.showToast('Failed: ' + error.message, 'error');
         }
     },

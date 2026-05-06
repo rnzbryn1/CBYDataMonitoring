@@ -408,16 +408,27 @@ export const SupabaseService = {
     const encodingTemplateIds = encodingTemplates.map(t => t.id);
     
     // Find which encoding template this column belongs to
-    const { data: templateColumn, error: templateError } = await this.client
-      .from('encoding_template_columns')
-      .select('template_id')
-      .eq('column_id', columnId)
-      .in('template_id', encodingTemplateIds)
-      .limit(1)
-      .single();
+    let templateColumn, templateError;
+    try {
+      const result = await this.client
+        .from('encoding_template_columns')
+        .select('template_id')
+        .eq('column_id', columnId)
+        .in('template_id', encodingTemplateIds)
+        .limit(1)
+        .single();
+      
+      templateColumn = result.data;
+      templateError = result.error;
+    } catch (err) {
+      console.warn('Error querying encoding_template_columns:', err);
+      templateError = err;
+      templateColumn = null;
+    }
     
     if (templateError || !templateColumn) {
-      // If column not found in any template, return 0
+      // If column not found in any template or query fails, return 0
+      console.log('Column not found in encoding templates or query failed:', templateError);
       return 0;
     }
     

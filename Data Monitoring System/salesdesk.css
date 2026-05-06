@@ -332,7 +332,8 @@ table {
     width: auto;
     min-width: 100%;
     table-layout: auto;
-    border-collapse: collapse;
+    border-collapse: separate;
+    border-spacing: 0;
     font-size: 13px;
 }
 
@@ -345,37 +346,59 @@ tbody td:not(:first-child) {
 
 /* Header */
 thead tr {
-    border-bottom: 1px solid #e2e8f0;
-    background: #f8fafc;
+border-bottom: 1px solid #e2e8f0;
+background: #f8fafc;
 }
 
 thead th {
-    text-align: left;
-    font-size: 11px;
-    font-weight: 600;
-    color: #94a3b8;
-    padding: 10px 14px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    white-space: nowrap;
+text-align: left;
+font-size: 12px;
+font-weight: 700;
+color: #000000;
+padding: 8px 12px;
+letter-spacing: 0.06em;
+text-transform: uppercase;
+white-space: nowrap;
+border-bottom: 2px solid #cbd5e1;
+border-right: 1px solid #e2e8f0;
+}
+
+/* Group header styling */
+.group-header {
+background: #e2e8f0 !important;
+text-align: center !important;
+font-weight: 700;
+color: #1e293b;
+text-transform: none;
+letter-spacing: normal;
+}
+
+.group-name {
+display: block;
+font-size: 14px;
 }
 
 /* Rows */
 tbody tr {
-    border-bottom: 0.5px solid #f1f5f9;
+    border-bottom: 1px solid #e2e8f0;
     transition: background 0.1s;
+}
+
+tbody tr:nth-child(even) {
+    background: #f8fafc;
 }
 
 tbody tr:last-child { border-bottom: none; }
 
-tbody tr:hover { background: #f8fafc; }
+tbody tr:hover { background: #f1f5f9; }
 
 tbody td:not(:first-child) {
-    padding: 11px 14px;
+    padding: 8px 12px;
     color: #1e293b;
     vertical-align: middle;
     word-wrap: break-word;
     overflow-wrap: break-word;
+    border-right: 1px solid #e2e8f0;
 }
 
 /* --- CHECKBOX COLUMN --- */
@@ -617,11 +640,96 @@ tbody td[colspan] {
     width: 100%;
     font-size: 13px;
     color: #475569;
-    padding: 6px 0;
-    margin-bottom: 4px;
-    background: none;
-    border: none;
+}
+
+/* --- COLUMN SELECTOR MODAL --- */
+#columnSelectorModal .modal-content {
+    max-width: 420px;
+}
+
+#columnSelectorContent {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+#columnSelectorContent .checkbox-item {
+    display: flex;
+    align-items: center;
+    padding: 8px 4px;
+    border-radius: 6px;
+    transition: background-color 0.15s;
+}
+
+#columnSelectorContent .checkbox-item:hover {
+    background-color: #f8fafc;
+}
+
+#columnSelectorContent input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    margin-right: 10px;
+    accent-color: #2563eb;
+}
+
+#columnSelectorContent label {
+    flex: 1;
+    font-size: 13px;
+    color: #374151;
     cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+#columnSelectorContent .formula-indicator {
+    background-color: #3b82f6;
+    color: white;
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-weight: 500;
+}
+
+#columnSelectorModal .modal-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 16px;
+    margin-top: 16px;
+    border-top: 1px solid #e5e7eb;
+}
+
+#columnSelectorModal .modal-actions .left-buttons {
+    display: flex;
+    gap: 8px;
+}
+
+#columnSelectorModal .modal-actions .left-buttons button {
+    background: #f8fafc;
+    color: #64748b;
+    border: 1px solid #e2e8f0;
+    padding: 6px 12px;
+    font-size: 12px;
+    border-radius: 6px;
+    transition: all 0.15s;
+}
+
+#columnSelectorModal .modal-actions .left-buttons button:hover {
+    background: #f1f5f9;
+    color: #475569;
+}
+
+#columnSelectorModal .modal-actions .apply-btn {
+    background: #2563eb !important;
+    color: white !important;
+    border: 1px solid #2563eb !important;
+    padding: 8px 20px !important;
+    font-weight: 500 !important;
+}
+
+#columnSelectorModal .modal-actions .apply-btn:hover {
+    background: #1d4ed8 !important;
 }
 
 /* --- FIELD HEADER (delete column menu) --- */
@@ -747,7 +855,6 @@ thead th {
     box-shadow: 0 2px 4px rgba(0,0,0,0.05);
 }
 
-
 /* Para sa pag-drag ng column to */
 th.dragging {
     opacity: 0.5;
@@ -763,12 +870,10 @@ th {
 ========================= */
 /* ==========TABLE SELECTION (Excel feel)===========*/
 td.cell-selected {
-    background: #bfdbfe !important;
-    box-shadow: inset 0 0 0 2px #2563eb;
+    outline: 2px solid #2563eb;
 }
 
 td.cell-focused {
-    background: #dbeafe;
     outline: 2px solid #2563eb;
 }
 
@@ -799,6 +904,11 @@ td.cell-focused {
 .context-menu button:hover {
     background: #e0f2fe;
 }
+
+.context-menu button.delete:hover {
+    background: #fee2e2;
+}
+
 
 /* =========================
    MODAL OVERLAY
@@ -957,11 +1067,244 @@ td.cell-focused {
 .compute-columns {
     display: flex;
     flex-wrap: wrap;
+    gap: 6px;
+}
+
+.col-btn {
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    font-size: 12px;
+    padding: 5px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: 0.15s ease;
+}
+
+.col-btn:hover {
+    background: #2563eb;
+    color: white;
+}
 
 
 /* =========================
-   MONITORING TEMPLATE TABS
+   FUNCTION BUTTONS
 ========================= */
+.compute-functions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.func-btn {
+    font-size: 12px;
+    padding: 5px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: 0.15s ease;
+    font-family: 'Courier New', monospace;
+}
+
+/* Math functions - blue */
+.func-btn.func-math {
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    color: #1e40af;
+}
+
+.func-btn.func-math:hover {
+    background: #2563eb;
+    color: white;
+}
+
+/* Date functions - amber */
+.func-btn.func-date {
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    color: #92400e;
+}
+
+.func-btn.func-date:hover {
+    background: #f59e0b;
+    color: white;
+}
+
+/* Encoding category buttons - green */
+.encoding-categories {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.encoding-category-btn {
+    font-size: 12px;
+    padding: 5px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: 0.15s ease;
+    font-family: 'Courier New', monospace;
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    color: #166534;
+}
+
+.encoding-category-btn:hover {
+    background: #16a34a;
+    color: white;
+}
+
+
+/* =========================
+   ACTION BUTTONS
+========================= */
+.compute-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 6px;
+    padding-top: 12px;
+    border-top: 1px solid #f1f5f9;
+}
+
+.compute-actions button {
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: 0.2s ease;
+}
+
+/* Apply button */
+.btn-apply {
+    background: #2563eb;
+    color: white;
+}
+
+.btn-apply:hover {
+    background: #1e40af;
+}
+
+/* Remove button */
+.btn-remove {
+    background: transparent;
+    color: #ef4444;
+    border: 1px solid #fecaca !important;
+}
+
+.btn-remove:hover {
+    background: #fef2f2;
+}
+
+
+/* =========================
+   ANIMATION
+========================= */
+@keyframes popIn {
+    from {
+        transform: scale(0.92);
+        opacity: 0;
+    }
+    to {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+/* --- LOADING OVERLAY --- */
+.loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 10000;
+}
+
+.loading-spinner {
+    width: 50px;
+    height: 50px;
+    border: 4px solid #f3f3f3;
+    border-top: 4px solid #2563eb;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.loading-text {
+    color: white;
+    font-size: 16px;
+    margin-top: 20px;
+    font-weight: 500;
+}
+
+/* ------------------------------------ */
+/* ------Para sa Add Color Modal------- */
+/* ------------------------------------ */
+/* Target buttons (reuse feel ng func-btn pero mas clear active state) */
+.color-modal input[type="color"] {
+    width: 100%;
+    height: 50px;
+    border: none;
+    margin: 15px 0;
+    cursor: pointer;
+}
+
+.target-group {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.target-btn {
+    flex: 1;
+    padding: 10px;
+    border: none;
+    background: #eee;
+    cursor: pointer;
+    border-radius: 6px;
+}
+
+.target-btn.active {
+    background: #2563eb;
+    color: white;
+}
+
+.color-palette {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 8px;
+    margin: 15px 0;
+}
+
+.color-swatch {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: transform 0.1s ease;
+}
+
+.color-swatch:hover {
+    transform: scale(1.1);
+}
+
+.color-swatch.active {
+    border: 2px solid #2563eb;
+    box-shadow: 0 0 0 2px #93c5fd;
+}
+
+/* --- TAB INTERFACE FOR MONITORING COLUMN MODAL --- */
 .tab-navigation {
     display: flex;
     gap: 0;
@@ -1030,163 +1373,145 @@ td.cell-focused {
     border-color: #2563eb;
     box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
 }
-    gap: 6px;
+
+/* --- COPY MULTIPLE COLUMNS UI --- */
+#encodingColumnsList {
+    border: 1px solid #e2e8f0 !important;
+    border-radius: 8px !important;
+    background: #f8fafc !important;
+    padding: 12px !important;
 }
 
-.col-btn {
-    background: #eff6ff;
-    border: 1px solid #bfdbfe;
-    font-size: 12px;
-    padding: 5px 10px;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: 0.15s ease;
+#encodingColumnsList .template-group {
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #e2e8f0;
 }
 
-.col-btn:hover {
-    background: #2563eb;
-    color: white;
+#encodingColumnsList .template-group:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
 }
 
-
-/* =========================
-   FUNCTION BUTTONS
-========================= */
-.compute-functions {
+#encodingColumnsList .template-header {
     display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-}
-
-.func-btn {
-    font-size: 12px;
-    padding: 5px 10px;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: 0.15s ease;
-    font-family: 'Courier New', monospace;
-}
-
-/* Math functions - blue */
-.func-btn.func-math {
-    background: #eff6ff;
-    border: 1px solid #bfdbfe;
-    color: #1e40af;
-}
-
-.func-btn.func-math:hover {
-    background: #2563eb;
-    color: white;
-}
-
-/* Date functions - amber */
-.func-btn.func-date {
-    background: #fffbeb;
-    border: 1px solid #fde68a;
-    color: #92400e;
-}
-
-.func-btn.func-date:hover {
-    background: #f59e0b;
-    color: white;
-}
-
-
-/* =========================
-   ACTION BUTTONS
-========================= */
-.compute-actions {
-    display: flex;
-    justify-content: flex-end;
+    align-items: center;
     gap: 8px;
-    margin-top: 6px;
-    padding-top: 12px;
-    border-top: 1px solid #f1f5f9;
+    margin-bottom: 8px;
+    padding: 6px 8px;
+    background: #ffffff;
+    border-radius: 6px;
+    border: 1px solid #e2e8f0;
 }
 
-.compute-actions button {
-    padding: 8px 16px;
-    border-radius: 8px;
-    border: none;
-    cursor: pointer;
+#encodingColumnsList .template-header label {
+    font-weight: 600;
     font-size: 13px;
+    color: #374151;
+    cursor: pointer;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+#encodingColumnsList .template-checkbox {
+    width: 16px !important;
+    height: 16px !important;
+    accent-color: #2563eb;
+}
+
+#encodingColumnsList .columns-list {
+    margin-left: 12px;
+    padding-left: 12px;
+    border-left: 2px solid #e2e8f0;
+}
+
+#encodingColumnsList .column-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    margin-bottom: 2px;
+    border-radius: 4px;
+    transition: background-color 0.15s ease;
+}
+
+#encodingColumnsList .column-item:hover {
+    background: #f1f5f9;
+}
+
+#encodingColumnsList .column-item label {
+    font-size: 12px;
+    color: #64748b;
+    cursor: pointer;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+}
+
+#encodingColumnsList .column-checkbox {
+    width: 14px !important;
+    height: 14px !important;
+    accent-color: #2563eb;
+}
+
+#encodingColumnsList .column-checkbox:disabled {
+    accent-color: #cbd5e1;
+    opacity: 0.5;
+}
+
+#encodingColumnsList .column-info {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+#encodingColumnsList .column-type {
+    font-size: 10px;
+    color: #94a3b8;
+    background: #f1f5f9;
+    padding: 1px 4px;
+    border-radius: 3px;
+    text-transform: uppercase;
     font-weight: 500;
-    transition: 0.2s ease;
 }
 
-/* Apply button */
-.btn-apply {
-    background: #2563eb;
-    color: white;
+#encodingColumnsList .already-added {
+    font-size: 10px;
+    color: #059669;
+    font-weight: 500;
 }
 
-.btn-apply:hover {
-    background: #1e40af;
+#encodingColumnsList .select-all-controls {
+    display: flex;
+    gap: 8px;
+    padding: 8px 0;
+    border-top: 1px solid #e2e8f0;
+    margin-top: 12px;
 }
 
-/* Remove button */
-.btn-remove {
-    background: transparent;
-    color: #ef4444;
-    border: 1px solid #fecaca !important;
+#encodingColumnsList .select-all-controls button {
+    padding: 6px 12px !important;
+    font-size: 12px !important;
+    border: 1px solid #e2e8f0 !important;
+    background: #ffffff !important;
+    color: #64748b !important;
+    border-radius: 6px !important;
+    cursor: pointer;
+    transition: all 0.15s ease;
 }
 
-.btn-remove:hover {
-    background: #fef2f2;
-}
-
-
-/* =========================
-   ANIMATION
-========================= */
-@keyframes popIn {
-    from {
-        transform: scale(0.92);
-        opacity: 0;
-    }
-    to {
-        transform: scale(1);
-        opacity: 1;
-    }
+#encodingColumnsList .select-all-controls button:hover {
+    background: #f8fafc !important;
+    border-color: #cbd5e1 !important;
+    color: #475569 !important;
 }
 
 /* --- SCROLLBAR --- */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
 ::-webkit-scrollbar-track { background: transparent; }
-
-/* --- LOADING OVERLAY --- */
-.loading-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: rgba(0, 0, 0, 0.7);
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    z-index: 10000;
-}
-
-.loading-spinner {
-    width: 50px;
-    height: 50px;
-    border: 4px solid #f3f3f3;
-    border-top: 4px solid #2563eb;
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-}
-
-.loading-text {
-    color: white;
-    font-size: 16px;
-    margin-top: 20px;
-    font-weight: 500;
-}
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
