@@ -2256,6 +2256,28 @@ export const AppCore = {
         const encodingForm = document.getElementById('encodingColumnForm');
         const monitoringForm = document.getElementById('monitoringColumnForm');
         const columnSelect = document.getElementById('existingColumnSelect');
+        const addColumnBtn = document.getElementById('addColumnBtn');
+
+        // Remove any existing click listener to prevent duplicate handlers
+        if (addColumnBtn && addColumnBtn._columnBtnListener) {
+            addColumnBtn.removeEventListener('click', addColumnBtn._columnBtnListener);
+        }
+
+        // Reset button state (in case it was disabled from previous operation)
+        if (addColumnBtn) {
+            addColumnBtn.disabled = false;
+            addColumnBtn.innerText = 'Add';
+        }
+
+        // Attach fresh click listener to the button
+        if (addColumnBtn) {
+            addColumnBtn._columnBtnListener = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.addColumnToTemplate();
+            };
+            addColumnBtn.addEventListener('click', addColumnBtn._columnBtnListener);
+        }
 
         // Check if current template is monitoring type
         const isMonitoring = this.state.currentTemplate.module === 'monitoring';
@@ -2298,18 +2320,23 @@ export const AppCore = {
     },
 
     addColumnToTemplate: async function () {
-        if (!this.state.currentTemplate) return UI.showToast('No template selected.', 'error');
-
-        const isMonitoring = this.state.currentTemplate.module === 'monitoring';
+        const isMonitoring = this.state.currentTemplate?.module === 'monitoring';
         const loadingOverlay = document.getElementById('loadingOverlay');
         const addColumnBtn = document.getElementById('addColumnBtn');
 
         try {
+            // Validate template exists
+            if (!this.state.currentTemplate) {
+                UI.showToast('No template selected.', 'error');
+                return;
+            }
+
             // Disable button to prevent double-click
             if (addColumnBtn) {
                 addColumnBtn.disabled = true;
                 addColumnBtn.innerText = 'Adding...';
             }
+
             // Get current template state without clearing cache initially
             // Cache will be cleared after column operations to ensure fresh data
             if (!this.state.currentTemplate.columns) {
@@ -2325,20 +2352,25 @@ export const AppCore = {
                 if (activeTab === 'existing') {
                     // For monitoring templates: select existing column from encoding
                     columnId = document.getElementById('existingColumnSelect').value;
-                    if (!columnId) return UI.showToast('Please select a column from encoding templates.', 'error');
+                    if (!columnId) {
+                        UI.showToast('Please select a column from encoding templates.', 'error');
+                        return;
+                    }
 
                     // Check if column already exists in current template
                     const existingColumn = this.state.currentTemplate.columns?.find(
                         col => col.encoding_columns.id === columnId
                     );
                     if (existingColumn) {
-                        return UI.showToast('This column is already added to the template.', 'error');
+                        UI.showToast('This column is already added to the template.', 'error');
+                        return;
                     }
                 } else if (activeTab === 'copyMultiple') {
                     // For monitoring templates: copy multiple columns from encoding
                     const checkedCheckboxes = document.querySelectorAll('.column-checkbox:checked');
                     if (checkedCheckboxes.length === 0) {
-                        return UI.showToast('Please select at least one column to copy.', 'error');
+                        UI.showToast('Please select at least one column to copy.', 'error');
+                        return;
                     }
 
                     const columnIds = Array.from(checkedCheckboxes).map(cb => cb.dataset.columnId);
@@ -2395,7 +2427,10 @@ export const AppCore = {
                     const columnType = document.getElementById('monitoringNewColumnType').value;
                     const groupName = document.getElementById('monitoringColumnGroup').value.trim() || null;
                     
-                    if (!name) return UI.showToast('Column name is required.', 'error');
+                    if (!name) {
+                        UI.showToast('Column name is required.', 'error');
+                        return;
+                    }
 
                     // Create reusable column with group name (for visual grouping only)
                     const column = await SupabaseService.createColumn(
@@ -2421,7 +2456,10 @@ export const AppCore = {
                 const columnType = document.getElementById('newColumnType').value;
                 const groupName = document.getElementById('columnGroup').value.trim() || null;
                 
-                if (!name) return UI.showToast('Column name is required.', 'error');
+                if (!name) {
+                    UI.showToast('Column name is required.', 'error');
+                    return;
+                }
 
                 // Calculate display order to add column within the group or at the end
                 const existingColumns = this.state.currentTemplate.columns || [];
