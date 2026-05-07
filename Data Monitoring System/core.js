@@ -68,6 +68,8 @@ export const AppCore = {
         // Column visibility feature
         columnVisibility:       {},             // { "columnName": true/false, ... }
         showColumnSelector:     false,          // Whether column selector UI is visible
+        // Monitoring templates that need formula recalculation after encoding updates
+        pendingFormulaRecalculation: new Set(), // Set of template IDs needing formula refresh
     },
 
     // ============================================================
@@ -481,9 +483,19 @@ export const AppCore = {
             this.renderAll();
 
             // Load formulas and computations in background
-            this.loadSavedFormulas().then(() => {
+            this.loadSavedFormulas().then(async () => {
                 this.renderHeaders(); // Update headers with formula indicators
                 this.renderAll(); // Update form to hide computed columns
+
+                // If this monitoring template was updated from encoding while inactive,
+                // recalculate formulas so computed values reflect the latest data
+                if (this.state.pendingFormulaRecalculation.has(templateId)) {
+                    this.state.pendingFormulaRecalculation.delete(templateId);
+                    if (this.state.currentTemplate && this.state.currentTemplate.module === 'monitoring') {
+                        await this.applyLoadedFormulas();
+                        this.renderTable(this.state.localEntries);
+                    }
+                }
             });
             
             this.loadColumnComputations(); // Run in background
@@ -7378,7 +7390,7 @@ export const AppCore = {
             this.clearCache(monitoringTemplate.id);
         }
 
-        // If a monitoring template is currently active, refresh the UI
+        // If a monitoring template is currently active, refresh the UI immediately
         if (this.state.currentTemplate && this.state.currentTemplate.module === 'monitoring') {
             // Reload entries from database
             await this.loadEntries(this.state.currentTemplate.id);
@@ -7386,6 +7398,12 @@ export const AppCore = {
             await this.applyLoadedFormulas();
             // Re-render the table
             this.renderTable(this.state.localEntries);
+        } else {
+            // Mark all updated monitoring templates as needing formula recalculation
+            // so they get refreshed when the user switches to them later
+            for (const monitoringTemplate of monitoringTemplates) {
+                this.state.pendingFormulaRecalculation.add(monitoringTemplate.id);
+            }
         }
 
         // Show toast only if not during compute operation
