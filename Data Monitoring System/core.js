@@ -5174,7 +5174,7 @@ export const AppCore = {
     /**
      * Update and render ALL active column computations
      */
-    updateAllColumnComputations: function () {
+    updateAllColumnComputations: async function () {
         const table = document.getElementById('tableData');
         if (!table) return;
 
@@ -5186,6 +5186,9 @@ export const AppCore = {
             top: [],
             bottom: []
         };
+
+        // Track which entries and columns were updated for monitoring sync
+        const updatedEntries = new Map();
 
         // Calculate all computations and group by position
         Object.entries(this.state.activeColumnComputes || {}).forEach(([columnName, config]) => {
@@ -5219,6 +5222,9 @@ export const AppCore = {
                 func: config.func,
                 result
             });
+
+            // Track updated entries for monitoring sync (column computations don't change individual entry values)
+            // Column computations only show aggregate results, so we don't need to sync individual entries
         });
 
         // Render combined footer rows for each position
@@ -5227,6 +5233,28 @@ export const AppCore = {
                 this.renderCombinedColumnFooter(computations, position);
             }
         });
+
+        // 🔄 AUTO-UPDATE MONITORING TEMPLATES after column computations
+        // Column computations don't change individual entry values, but they may affect
+        // formulas in monitoring templates that reference computed columns
+        if (this.state.currentTemplate && this.state.currentTemplate.module === 'encoding') {
+            // Trigger a refresh of monitoring templates to ensure they get the latest data
+            setTimeout(async () => {
+                try {
+                    const monitoringTemplates = await this.findRelatedMonitoringTemplates();
+                    if (monitoringTemplates.length > 0) {
+                        // If a monitoring template is currently active, refresh it
+                        if (this.state.currentTemplate && this.state.currentTemplate.module === 'monitoring') {
+                            await this.loadEntries(this.state.currentTemplate.id);
+                            await this.applyLoadedFormulas();
+                            this.renderTable(this.state.localEntries);
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error refreshing monitoring templates after column computation:', error);
+                }
+            }, 100); // Small delay to ensure computations are complete
+        }
     },
 
     loadSavedFormulas: async function () {
@@ -5338,6 +5366,34 @@ export const AppCore = {
 
         // Re-render table to show updated values
         this.renderTable(this.state.localEntries);
+
+        // 🔄 AUTO-UPDATE MONITORING TEMPLATES after applying formulas
+        // Column formulas change individual entry values, so we need to sync to monitoring
+        if (this.state.currentTemplate && this.state.currentTemplate.module === 'encoding') {
+            // Trigger auto-update for all entries since formulas may have changed multiple columns
+            for (const entry of this.state.localEntries) {
+                // Get all columns that have formulas and were updated
+                const updatedColumns = Object.keys(this.state.columnFormulas || {});
+                const updatedValues = {};
+                
+                for (const columnName of updatedColumns) {
+                    if (entry.values?.hasOwnProperty(columnName)) {
+                        const colDef = columns.find(c => c.encoding_columns.column_name === columnName);
+                        if (colDef) {
+                            updatedValues[colDef.id] = entry.values[columnName];
+                        }
+                    }
+                }
+                
+                if (Object.keys(updatedValues).length > 0) {
+                    await this.autoUpdateMonitoring({
+                        entryId: entry.id,
+                        values: updatedValues,
+                        columnName: updatedColumns[0] // Primary column for tracking
+                    });
+                }
+            }
+        }
     },
 
     /**
@@ -7120,6 +7176,15 @@ export const AppCore = {
                 const payload = {};
                 payload[targetColDef.id] = dbValue;
                 await SupabaseService.updateEntryValues(entryId, payload);
+                
+                // 🔄 AUTO-UPDATE MONITORING TEMPLATES after formula calculation
+                if (this.state.currentTemplate && this.state.currentTemplate.module === 'encoding') {
+                    await this.autoUpdateMonitoring({
+                        entryId: entryId,
+                        values: payload,
+                        columnName: targetColumnName
+                    });
+                }
                 
                 // IMPORTANT: Update entry data so virtual scrolling can render the computed value
                 if (entry) {
