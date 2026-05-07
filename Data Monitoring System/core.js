@@ -626,10 +626,9 @@ export const AppCore = {
                 }
                 keysToDelete.forEach(key => this.state.queryCache.delete(key));
                 
-                // Clear template-specific cache
-                delete this.state.cache[`template_${templateId}`];
-                delete this.state.cache[`entries_${templateId}`];
-                delete this.state.cache[`columns_${templateId}`];
+                // Clear template-specific cache (iterate keys to catch all page/size variants)
+                const cacheKeysToDelete = Object.keys(this.state.cache).filter(k => k.includes(templateId));
+                cacheKeysToDelete.forEach(k => delete this.state.cache[k]);
             } else {
                 // Clear all caches
                 this.state.queryCache.clear();
@@ -657,10 +656,9 @@ export const AppCore = {
             }
             keysToDelete.forEach(key => this.state.queryCache.delete(key));
             
-            // Clear template-specific cache
-            delete this.state.cache[`template_${templateId}`];
-            delete this.state.cache[`entries_${templateId}`];
-            delete this.state.cache[`columns_${templateId}`];
+            // Clear template-specific cache (iterate keys to catch all page/size variants)
+            const cacheKeysToDelete = Object.keys(this.state.cache).filter(k => k.includes(templateId));
+            cacheKeysToDelete.forEach(k => delete this.state.cache[k]);
         } else {
             // Clear all caches
             this.state.queryCache.clear();
@@ -1881,11 +1879,11 @@ export const AppCore = {
                 if (entry) {
                     if (!entry.values) entry.values = {};
                     entry.values[info.colName] = newValue;
-                    
+
                     // Update valueDetails properly
                     if (!entry.valueDetails) entry.valueDetails = [];
                     entry.valueDetails = entry.valueDetails.filter(v => v.column_id !== colId);
-                    
+
                     if (newValue !== '') {
                         entry.valueDetails.push({
                             column_id: colId,
@@ -1893,6 +1891,9 @@ export const AppCore = {
                         });
                     }
                 }
+
+                // Clear cache so other sheets load fresh data
+                this.clearCacheImmediate(this.state.currentTemplateId);
 
             } catch (err) {
                 UI.showToast('Save failed: ' + err.message, 'error');
@@ -1979,7 +1980,7 @@ export const AppCore = {
         });
 
         if (!changedEntries.size) return;
-        
+
         for (const [entryId, values] of changedEntries) {
             try {
                 await SupabaseService.updateEntryValues(entryId, values);
@@ -1999,6 +2000,9 @@ export const AppCore = {
                 UI.showToast('Save failed: ' + err.message, 'error');
             }
         }
+
+        // Clear cache so other sheets load fresh data
+        this.clearCacheImmediate(this.state.currentTemplateId);
 
         // AUTO-UPDATE - Recalculate for each changed entry and column
         // 🔄 AUTO-UPDATE - Recalculate for each changed entry and column
@@ -2140,8 +2144,11 @@ export const AppCore = {
             
             this.closeEditModal();
             UI.showToast('Entry updated successfully!');
+
+            // Clear cache before reloading so we get fresh data
+            this.clearCacheImmediate(this.state.currentTemplateId);
             await this.loadEntries(this.state.currentTemplateId);
-            
+
             // 🔄 UPDATE COLUMN COMPUTATIONS when entry is edited
             if (Object.keys(this.state.activeColumnComputes || {}).length > 0) {
                 this.updateAllColumnComputations();
@@ -2408,7 +2415,8 @@ export const AppCore = {
                         await SupabaseService.addColumnToTemplate(
                             this.state.currentTemplate.id,
                             colId,
-                            displayOrder
+                            displayOrder,
+                            'linked'
                         );
                     }
 
@@ -2546,10 +2554,15 @@ export const AppCore = {
                 }
                 
                 console.log('Adding column to template (single column path):', { columnId, newDisplayOrder, activeTab });
+                
+                // Determine linkage type: existing encoding columns are linked, new monitoring columns are independent
+                const linkageType = (isMonitoring && activeTab === 'existing') ? 'linked' : 'independent';
+                
                 await SupabaseService.addColumnToTemplate(
                     this.state.currentTemplate.id,
                     columnId,
-                    newDisplayOrder
+                    newDisplayOrder,
+                    linkageType
                 );
             }
 
@@ -2901,6 +2914,9 @@ export const AppCore = {
 
             this.state.localEntries = await SupabaseService.getAllEntries(this.state.currentTemplate.id);
             this.renderTable(this.state.localEntries);
+
+            // Clear cache so other sheets load fresh data
+            this.clearCacheImmediate(this.state.currentTemplate.id);
 
             // 🔥 Recalculate global formulas (UNIQUE) after deletion since the dataset changed
             await this.recalculateGlobalFormulas();
@@ -7363,14 +7379,15 @@ export const AppCore = {
         const mappings = [];
 
         encodingColumns.forEach(encCol => {
-            const encColName = encCol.encoding_columns.column_name;
+            const encColId = encCol.encoding_columns.id;
             
-            // Find matching column in monitoring template (exact match first, then partial)
+            // Find matching column in monitoring template ONLY if explicitly linked
             const matchingMonCol = monitoringColumns.find(monCol => {
-                const monColName = monCol.encoding_columns.column_name;
-                return monColName === encColName || 
-                       monColName.toLowerCase().includes(encColName.toLowerCase()) ||
-                       encColName.toLowerCase().includes(monColName.toLowerCase());
+                const monColId = monCol.encoding_columns.id;
+                const linkageType = monCol.linkage_type || 'linked'; // Default for backward compatibility
+                
+                // Only sync columns that are explicitly linked AND have the same column ID
+                return linkageType === 'linked' && monColId === encColId;
             });
 
             if (matchingMonCol) {

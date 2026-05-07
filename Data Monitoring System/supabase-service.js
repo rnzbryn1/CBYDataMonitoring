@@ -63,6 +63,7 @@ export const SupabaseService = {
       .select(`
         id,
         display_order,
+        linkage_type,
         encoding_columns (
           id,
           column_name,
@@ -550,13 +551,14 @@ export const SupabaseService = {
    * @param {number} displayOrder
    * @returns {Promise<Object>} New mapping
    */
-  async addColumnToTemplate(templateId, columnId, displayOrder = null) {
+  async addColumnToTemplate(templateId, columnId, displayOrder = null, linkageType = 'linked') {
     const { data, error } = await this.client
       .from('encoding_template_columns')
       .insert([{
         template_id: templateId,
         column_id: columnId,
-        display_order: displayOrder
+        display_order: displayOrder,
+        linkage_type: linkageType
       }])
       .select()
       .single();
