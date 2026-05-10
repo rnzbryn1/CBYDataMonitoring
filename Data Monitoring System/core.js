@@ -4122,6 +4122,10 @@ export const AppCore = {
                         <button type="button" class="func-btn func-math">=MAX()</button>
                         <button type="button" class="func-btn func-math">=MIN()</button>
                     </div>
+                    <span class="section-label" style="margin-top: 8px;">Logical</span>
+                    <div class="compute-functions">
+                        <button type="button" class="func-btn func-math">=IFERROR()</button>
+                    </div>
                     <span class="section-label" style="margin-top: 8px;">Statistical</span>
                     <div class="compute-functions">
                         <button type="button" class="func-btn func-math">=SUMIF()</button>
@@ -7069,6 +7073,65 @@ export const AppCore = {
                 const regex = new RegExp(`\\b${safeCol}\\b`, 'g');
                 evalExpr = evalExpr.replace(regex, num);
             });
+
+            // IFERROR function - similar to Excel
+            let iferrorIdx = evalExpr.indexOf('IFERROR(');
+            while (iferrorIdx !== -1) {
+                let depth = 1;
+                let endIdx = iferrorIdx + 8;
+                while (endIdx < evalExpr.length && depth > 0) {
+                    const c = evalExpr[endIdx];
+                    if (c === '(') depth++;
+                    else if (c === ')') depth--;
+                    endIdx++;
+                }
+                const argsStr = evalExpr.substring(iferrorIdx + 8, endIdx - 1);
+                const args = argsStr.split(',').map(a => a.trim());
+                if (args.length === 2) {
+                    const expression = args[0];
+                    const errorValue = args[1];
+                    try {
+                        const tempExpr = expression;
+                        let tempResult = tempExpr;
+                        // Process column names in the expression
+                        columns.forEach(c => {
+                            const colName = c.encoding_columns.column_name;
+                            const raw = entry.values[colName] ?? '0';
+                            const colType = c.encoding_columns.column_type;
+                            let num;
+                            if (colType === 'date' && raw) {
+                                let date;
+                                if (raw.includes('/')) {
+                                    const parts = raw.split('/');
+                                    if (parts.length === 3) {
+                                        const [day, month, year] = parts.map(p => parseInt(p, 10));
+                                        date = new Date(year, month - 1, day);
+                                    } else {
+                                        date = new Date(raw);
+                                    }
+                                } else {
+                                    date = new Date(raw);
+                                }
+                                if (!isNaN(date.getTime())) {
+                                    num = date.getTime() / (1000 * 60 * 60 * 24);
+                                } else {
+                                    num = 0;
+                                }
+                            } else {
+                                num = parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
+                            }
+                            const safeCol = colName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                            const regex = new RegExp(`\\b${safeCol}\\b`, 'g');
+                            tempResult = tempResult.replace(regex, num);
+                        });
+                        const result = eval(tempResult);
+                        evalExpr = evalExpr.substring(0, iferrorIdx) + String(result) + evalExpr.substring(endIdx);
+                    } catch {
+                        evalExpr = evalExpr.substring(0, iferrorIdx) + errorValue + evalExpr.substring(endIdx);
+                    }
+                }
+                iferrorIdx = evalExpr.indexOf('IFERROR(');
+            }
 
             try {
                 const result = eval(evalExpr);
