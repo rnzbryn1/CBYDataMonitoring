@@ -8,6 +8,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 <script type="module" src="auth-utils.js"></script>
 </head>
 
@@ -43,7 +44,7 @@
             <div class="action-bar">
                 <input type="text" id="search" placeholder="Search records..." oninput="searchData()">
                 <button onclick="deleteSelected()">Delete Selected</button>
-                <button onclick="sortByDate()">Sort by Date</button>
+                <!-- <button onclick="sortByDate()">Sort by Date</button>-->
                 <button onclick="exportToExcel()">Export Excel</button>
                 <button onclick="openImportModal()">Import Excel</button>
                 <button class="add-cat-btn" onclick="toggleColumnSelector()" title="Show/Hide Columns">Columns</button>
@@ -54,7 +55,7 @@
 
         <!-- DATA TABLE -->
         <section class="card">
-            <div class="table-wrapper">
+            <div class="table-wrapper" id="tableContainer">
                 <table>
                     <thead id="tableHeaders"></thead>
                     <tbody id="emptyRowInputs" style="display: none;"></tbody>
@@ -196,6 +197,21 @@
     </div>
 </div>
 
+<!-- ADD TO GROUP MODAL -->
+<div id="addToGroupModal" class="modal">
+    <div class="modal-content">
+        <span class="close-btn" onclick="closeAddToGroupModal()">&times;</span>
+        <h3>Add Column to Group</h3>
+        <p id="addToGroupMessage" style="font-size: 13px; color: #666; margin-bottom: 10px;"></p>
+        <input type="text" id="groupNameInput" placeholder="Enter group name">
+        <div id="existingGroupsList" style="font-size: 12px; color: #888; margin-top: 8px;"></div>
+        <div class="modal-actions">
+            <button onclick="closeAddToGroupModal()">Cancel</button>
+            <button onclick="confirmAddToGroup()">Add</button>
+        </div>
+    </div>
+</div>
+
 <!-- IMPORT MODAL -->
 <div id="importModal" class="modal">
     <div class="modal-content import-modal-content">
@@ -236,17 +252,42 @@
     </div>
 </div>
 
+<!-- COLOR MODAL -->
+<div id="colorModal" class="modal">
+    <div class="modal-content color-modal">
+        <span class="close-btn" onclick="closeColorModal()">&times;</span>
+        <h3>🎨 Apply Color</h3>
+
+        <div class="color-palette" id="colorPalette"></div>
+        <h3><br>Select Target</h3>
+
+        <div class="target-group">
+            <button class="target-btn active" data-target="single">Single</button>
+            <button class="target-btn" data-target="row">Horizontal</button>
+            <button class="target-btn" data-target="column">Vertical</button>
+        </div>
+
+        <div class="modal-actions">
+            <button onclick="closeColorModal()">Cancel</button>
+            <button onclick="applyCellColor()">Apply</button>
+        </div>
+    </div>
+</div>
+
 <div id="contextMenu" class="context-menu">
     <button id="ctxEdit">Edit Row</button>
+    <button id="ctxColor">Add Cell Color</button> 
     <button id="ctxCompute">Compute</button>
+    <button id="ctxComputeColumn">Compute Specific Column</button>
     <button id="ctxDelete" class="delete">Delete Row</button>
 </div>
 
-<div id="headerContextMenu" class="context-menu">
-    <button id="ctxEditColumn">Edit Column</button>
+<div id="headerContextMenu" class="context-menu" style="display: none;">
+    <button id="hctxComputeColumn" onclick="handleHeaderComputeColumn()">Compute Whole Column</button>
+    <button id="hctxRenameColumn" onclick="handleHeaderRenameColumn()">Rename Column</button>
+    <button id="hctxAddToGroup" onclick="handleHeaderAddToGroup()">Add to Group</button>
+    <button id="hctxRemoveFromGroup" onclick="handleHeaderRemoveFromGroup()" style="display: none;">Remove from Group</button>
     <button id="hctxDeleteColumn" class="delete" onclick="handleHeaderDeleteColumn()">Delete Column</button>
-    <button id="ctxRenameGroup">Rename Group</button>
-    <button id="ctxAddToGroup">Add to Group</button>
 </div>
 
 <!-- LOADING OVERLAY -->
@@ -259,9 +300,84 @@
 
 <!-- Global function references for onclick handlers -->
 <script>
+// Column visibility functions
+window.toggleColumnSelector = function() {
+    if (typeof AppCore !== 'undefined' && AppCore.toggleColumnSelector) {
+        AppCore.toggleColumnSelector();
+    }
+};
+
+window.selectAllColumns = function(select) {
+    if (typeof AppCore !== 'undefined' && AppCore.selectAllColumns) {
+        AppCore.selectAllColumns(select);
+    }
+};
+
+window.applyColumnVisibility = function() {
+    if (typeof AppCore !== 'undefined' && AppCore.applyColumnVisibility) {
+        AppCore.applyColumnVisibility();
+    }
+};
+
+// Header context menu functions
+window.handleHeaderComputeColumn = function() {
+    if (typeof AppCore !== 'undefined' && AppCore.handleHeaderComputeColumn) {
+        AppCore.handleHeaderComputeColumn();
+    }
+};
+
+window.handleHeaderRenameColumn = function() {
+    if (typeof AppCore !== 'undefined' && AppCore.handleHeaderRenameColumn) {
+        AppCore.handleHeaderRenameColumn();
+    }
+};
+
+window.handleHeaderAddToGroup = function() {
+    if (typeof AppCore !== 'undefined' && AppCore.openAddToGroupModal) {
+        AppCore.openAddToGroupModal();
+    }
+};
+
+window.handleHeaderRemoveFromGroup = function() {
+    if (typeof AppCore !== 'undefined' && AppCore.handleHeaderRemoveFromGroup) {
+        AppCore.handleHeaderRemoveFromGroup();
+    }
+};
+
 window.handleHeaderDeleteColumn = function() {
     if (typeof AppCore !== 'undefined' && AppCore.handleHeaderDeleteColumn) {
         AppCore.handleHeaderDeleteColumn();
+    }
+};
+
+// Add to Group Modal functions
+window.openAddToGroupModal = function() {
+    if (typeof AppCore !== 'undefined' && AppCore.openAddToGroupModal) {
+        AppCore.openAddToGroupModal();
+    }
+};
+
+window.closeAddToGroupModal = function() {
+    document.getElementById('addToGroupModal').style.display = 'none';
+};
+
+window.confirmAddToGroup = function() {
+    if (typeof AppCore !== 'undefined' && AppCore.confirmAddToGroup) {
+        AppCore.confirmAddToGroup();
+    }
+};
+
+// Toggle Entry Form visibility
+window.toggleEntryForm = function() {
+    if (typeof AppCore !== 'undefined' && AppCore.toggleEntryForm) {
+        AppCore.toggleEntryForm();
+    }
+};
+
+// Save Empty Row (Excel-style inline entry)
+window.saveEmptyRow = function() {
+    if (typeof AppCore !== 'undefined' && AppCore.saveEmptyRow) {
+        AppCore.saveEmptyRow();
     }
 };
 </script>
