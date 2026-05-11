@@ -3927,29 +3927,31 @@ export const AppCore = {
     
     convertFormulaToVariables: function(formula) {
         if (!formula) return formula;
-        
+
         let convertedFormula = formula;
-        Object.keys(this.state.columnVariables).forEach(colName => {
+        const colNames = Object.keys(this.state.columnVariables).sort((a, b) => b.length - a.length);
+        colNames.forEach(colName => {
             const variable = this.state.columnVariables[colName];
             const safeCol = colName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const regex = new RegExp(`\\b${safeCol}\\b`, 'g');
             convertedFormula = convertedFormula.replace(regex, variable);
         });
-        
+
         return convertedFormula;
     },
-    
+
     convertFormulaToColumnNames: function(formula) {
         if (!formula) return formula;
-        
+
         let convertedFormula = formula;
-        Object.keys(this.state.variableColumns).forEach(variable => {
+        const variables = Object.keys(this.state.variableColumns).sort((a, b) => b.length - a.length);
+        variables.forEach(variable => {
             const colName = this.state.variableColumns[variable];
             const safeVar = variable.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const regex = new RegExp(`\\b${safeVar}\\b`, 'g');
             convertedFormula = convertedFormula.replace(regex, colName);
         });
-        
+
         return convertedFormula;
     },
 
@@ -4656,7 +4658,8 @@ export const AppCore = {
             }
 
             // Convert column names to variables for evaluation
-            columns.forEach(c => {
+            const sortedColumns = [...columns].sort((a, b) => b.encoding_columns.column_name.length - a.encoding_columns.column_name.length);
+            sortedColumns.forEach(c => {
                 const colName = c.encoding_columns.column_name;
                 const variable = this.getColumnVariable(colName);
                 const raw = entry.values[colName] ?? '0';
@@ -6482,7 +6485,8 @@ export const AppCore = {
         }
 
         // Convert column names to variables for evaluation
-        columns.forEach(c => {
+        const sortedColumns = [...columns].sort((a, b) => b.encoding_columns.column_name.length - a.encoding_columns.column_name.length);
+        sortedColumns.forEach(c => {
             const colName = c.encoding_columns.column_name;
             const variable = this.getColumnVariable(colName);
             const raw = entry.values[colName] ?? '0';
@@ -7506,7 +7510,8 @@ export const AppCore = {
             });
 
             // Convert column names to numbers for evaluation
-            columns.forEach(c => {
+            const sortedColumns = [...columns].sort((a, b) => b.encoding_columns.column_name.length - a.encoding_columns.column_name.length);
+            sortedColumns.forEach(c => {
                 const colName = c.encoding_columns.column_name;
                 const raw = entry.values[colName] ?? '0';
                 const colType = c.encoding_columns.column_type;
@@ -7566,7 +7571,8 @@ export const AppCore = {
                         const tempExpr = expression;
                         let tempResult = tempExpr;
                         // Process column names in the expression
-                        columns.forEach(c => {
+                        const sortedColumns = [...columns].sort((a, b) => b.encoding_columns.column_name.length - a.encoding_columns.column_name.length);
+                        sortedColumns.forEach(c => {
                             const colName = c.encoding_columns.column_name;
                             const raw = entry.values[colName] ?? '0';
                             const colType = c.encoding_columns.column_type;
