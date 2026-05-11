@@ -7842,6 +7842,7 @@ export const AppCore = {
         this.invalidateEncodingCache(this.state.currentTemplate.name);
 
         const entryId = changedData.entryId || 'new';
+        console.log('[AUTO-UPDATE] Triggered:', { entryId, operation, values: changedData.values, columnName: changedData.columnName });
         const updateKey = `${entryId}-${operation}`;
 
         // Track update keys to prevent duplicate queue entries
@@ -7902,6 +7903,7 @@ export const AppCore = {
      */
     performMonitoringUpdate: async function(sourceEncodingTemplate) {
         const monitoringTemplates = await this.findRelatedMonitoringTemplates();
+        console.log('[AUTO-UPDATE] Monitoring templates found:', monitoringTemplates.map(t => t.name));
         
         if (monitoringTemplates.length === 0) {
             return;
@@ -7909,6 +7911,7 @@ export const AppCore = {
 
         // Get all accumulated pending entries
         const pendingEntries = Object.entries(this.state.pendingMonitoringUpdatesData);
+        console.log('[AUTO-UPDATE] Pending entries:', pendingEntries.map(([id, d]) => ({ entryId: id, operation: d.operation, values: d.values })));
         if (pendingEntries.length === 0) {
             return;
         }
@@ -7922,7 +7925,7 @@ export const AppCore = {
                 };
                 await this.syncDataToMonitoringTemplate(monitoringTemplate, changedData, data.operation, sourceEncodingTemplate);
             }
-            this.clearCache(monitoringTemplate.id);
+            this.clearCacheImmediate(monitoringTemplate.id);
         }
 
         // Always mark ALL monitoring templates as needing formula recalculation
@@ -7955,6 +7958,7 @@ export const AppCore = {
      */
     syncDataToMonitoringTemplate: async function (monitoringTemplate, changedData, operation, sourceEncodingTemplate) {
         try {
+            console.log('[AUTO-UPDATE] syncDataToMonitoringTemplate:', { monitoringTemplate: monitoringTemplate.name, operation, entryId: changedData.entryId, values: changedData.values });
             // Get monitoring template columns to find matching columns
             const monitoringTemplateWithColumns = await SupabaseService.getTemplate(monitoringTemplate.id);
             const monitoringColumns = monitoringTemplateWithColumns.columns || [];
@@ -7966,9 +7970,10 @@ export const AppCore = {
 
             // Find matching columns between encoding and monitoring templates
             const columnMappings = this.findColumnMappings(encodingColumns, monitoringColumns);
+            console.log('[AUTO-UPDATE] Column mappings:', columnMappings.length, columnMappings.map(m => `${m.encodingColumn.encoding_columns.column_name} -> ${m.monitoringColumn.encoding_columns.column_name}`));
 
             if (columnMappings.length === 0) {
-                // console.log(`No matching columns found for monitoring template: ${monitoringTemplate.name}`);
+                console.log(`[AUTO-UPDATE] No matching columns found for monitoring template: ${monitoringTemplate.name}`);
                 return;
             }
 
@@ -7978,10 +7983,10 @@ export const AppCore = {
                     await this.createMonitoringEntry(monitoringTemplate, changedData, columnMappings);
                     break;
                 case 'update':
-                    await this.updateMonitoringEntry(monitoringTemplate, changedData, columnMappings);
+                    await this.updateMonitoringEntry(monitoringTemplate, changedData, columnMappings, sourceEncodingTemplate);
                     break;
                 case 'delete':
-                    await this.deleteMonitoringEntry(monitoringTemplate, changedData, columnMappings);
+                    await this.deleteMonitoringEntry(monitoringTemplate, changedData, columnMappings, sourceEncodingTemplate);
                     break;
             }
         } catch (error) {
@@ -8445,17 +8450,20 @@ export const AppCore = {
     /**
      * Update existing entry in monitoring template
      */
-    updateMonitoringEntry: async function (monitoringTemplate, changedData, columnMappings) {
+    updateMonitoringEntry: async function (monitoringTemplate, changedData, columnMappings, sourceEncodingTemplate = null) {
         try {
+            console.log('[AUTO-UPDATE] updateMonitoringEntry for:', { entryId: changedData.entryId, template: monitoringTemplate.name });
             // Find corresponding monitoring entry for encoding entry
             const targetMonitoringEntry = await this.findCorrespondingMonitoringEntry(
                 monitoringTemplate, 
                 changedData.entryId, 
-                columnMappings
+                columnMappings,
+                changedData,  // pass actual changedData so fallback matching knows what changed
+                sourceEncodingTemplate
             );
 
             if (!targetMonitoringEntry) {
-                console.log(`No corresponding monitoring entry found for encoding entry ${changedData.entryId}`);
+                console.log(`[AUTO-UPDATE] No corresponding monitoring entry found for encoding entry ${changedData.entryId}`);
                 // If no corresponding entry exists, create one
                 await this.createMonitoringEntry(monitoringTemplate, changedData, columnMappings);
                 return;
@@ -8474,10 +8482,13 @@ export const AppCore = {
                 }
             });
 
+            console.log('[AUTO-UPDATE] Monitoring values to update:', monitoringValues);
             // Save mapped values
             if (Object.keys(monitoringValues).length > 0) {
                 await SupabaseService.updateEntryValues(targetMonitoringEntry.id, monitoringValues);
-                console.log(`Updated monitoring entry ${targetMonitoringEntry.id} in template ${monitoringTemplate.name}`);
+                console.log(`[AUTO-UPDATE] Updated monitoring entry ${targetMonitoringEntry.id} in template ${monitoringTemplate.name}`);
+            } else {
+                console.log('[AUTO-UPDATE] No monitoring values to update (empty mapping)');
             }
         } catch (error) {
             console.error('Error updating monitoring entry:', error);
@@ -8486,43 +8497,46 @@ export const AppCore = {
 
     /**
      * Find corresponding monitoring entry for an encoding entry
-     * Uses row index matching as primary strategy
+     * Primary: reference_number lookup. Fallback: value matching.
      */
-    findCorrespondingMonitoringEntry: async function (monitoringTemplate, encodingEntryId, columnMappings, changedData = {}) {
+    findCorrespondingMonitoringEntry: async function (monitoringTemplate, encodingEntryId, columnMappings, changedData = {}, sourceEncodingTemplate = null) {
         try {
-            // First try direct reference matching using the source encoding entry id
+            console.log('[AUTO-UPDATE] findCorrespondingMonitoringEntry:', { monitoringTemplate: monitoringTemplate.name, encodingEntryId });
+            // 1) Primary: direct reference_number lookup (set when monitoring entry is auto-created)
+            console.log('[AUTO-UPDATE] Trying reference_number lookup...');
             const referencedMonitoringEntry = await SupabaseService.getMonitoringEntryByReferenceNumber(
                 monitoringTemplate.id,
                 encodingEntryId
             );
 
             if (referencedMonitoringEntry) {
-                console.log(`Found corresponding monitoring entry ${referencedMonitoringEntry.id} by reference number`);
+                console.log(`[AUTO-UPDATE] Found corresponding monitoring entry ${referencedMonitoringEntry.id} by reference number`);
                 return referencedMonitoringEntry;
             }
+            console.log('[AUTO-UPDATE] Reference_number lookup returned null, trying position fallback...');
 
-            // Get all entries from both templates
-            const encodingEntries = await SupabaseService.getEntries(this.state.currentTemplate.id);
-            const monitoringEntries = await SupabaseService.getEntries(monitoringTemplate.id);
-
-            // Find index of the encoding entry
-            const encodingEntryIndex = encodingEntries.findIndex(entry => entry.id === encodingEntryId);
-            
-            if (encodingEntryIndex === -1) {
-                console.log(`Encoding entry ${encodingEntryId} not found; using fallback values if available`);
-                return await this.findMonitoringEntryByMatchingValues(monitoringTemplate, encodingEntryId, columnMappings, changedData);
+            // 2) Fallback: match by position (row index) using the source encoding template
+            if (sourceEncodingTemplate) {
+                const positionMatch = await this.findMonitoringEntryByPosition(
+                    monitoringTemplate,
+                    encodingEntryId,
+                    sourceEncodingTemplate
+                );
+                if (positionMatch) {
+                    return positionMatch;
+                }
             }
 
-            // Match by row index (same position in both templates)
-            const correspondingMonitoringEntry = monitoringEntries[encodingEntryIndex];
-            
-            if (correspondingMonitoringEntry) {
-                console.log(`Found corresponding monitoring entry ${correspondingMonitoringEntry.id} at index ${encodingEntryIndex}`);
-                return correspondingMonitoringEntry;
-            }
+            console.log('[AUTO-UPDATE] Position fallback failed, trying value matching...');
 
-            // If no exact index match, try to find by matching key column values
-            return await this.findMonitoringEntryByMatchingValues(monitoringTemplate, encodingEntryId, columnMappings);
+            // 3) Last fallback: match by column values (lenient with recently changed columns)
+            return await this.findMonitoringEntryByMatchingValues(
+                monitoringTemplate,
+                encodingEntryId,
+                columnMappings,
+                changedData,
+                sourceEncodingTemplate
+            );
         } catch (error) {
             console.error('Error finding corresponding monitoring entry:', error);
             return null;
@@ -8533,26 +8547,44 @@ export const AppCore = {
      * Find monitoring entry by matching key column values
      * Fallback method when index matching doesn't work
      */
-    findMonitoringEntryByMatchingValues: async function (monitoringTemplate, encodingEntryId, columnMappings, changedData = {}) {
+    findMonitoringEntryByMatchingValues: async function (monitoringTemplate, encodingEntryId, columnMappings, changedData = {}, sourceEncodingTemplate = null) {
         try {
-            // Get encoding entry details
-            const encodingEntries = await SupabaseService.getEntries(this.state.currentTemplate.id);
-            let encodingEntry = encodingEntries.find(entry => entry.id === encodingEntryId);
+            console.log('[AUTO-UPDATE] findMonitoringEntryByMatchingValues:', { encodingEntryId, monitoringTemplate: monitoringTemplate.name });
+            // Fetch the specific encoding entry directly (no dependency on currentTemplate)
+            let encodingEntry = null;
+            try {
+                encodingEntry = await SupabaseService.getEntry(encodingEntryId);
+                console.log('[AUTO-UPDATE] Fetched encoding entry:', encodingEntry.id, 'values:', JSON.stringify(encodingEntry.values));
+            } catch (e) {
+                console.warn('[AUTO-UPDATE] Could not fetch encoding entry by ID:', e.message);
+            }
             
             if (!encodingEntry && changedData.entryValues) {
                 encodingEntry = { id: encodingEntryId, values: changedData.entryValues };
+                console.log('[AUTO-UPDATE] Using changedData.entryValues fallback');
             }
             
-            if (!encodingEntry) return null;
+            if (!encodingEntry) {
+                console.log('[AUTO-UPDATE] No encoding entry found, returning null');
+                return null;
+            }
 
-            const monitoringEntries = await SupabaseService.getEntries(monitoringTemplate.id);
+            const monitoringEntriesResult = await SupabaseService.getEntries(monitoringTemplate.id);
+            const monitoringEntries = monitoringEntriesResult.entries || monitoringEntriesResult;
+            console.log('[AUTO-UPDATE] Monitoring entries found:', monitoringEntries.length);
+
+            // Build set of changed column IDs so we can be lenient with them
+            const changedColIds = new Set(Object.keys(changedData.values || {}));
+            console.log('[AUTO-UPDATE] Changed column IDs:', Array.from(changedColIds));
 
             // Try to find a monitoring entry with matching key values
             for (const monitoringEntry of monitoringEntries) {
                 let matchCount = 0;
                 let totalMatches = 0;
+                let changedColMisses = 0;
 
                 columnMappings.forEach(mapping => {
+                    const encodingColId = mapping.encodingColumn.encoding_columns.id;
                     const encodingColName = mapping.encodingColumn.encoding_columns.column_name;
                     const monitoringColName = mapping.monitoringColumn.encoding_columns.column_name;
                     
@@ -8562,16 +8594,28 @@ export const AppCore = {
                     totalMatches++;
                     if (encodingValue === monitoringValue) {
                         matchCount++;
+                    } else if (changedColIds.has(String(encodingColId))) {
+                        // This column was just changed in encoding; monitoring still has old value.
+                        // Don't penalize this mismatch as heavily.
+                        changedColMisses++;
                     }
                 });
 
-                // If most values match, consider this the corresponding entry
-                if (totalMatches > 0 && matchCount / totalMatches >= 0.7) {
-                    console.log(`Found monitoring entry ${monitoringEntry.id} by value matching (${matchCount}/${totalMatches} matches)`);
+                // Calculate effective match count: changed columns that don't match
+                // are counted as half-matches so a single cell edit doesn't break matching
+                const effectiveMatchCount = matchCount + (changedColMisses * 0.5);
+                const ratio = totalMatches > 0 ? effectiveMatchCount / totalMatches : 0;
+
+                console.log(`[AUTO-UPDATE] Checking monitoring entry ${monitoringEntry.id}: raw=${matchCount}/${totalMatches}, changedMisses=${changedColMisses}, effectiveRatio=${ratio.toFixed(2)}`);
+
+                // If most values match (with leniency for changed columns), consider this the corresponding entry
+                if (totalMatches > 0 && ratio >= 0.5) {
+                    console.log(`[AUTO-UPDATE] Found monitoring entry ${monitoringEntry.id} by value matching (effective ${effectiveMatchCount}/${totalMatches})`);
                     return monitoringEntry;
                 }
             }
 
+            console.log('[AUTO-UPDATE] No monitoring entry matched values');
             return null;
         } catch (error) {
             console.error('Error finding monitoring entry by matching values:', error); 
@@ -8580,16 +8624,51 @@ export const AppCore = {
     },
 
     /**
+     * Find monitoring entry by row index position (secondary fallback)
+     * Uses getAllEntries to get complete lists regardless of pagination
+     */
+    findMonitoringEntryByPosition: async function (monitoringTemplate, encodingEntryId, sourceEncodingTemplate) {
+        try {
+            console.log('[AUTO-UPDATE] findMonitoringEntryByPosition:', { encodingEntryId, monitoringTemplate: monitoringTemplate.name });
+            // Fetch all entries from both templates (not paginated)
+            const encodingEntries = await SupabaseService.getAllEntries(sourceEncodingTemplate.id);
+            const monitoringEntries = await SupabaseService.getAllEntries(monitoringTemplate.id);
+            console.log('[AUTO-UPDATE] Position fallback - encoding entries:', encodingEntries.length, 'monitoring entries:', monitoringEntries.length);
+
+            // Find index of the encoding entry
+            const encodingEntryIndex = encodingEntries.findIndex(entry => entry.id === encodingEntryId);
+            if (encodingEntryIndex === -1) {
+                console.log('[AUTO-UPDATE] Encoding entry not found in full list');
+                return null;
+            }
+
+            // Match by row index (same position in both templates)
+            const correspondingMonitoringEntry = monitoringEntries[encodingEntryIndex];
+            if (correspondingMonitoringEntry) {
+                console.log(`[AUTO-UPDATE] Found monitoring entry ${correspondingMonitoringEntry.id} at index ${encodingEntryIndex}`);
+                return correspondingMonitoringEntry;
+            }
+
+            console.log('[AUTO-UPDATE] No monitoring entry at same index');
+            return null;
+        } catch (error) {
+            console.error('[AUTO-UPDATE] Error in position fallback:', error);
+            return null;
+        }
+    },
+
+    /**
      * Delete corresponding entry in monitoring template
      */
-    deleteMonitoringEntry: async function (monitoringTemplate, changedData, columnMappings) {
+    deleteMonitoringEntry: async function (monitoringTemplate, changedData, columnMappings, sourceEncodingTemplate = null) {
         try {
             // Find corresponding monitoring entry for the deleted encoding entry
             const targetMonitoringEntry = await this.findCorrespondingMonitoringEntry(
                 monitoringTemplate, 
                 changedData.entryId, 
                 columnMappings,
-                changedData
+                changedData,
+                sourceEncodingTemplate
             );
 
             if (!targetMonitoringEntry) {

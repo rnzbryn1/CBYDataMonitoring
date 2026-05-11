@@ -841,6 +841,7 @@ export const SupabaseService = {
    * @returns {Promise<Object|null>} Entry or null
    */
   async getMonitoringEntryByReferenceNumber(templateId, referenceNumber) {
+    console.log('[DB] getMonitoringEntryByReferenceNumber:', { templateId, referenceNumber });
     const { data, error } = await this.client
       .from('encoding_entries')
       .select('*')
@@ -848,7 +849,11 @@ export const SupabaseService = {
       .eq('reference_number', referenceNumber)
       .maybeSingle();
 
-    if (error) throw error;
+    if (error) {
+      console.error('[DB] getMonitoringEntryByReferenceNumber error:', error);
+      throw error;
+    }
+    console.log('[DB] getMonitoringEntryByReferenceNumber result:', data);
     return data;
   },
 
