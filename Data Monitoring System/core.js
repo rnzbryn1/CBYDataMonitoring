@@ -18,7 +18,7 @@ export const AppCore = {
         editingValues:          {},             // NEW - current entry values being edited
         dateSortAsc:            true,
         cache:                  {},
-        encodingDataCache:      {},             // Cache encoding template entries for SUMIFS cross-reference
+        encodingDataCache:      {},             // Cache encoding template entries for SUMIF/SUMIFS/COUNTIF/COUNTIFS cross-reference
         isLoading:              false,
         _importWorkbook:        null,
         _importExcelCols:       [],   // detected Excel column names
@@ -4130,6 +4130,8 @@ export const AppCore = {
                     <div class="compute-functions">
                         <button type="button" class="func-btn func-math">=SUMIF()</button>
                         <button type="button" class="func-btn func-math">=SUMIFS()</button>
+                        <button type="button" class="func-btn func-math">=COUNTIF()</button>
+                        <button type="button" class="func-btn func-math">=COUNTIFS()</button>
                     </div>
                     <span class="section-label" style="margin-top: 8px;">Date</span>
                     <div class="compute-functions">
@@ -4356,8 +4358,11 @@ export const AppCore = {
         const expr = formula.slice(1);
         const columns = this.state.currentTemplate?.columns || [];
 
-        // Pre-fetch encoding data for SUMIFS and UNIQUE before synchronous evaluation
+        // Pre-fetch encoding data for SUMIFS, COUNTIFS, SUMIF, COUNTIF and UNIQUE before synchronous evaluation
         await this.prefetchSUMIFSDataForFormula(formula);
+        await this.prefetchCOUNTIFSDataForFormula(formula);
+        await this.prefetchSUMIFDataForFormula(formula);
+        await this.prefetchCOUNTIFDataForFormula(formula);
         await this.prefetchUniqueDataForFormula(formula);
 
         const computeRow = (entry) => {
@@ -4589,6 +4594,65 @@ export const AppCore = {
                 const result = this.evaluateSUMIFSUnifiedSync(argsStr, this.state.localEntries);
                 evalExpr = evalExpr.substring(0, idx) + String(result) + evalExpr.substring(endIdx);
                 idx = evalExpr.indexOf('SUMIFS(');
+            }
+
+            // COUNTIFS with ! notation and legacy syntax — evaluated from cache
+            let countIfsIdx = evalExpr.indexOf('COUNTIFS(');
+            while (countIfsIdx !== -1) {
+                let depth = 1;
+                let endIdx = countIfsIdx + 9;
+                while (endIdx < evalExpr.length && depth > 0) {
+                    const c = evalExpr[endIdx];
+                    if (c === '(') depth++;
+                    else if (c === ')') depth--;
+                    endIdx++;
+                }
+                const argsStr = evalExpr.substring(countIfsIdx + 9, endIdx - 1);
+                const result = this.evaluateCOUNTIFSUnifiedSync(argsStr, this.state.localEntries);
+                evalExpr = evalExpr.substring(0, countIfsIdx) + String(result) + evalExpr.substring(endIdx);
+                countIfsIdx = evalExpr.indexOf('COUNTIFS(');
+            }
+
+            // SUMIF with ! notation and legacy syntax — evaluated from cache
+            let sumifIdx = evalExpr.indexOf('SUMIF(');
+            while (sumifIdx !== -1) {
+                if (evalExpr.substring(sumifIdx, sumifIdx + 7) === 'SUMIFS(') {
+                    sumifIdx = evalExpr.indexOf('SUMIF(', sumifIdx + 1);
+                    continue;
+                }
+                let depth = 1;
+                let endIdx = sumifIdx + 6;
+                while (endIdx < evalExpr.length && depth > 0) {
+                    const c = evalExpr[endIdx];
+                    if (c === '(') depth++;
+                    else if (c === ')') depth--;
+                    endIdx++;
+                }
+                const argsStr = evalExpr.substring(sumifIdx + 6, endIdx - 1);
+                const result = this.evaluateSUMIFUnifiedSync(argsStr, this.state.localEntries);
+                evalExpr = evalExpr.substring(0, sumifIdx) + String(result) + evalExpr.substring(endIdx);
+                sumifIdx = evalExpr.indexOf('SUMIF(');
+            }
+
+            // COUNTIF with ! notation and legacy syntax — evaluated from cache
+            let countifIdx = evalExpr.indexOf('COUNTIF(');
+            while (countifIdx !== -1) {
+                if (evalExpr.substring(countifIdx, countifIdx + 9) === 'COUNTIFS(') {
+                    countifIdx = evalExpr.indexOf('COUNTIF(', countifIdx + 1);
+                    continue;
+                }
+                let depth = 1;
+                let endIdx = countifIdx + 8;
+                while (endIdx < evalExpr.length && depth > 0) {
+                    const c = evalExpr[endIdx];
+                    if (c === '(') depth++;
+                    else if (c === ')') depth--;
+                    endIdx++;
+                }
+                const argsStr = evalExpr.substring(countifIdx + 8, endIdx - 1);
+                const result = this.evaluateCOUNTIFUnifiedSync(argsStr, this.state.localEntries);
+                evalExpr = evalExpr.substring(0, countifIdx) + String(result) + evalExpr.substring(endIdx);
+                countifIdx = evalExpr.indexOf('COUNTIF(');
             }
 
             // Convert column names to variables for evaluation
@@ -5316,13 +5380,19 @@ export const AppCore = {
             // Build dependency graph for optimized recalculation
             this.buildFormulaDependencyGraph();
 
-            // Pre-fetch encoding data for any SUMIFS and UNIQUE references
+            // Pre-fetch encoding data for any SUMIFS, COUNTIFS, SUMIF, COUNTIF and UNIQUE references
             for (const formula of Object.values(this.state.columnFormulas || {})) {
                 await this.prefetchSUMIFSDataForFormula(formula);
+                await this.prefetchCOUNTIFSDataForFormula(formula);
+                await this.prefetchSUMIFDataForFormula(formula);
+                await this.prefetchCOUNTIFDataForFormula(formula);
                 await this.prefetchUniqueDataForFormula(formula);
             }
             for (const formula of Object.values(this.state.cellFormulas || {})) {
                 await this.prefetchSUMIFSDataForFormula(formula);
+                await this.prefetchCOUNTIFSDataForFormula(formula);
+                await this.prefetchSUMIFDataForFormula(formula);
+                await this.prefetchCOUNTIFDataForFormula(formula);
                 await this.prefetchUniqueDataForFormula(formula);
             }
 
@@ -5342,8 +5412,11 @@ export const AppCore = {
             const colDef = columns.find(c => c.encoding_columns.column_name === columnName);
             if (!colDef) continue;
 
-            // Pre-fetch encoding data for SUMIFS and UNIQUE before synchronous evaluation
+            // Pre-fetch encoding data for SUMIFS, COUNTIFS, SUMIF, COUNTIF and UNIQUE before synchronous evaluation
             await this.prefetchSUMIFSDataForFormula(formula);
+            await this.prefetchCOUNTIFSDataForFormula(formula);
+            await this.prefetchSUMIFDataForFormula(formula);
+            await this.prefetchCOUNTIFDataForFormula(formula);
             await this.prefetchUniqueDataForFormula(formula);
 
             // Compute all values first and update UI immediately
@@ -5587,6 +5660,97 @@ export const AppCore = {
     },
 
     /**
+     * Pre-fetch encoding data for all COUNTIFS references in a formula
+     */
+    prefetchCOUNTIFSDataForFormula: async function(formula) {
+        if (!formula || !formula.includes('COUNTIFS')) return;
+
+        const sheetNames = new Set();
+
+        const matches = formula.match(/COUNTIFS\s*\(([\s\S]*?)\)/gi) || [];
+        for (const match of matches) {
+            const argsStr = match.replace(/COUNTIFS\s*\(/i, '').replace(/\)\s*$/, '');
+            const args = this.parseQuotedArgs(argsStr);
+            if (args.length < 2) continue;
+
+            const firstRef = this.parseSheetRef(args[0]);
+            if (firstRef) {
+                sheetNames.add(firstRef.sheet);
+            } else {
+                sheetNames.add(this.unquote(args[0]));
+            }
+        }
+
+        for (const sheetName of sheetNames) {
+            await this.getEncodingDataFromCache(sheetName);
+        }
+    },
+
+    /**
+     * Pre-fetch encoding data for all SUMIF references in a formula
+     */
+    prefetchSUMIFDataForFormula: async function(formula) {
+        if (!formula || !formula.includes('SUMIF')) return;
+
+        const sheetNames = new Set();
+
+        const matches = formula.match(/SUMIF\s*\(([\s\S]*?)\)/gi) || [];
+        for (const match of matches) {
+            // Skip SUMIFS matches
+            if (/^SUMIFS\s*\(/i.test(match)) continue;
+
+            const argsStr = match.replace(/SUMIF\s*\(/i, '').replace(/\)\s*$/, '');
+            const args = this.parseQuotedArgs(argsStr);
+            if (args.length < 2) continue;
+
+            const firstRef = this.parseSheetRef(args[0]);
+            if (firstRef) {
+                sheetNames.add(firstRef.sheet);
+            } else if (args.length >= 4) {
+                // Legacy: SUMIF('Sheet', 'SumCol', 'CritCol', 'Value')
+                sheetNames.add(this.unquote(args[0]));
+            }
+            // Local-only (2-3 args, no sheet ref) doesn't need prefetch
+        }
+
+        for (const sheetName of sheetNames) {
+            await this.getEncodingDataFromCache(sheetName);
+        }
+    },
+
+    /**
+     * Pre-fetch encoding data for all COUNTIF references in a formula
+     */
+    prefetchCOUNTIFDataForFormula: async function(formula) {
+        if (!formula || !formula.includes('COUNTIF')) return;
+
+        const sheetNames = new Set();
+
+        const matches = formula.match(/COUNTIF\s*\(([\s\S]*?)\)/gi) || [];
+        for (const match of matches) {
+            // Skip COUNTIFS matches
+            if (/^COUNTIFS\s*\(/i.test(match)) continue;
+
+            const argsStr = match.replace(/COUNTIF\s*\(/i, '').replace(/\)\s*$/, '');
+            const args = this.parseQuotedArgs(argsStr);
+            if (args.length < 2) continue;
+
+            const firstRef = this.parseSheetRef(args[0]);
+            if (firstRef) {
+                sheetNames.add(firstRef.sheet);
+            } else if (args.length >= 3) {
+                // Legacy: COUNTIF('Sheet', 'CritCol', 'Value')
+                sheetNames.add(this.unquote(args[0]));
+            }
+            // Local-only (2 args, no sheet ref) doesn't need prefetch
+        }
+
+        for (const sheetName of sheetNames) {
+            await this.getEncodingDataFromCache(sheetName);
+        }
+    },
+
+    /**
      * Pre-fetch encoding data for all UNIQUE references in a formula
      */
     prefetchUniqueDataForFormula: async function(formula) {
@@ -5684,6 +5848,231 @@ export const AppCore = {
             }
         }
         return sum;
+    },
+
+    /**
+     * Evaluate COUNTIFS synchronously from cache.
+     * Supports both ! notation ('Sheet'!'Column') and legacy syntax.
+     */
+    evaluateCOUNTIFSUnifiedSync: function(argsStr, currentEntries) {
+        const args = this.parseQuotedArgs(argsStr);
+
+        console.log('🔍 COUNTIFS args parsed:', args);
+        if (args.length < 2) return 0;
+        if (args.length % 2 !== 0) {
+            console.warn('COUNTIFS requires pairs of criteria ranges and criteria values');
+            return 0;
+        }
+
+        const firstRef = this.parseSheetRef(args[0]);
+        let conditions = [];
+        let sheetName;
+
+        if (firstRef) {
+            // ! notation: first arg is 'Sheet'!'Column' (first criteria range)
+            sheetName = firstRef.sheet;
+            conditions.push({
+                range: firstRef,
+                criteria: this.unquote(args[1] || '')
+            });
+            for (let i = 2; i < args.length; i += 2) {
+                const rangeRef = this.parseSheetRef(args[i]);
+                const criteriaVal = this.unquote(args[i + 1] || '');
+                if (rangeRef) {
+                    conditions.push({ range: rangeRef, criteria: criteriaVal });
+                } else {
+                    conditions.push({
+                        range: { sheet: sheetName, column: this.unquote(args[i]) },
+                        criteria: criteriaVal
+                    });
+                }
+            }
+        } else {
+            // Legacy notation: first arg is sheet name, then pairs of (column, value)
+            sheetName = this.unquote(args[0]);
+            for (let i = 1; i < args.length; i += 2) {
+                conditions.push({
+                    range: { sheet: sheetName, column: this.unquote(args[i]) },
+                    criteria: this.unquote(args[i + 1] || '')
+                });
+            }
+        }
+
+        console.log('📋 COUNTIFS Conditions:', conditions);
+
+        const normalizedName = (sheetName || '').trim().toLowerCase();
+        const entries = normalizedName
+            ? (this.state.encodingDataCache[normalizedName] || [])
+            : (currentEntries || this.state.localEntries);
+
+        console.log(`📈 Found ${entries.length} entries for sheet '${sheetName}'`);
+        console.log('💾 Cached sheets:', Object.keys(this.state.encodingDataCache));
+
+        if (!entries.length) {
+            console.warn(`COUNTIFS cache miss for sheet: ${sheetName}`);
+            return 0;
+        }
+
+        let count = 0;
+        for (const entry of entries) {
+            let allMatch = true;
+            for (const condition of conditions) {
+                const value = entry.values[condition.range.column];
+                if (!this.evaluateCriteria(value, condition.criteria)) {
+                    allMatch = false;
+                    break;
+                }
+            }
+            if (allMatch) {
+                count++;
+            }
+        }
+        return count;
+    },
+
+    /**
+     * Evaluate SUMIF synchronously from cache.
+     * Supports ! notation, legacy syntax, and local-only formulas.
+     * Syntax:
+     *   ! notation:  SUMIF('Sheet'!'SumCol', 'Sheet'!'CritCol', 'Value')
+     *   Legacy:      SUMIF('SheetName', 'SumCol', 'CritCol', 'Value')
+     *   Local:       SUMIF('CritCol', 'Value', 'SumCol')
+     *                SUMIF('CritCol', 'Value') -- sums the criteria column
+     */
+    evaluateSUMIFUnifiedSync: function(argsStr, currentEntries) {
+        const args = this.parseQuotedArgs(argsStr);
+
+        console.log('🔍 SUMIF args parsed:', args);
+        if (args.length < 2) return 0;
+
+        const firstRef = this.parseSheetRef(args[0]);
+        let sumRange, criteriaRange, criteriaValue, entries;
+
+        if (firstRef) {
+            // ! notation: SUMIF('Sheet'!'SumCol', 'CritRange', 'Value')
+            sumRange = firstRef;
+            const critRef = this.parseSheetRef(args[1]);
+            if (critRef) {
+                criteriaRange = critRef;
+            } else {
+                criteriaRange = { sheet: firstRef.sheet, column: this.unquote(args[1]) };
+            }
+            criteriaValue = this.unquote(args[2] || '');
+            const normalizedName = firstRef.sheet.trim().toLowerCase();
+            entries = this.state.encodingDataCache[normalizedName] || [];
+        } else if (args.length === 4) {
+            // Legacy: SUMIF('SheetName', 'SumCol', 'CritCol', 'Value')
+            const sheetName = this.unquote(args[0]);
+            sumRange = { sheet: sheetName, column: this.unquote(args[1]) };
+            criteriaRange = { sheet: sheetName, column: this.unquote(args[2]) };
+            criteriaValue = this.unquote(args[3] || '');
+            const normalizedName = sheetName.trim().toLowerCase();
+            entries = this.state.encodingDataCache[normalizedName] || [];
+        } else if (args.length === 3) {
+            // Local: SUMIF('CritCol', 'Value', 'SumCol')
+            let critCol = this.unquote(args[0]);
+            if (this.state.variableColumns && this.state.variableColumns[critCol]) {
+                critCol = this.state.variableColumns[critCol];
+            }
+            criteriaRange = { sheet: null, column: critCol };
+            criteriaValue = this.unquote(args[1]);
+            let sumCol = this.unquote(args[2]);
+            if (this.state.variableColumns && this.state.variableColumns[sumCol]) {
+                sumCol = this.state.variableColumns[sumCol];
+            }
+            sumRange = { sheet: null, column: sumCol };
+            entries = currentEntries || this.state.localEntries;
+        } else if (args.length === 2) {
+            // Local: SUMIF('CritCol', 'Value') -- sum the criteria column itself
+            let critCol = this.unquote(args[0]);
+            if (this.state.variableColumns && this.state.variableColumns[critCol]) {
+                critCol = this.state.variableColumns[critCol];
+            }
+            criteriaRange = { sheet: null, column: critCol };
+            criteriaValue = this.unquote(args[1]);
+            sumRange = { sheet: null, column: critCol };
+            entries = currentEntries || this.state.localEntries;
+        } else {
+            return 0;
+        }
+
+        console.log('📊 SUMIF Sum range:', sumRange);
+        console.log('📋 SUMIF Criteria:', criteriaRange, '=', criteriaValue);
+
+        if (!entries.length) {
+            console.warn(`SUMIF cache miss for sheet: ${sumRange.sheet}`);
+            return 0;
+        }
+
+        let sum = 0;
+        for (const entry of entries) {
+            const value = entry.values[criteriaRange.column];
+            if (this.evaluateCriteria(value, criteriaValue)) {
+                const raw = entry.values[sumRange.column] ?? '0';
+                sum += parseFloat(String(raw).replace(/[^\d.-]/g, '')) || 0;
+            }
+        }
+        return sum;
+    },
+
+    /**
+     * Evaluate COUNTIF synchronously from cache.
+     * Supports ! notation, legacy syntax, and local-only formulas.
+     * Syntax:
+     *   ! notation:  COUNTIF('Sheet'!'CritCol', 'Value')
+     *   Legacy:      COUNTIF('SheetName', 'CritCol', 'Value')
+     *   Local:       COUNTIF('CritCol', 'Value')
+     */
+    evaluateCOUNTIFUnifiedSync: function(argsStr, currentEntries) {
+        const args = this.parseQuotedArgs(argsStr);
+
+        console.log('🔍 COUNTIF args parsed:', args);
+        if (args.length < 2) return 0;
+
+        const firstRef = this.parseSheetRef(args[0]);
+        let criteriaRange, criteriaValue, entries;
+
+        if (firstRef) {
+            // ! notation: COUNTIF('Sheet'!'CritCol', 'Value')
+            criteriaRange = firstRef;
+            criteriaValue = this.unquote(args[1] || '');
+            const normalizedName = firstRef.sheet.trim().toLowerCase();
+            entries = this.state.encodingDataCache[normalizedName] || [];
+        } else if (args.length === 3) {
+            // Legacy: COUNTIF('SheetName', 'CritCol', 'Value')
+            const sheetName = this.unquote(args[0]);
+            criteriaRange = { sheet: sheetName, column: this.unquote(args[1]) };
+            criteriaValue = this.unquote(args[2] || '');
+            const normalizedName = sheetName.trim().toLowerCase();
+            entries = this.state.encodingDataCache[normalizedName] || [];
+        } else if (args.length === 2) {
+            // Local: COUNTIF('CritCol', 'Value')
+            let critCol = this.unquote(args[0]);
+            if (this.state.variableColumns && this.state.variableColumns[critCol]) {
+                critCol = this.state.variableColumns[critCol];
+            }
+            criteriaRange = { sheet: null, column: critCol };
+            criteriaValue = this.unquote(args[1]);
+            entries = currentEntries || this.state.localEntries;
+        } else {
+            return 0;
+        }
+
+        console.log('📋 COUNTIF Criteria:', criteriaRange, '=', criteriaValue);
+
+        if (!entries.length) {
+            console.warn(`COUNTIF cache miss for sheet: ${criteriaRange.sheet}`);
+            return 0;
+        }
+
+        let count = 0;
+        for (const entry of entries) {
+            const value = entry.values[criteriaRange.column];
+            if (this.evaluateCriteria(value, criteriaValue)) {
+                count++;
+            }
+        }
+        return count;
     },
 
     computeFormulaForEntry: function (entry, formula, columns) {
@@ -5795,6 +6184,23 @@ export const AppCore = {
             const result = this.evaluateSUMIFSUnifiedSync(argsStr, this.state.localEntries);
             evalExpr = evalExpr.substring(0, idx) + String(result) + evalExpr.substring(endIdx);
             idx = evalExpr.indexOf('SUMIFS(');
+        }
+
+        // COUNTIFS with ! notation and legacy syntax — evaluated from cache
+        let countIfsIdx = evalExpr.indexOf('COUNTIFS(');
+        while (countIfsIdx !== -1) {
+            let depth = 1;
+            let endIdx = countIfsIdx + 9;
+            while (endIdx < evalExpr.length && depth > 0) {
+                const c = evalExpr[endIdx];
+                if (c === '(') depth++;
+                else if (c === ')') depth--;
+                endIdx++;
+            }
+            const argsStr = evalExpr.substring(countIfsIdx + 9, endIdx - 1);
+            const result = this.evaluateCOUNTIFSUnifiedSync(argsStr, this.state.localEntries);
+            evalExpr = evalExpr.substring(0, countIfsIdx) + String(result) + evalExpr.substring(endIdx);
+            countIfsIdx = evalExpr.indexOf('COUNTIFS(');
         }
 
         // Process date operations: A+B, A-B, B+A, B-A where A and/or B are dates
@@ -6033,43 +6439,47 @@ export const AppCore = {
             return JSON.stringify(uniqueValues.join(', '));
         });
 
-        // SUMIF: SUMIF(range, criteria, [sum_range])
-        evalExpr = evalExpr.replace(/\bSUMIF\((.*?)\)/gi, (_, args) => {
-            const parts = args.split(',').map(a => a.trim());
-            if (parts.length < 2) return 0;
-            
-            const rangeCol = parts[0];
-            const criteria = parts[1].replace(/^["']|["']$/g, ''); // Remove quotes
-            const sumRangeCol = parts[2] || rangeCol; // If sum_range not provided, use range
-            
-            // Get column names from variable mapping
-            let rangeColName = rangeCol.trim();
-            let sumRangeColName = sumRangeCol.trim();
-            
-            if (this.state.variableColumns && this.state.variableColumns[rangeColName]) {
-                rangeColName = this.state.variableColumns[rangeColName];
+        // SUMIF with ! notation and legacy syntax — evaluated from cache
+        let sumifIdx = evalExpr.indexOf('SUMIF(');
+        while (sumifIdx !== -1) {
+            if (evalExpr.substring(sumifIdx, sumifIdx + 7) === 'SUMIFS(') {
+                sumifIdx = evalExpr.indexOf('SUMIF(', sumifIdx + 1);
+                continue;
             }
-            if (this.state.variableColumns && this.state.variableColumns[sumRangeColName]) {
-                sumRangeColName = this.state.variableColumns[sumRangeColName];
+            let depth = 1;
+            let endIdx = sumifIdx + 6;
+            while (endIdx < evalExpr.length && depth > 0) {
+                const c = evalExpr[endIdx];
+                if (c === '(') depth++;
+                else if (c === ')') depth--;
+                endIdx++;
             }
-            
-            // Get all entries
-            const allEntries = this.state.localEntries || [];
-            
-            let sum = 0;
-            
-            allEntries.forEach(e => {
-                const rangeValue = e.values[rangeColName] ?? '';
-                const sumValue = parseFloat(String(e.values[sumRangeColName] ?? '0').replace(/[^\d.-]/g, '')) || 0;
-                
-                // Evaluate criteria
-                if (this.evaluateCriteria(rangeValue, criteria)) {
-                    sum += sumValue;
-                }
-            });
-            
-            return sum;
-        });
+            const argsStr = evalExpr.substring(sumifIdx + 6, endIdx - 1);
+            const result = this.evaluateSUMIFUnifiedSync(argsStr, this.state.localEntries);
+            evalExpr = evalExpr.substring(0, sumifIdx) + String(result) + evalExpr.substring(endIdx);
+            sumifIdx = evalExpr.indexOf('SUMIF(');
+        }
+
+        // COUNTIF with ! notation and legacy syntax — evaluated from cache
+        let countifIdx = evalExpr.indexOf('COUNTIF(');
+        while (countifIdx !== -1) {
+            if (evalExpr.substring(countifIdx, countifIdx + 9) === 'COUNTIFS(') {
+                countifIdx = evalExpr.indexOf('COUNTIF(', countifIdx + 1);
+                continue;
+            }
+            let depth = 1;
+            let endIdx = countifIdx + 8;
+            while (endIdx < evalExpr.length && depth > 0) {
+                const c = evalExpr[endIdx];
+                if (c === '(') depth++;
+                else if (c === ')') depth--;
+                endIdx++;
+            }
+            const argsStr = evalExpr.substring(countifIdx + 8, endIdx - 1);
+            const result = this.evaluateCOUNTIFUnifiedSync(argsStr, this.state.localEntries);
+            evalExpr = evalExpr.substring(0, countifIdx) + String(result) + evalExpr.substring(endIdx);
+            countifIdx = evalExpr.indexOf('COUNTIF(');
+        }
 
         // Convert column names to variables for evaluation
         columns.forEach(c => {
@@ -6697,8 +7107,11 @@ export const AppCore = {
         const columns = this.state.currentTemplate?.columns || [];
         const self = this; // Capture 'this' for nested functions
 
-        // Pre-fetch encoding data for SUMIFS and UNIQUE before synchronous evaluation
+        // Pre-fetch encoding data for SUMIFS, COUNTIFS, SUMIF, COUNTIF and UNIQUE before synchronous evaluation
         await this.prefetchSUMIFSDataForFormula(formula);
+        await this.prefetchCOUNTIFSDataForFormula(formula);
+        await this.prefetchSUMIFDataForFormula(formula);
+        await this.prefetchCOUNTIFDataForFormula(formula);
         await this.prefetchUniqueDataForFormula(formula);
 
         // Execute the formula evaluation logic (similar to applyFormula)
@@ -6945,6 +7358,65 @@ export const AppCore = {
                 const result = this.evaluateSUMIFSUnifiedSync(argsStr, this.state.localEntries);
                 evalExpr = evalExpr.substring(0, idx) + String(result) + evalExpr.substring(endIdx);
                 idx = evalExpr.indexOf('SUMIFS(');
+            }
+
+            // COUNTIFS with ! notation and legacy syntax — evaluated from cache
+            let countIfsIdx = evalExpr.indexOf('COUNTIFS(');
+            while (countIfsIdx !== -1) {
+                let depth = 1;
+                let endIdx = countIfsIdx + 9;
+                while (endIdx < evalExpr.length && depth > 0) {
+                    const c = evalExpr[endIdx];
+                    if (c === '(') depth++;
+                    else if (c === ')') depth--;
+                    endIdx++;
+                }
+                const argsStr = evalExpr.substring(countIfsIdx + 9, endIdx - 1);
+                const result = this.evaluateCOUNTIFSUnifiedSync(argsStr, this.state.localEntries);
+                evalExpr = evalExpr.substring(0, countIfsIdx) + String(result) + evalExpr.substring(endIdx);
+                countIfsIdx = evalExpr.indexOf('COUNTIFS(');
+            }
+
+            // SUMIF with ! notation and legacy syntax — evaluated from cache
+            let sumifIdx = evalExpr.indexOf('SUMIF(');
+            while (sumifIdx !== -1) {
+                if (evalExpr.substring(sumifIdx, sumifIdx + 7) === 'SUMIFS(') {
+                    sumifIdx = evalExpr.indexOf('SUMIF(', sumifIdx + 1);
+                    continue;
+                }
+                let depth = 1;
+                let endIdx = sumifIdx + 6;
+                while (endIdx < evalExpr.length && depth > 0) {
+                    const c = evalExpr[endIdx];
+                    if (c === '(') depth++;
+                    else if (c === ')') depth--;
+                    endIdx++;
+                }
+                const argsStr = evalExpr.substring(sumifIdx + 6, endIdx - 1);
+                const result = this.evaluateSUMIFUnifiedSync(argsStr, this.state.localEntries);
+                evalExpr = evalExpr.substring(0, sumifIdx) + String(result) + evalExpr.substring(endIdx);
+                sumifIdx = evalExpr.indexOf('SUMIF(');
+            }
+
+            // COUNTIF with ! notation and legacy syntax — evaluated from cache
+            let countifIdx = evalExpr.indexOf('COUNTIF(');
+            while (countifIdx !== -1) {
+                if (evalExpr.substring(countifIdx, countifIdx + 9) === 'COUNTIFS(') {
+                    countifIdx = evalExpr.indexOf('COUNTIF(', countifIdx + 1);
+                    continue;
+                }
+                let depth = 1;
+                let endIdx = countifIdx + 8;
+                while (endIdx < evalExpr.length && depth > 0) {
+                    const c = evalExpr[endIdx];
+                    if (c === '(') depth++;
+                    else if (c === ')') depth--;
+                    endIdx++;
+                }
+                const argsStr = evalExpr.substring(countifIdx + 8, endIdx - 1);
+                const result = this.evaluateCOUNTIFUnifiedSync(argsStr, this.state.localEntries);
+                evalExpr = evalExpr.substring(0, countifIdx) + String(result) + evalExpr.substring(endIdx);
+                countifIdx = evalExpr.indexOf('COUNTIF(');
             }
 
             // Process date operations BEFORE column name replacement
@@ -7336,10 +7808,6 @@ export const AppCore = {
      * @returns {Promise<Array>} Array of monitoring template objects
      */
     findRelatedMonitoringTemplates: async function () {
-        if (!this.state.currentTemplate || this.state.currentTemplate.module !== 'encoding') {
-            return [];
-        }
-
         try {
             // Get all templates for the current department
             const allTemplates = await SupabaseService.getTemplates(this.state.departmentId);
@@ -7370,7 +7838,7 @@ export const AppCore = {
             return; // Only auto-update from encoding templates
         }
 
-        // Invalidate encoding cache so SUMIFS gets fresh data
+        // Invalidate encoding cache so SUMIFS/COUNTIFS gets fresh data
         this.invalidateEncodingCache(this.state.currentTemplate.name);
 
         const entryId = changedData.entryId || 'new';
@@ -7409,10 +7877,14 @@ export const AppCore = {
             clearTimeout(this.state.monitoringUpdateTimer);
         }
 
+        // Capture the source encoding template before the async timer fires
+        // (user may switch templates before the debounce completes)
+        const sourceEncodingTemplate = this.state.currentTemplate;
+
         // Set new timer to batch monitoring updates (50ms for near-immediate reflection)
         this.state.monitoringUpdateTimer = setTimeout(async () => {
             try {
-                await this.performMonitoringUpdate();
+                await this.performMonitoringUpdate(sourceEncodingTemplate);
             } catch (error) {
                 console.error('Background monitoring update failed:', error);
             }
@@ -7428,7 +7900,7 @@ export const AppCore = {
      * Perform the actual monitoring update in background
      * Processes ALL accumulated changes in a single batch
      */
-    performMonitoringUpdate: async function() {
+    performMonitoringUpdate: async function(sourceEncodingTemplate) {
         const monitoringTemplates = await this.findRelatedMonitoringTemplates();
         
         if (monitoringTemplates.length === 0) {
@@ -7448,12 +7920,18 @@ export const AppCore = {
                     values: data.values,
                     entryValues: data.entryValues
                 };
-                await this.syncDataToMonitoringTemplate(monitoringTemplate, changedData, data.operation);
+                await this.syncDataToMonitoringTemplate(monitoringTemplate, changedData, data.operation, sourceEncodingTemplate);
             }
             this.clearCache(monitoringTemplate.id);
         }
 
-        // If a monitoring template is currently active, refresh the UI immediately
+        // Always mark ALL monitoring templates as needing formula recalculation
+        // so every monitoring template gets refreshed when opened later
+        for (const monitoringTemplate of monitoringTemplates) {
+            this.state.pendingFormulaRecalculation.add(monitoringTemplate.id);
+        }
+
+        // If a monitoring template is currently active, also refresh it immediately
         if (this.state.currentTemplate && this.state.currentTemplate.module === 'monitoring') {
             // Reload entries from database
             await this.loadEntries(this.state.currentTemplate.id);
@@ -7461,12 +7939,6 @@ export const AppCore = {
             await this.applyLoadedFormulas();
             // Re-render the table
             this.renderTable(this.state.localEntries);
-        } else {
-            // Mark all updated monitoring templates as needing formula recalculation
-            // so they get refreshed when the user switches to them later
-            for (const monitoringTemplate of monitoringTemplates) {
-                this.state.pendingFormulaRecalculation.add(monitoringTemplate.id);
-            }
         }
 
         // Show toast only if not during compute operation
@@ -7481,14 +7953,16 @@ export const AppCore = {
      * @param {Object} changedData - The changed entry data
      * @param {string} operation - 'create', 'update', or 'delete'
      */
-    syncDataToMonitoringTemplate: async function (monitoringTemplate, changedData, operation) {
+    syncDataToMonitoringTemplate: async function (monitoringTemplate, changedData, operation, sourceEncodingTemplate) {
         try {
             // Get monitoring template columns to find matching columns
             const monitoringTemplateWithColumns = await SupabaseService.getTemplate(monitoringTemplate.id);
             const monitoringColumns = monitoringTemplateWithColumns.columns || [];
             
             // Get encoding template columns for reference
-            const encodingColumns = this.state.currentTemplate.columns || [];
+            // Use the passed source encoding template, NOT currentTemplate
+            // (user may have switched to a monitoring template before this async call runs)
+            const encodingColumns = (sourceEncodingTemplate && sourceEncodingTemplate.columns) || [];
 
             // Find matching columns between encoding and monitoring templates
             const columnMappings = this.findColumnMappings(encodingColumns, monitoringColumns);
