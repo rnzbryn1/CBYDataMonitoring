@@ -3237,7 +3237,7 @@ export const AppCore = {
         UI.showToast('Exported with colors & column totals!');
     },
 
-    exportToPDF: function (selectedColumnIds = null, exportFilteredOnly = false) {
+    exportToPDF: function (selectedColumnIds = null, exportFilteredOnly = false, headerFontSize = '12', valueFontSize = '12', tableWrap = false) {
         if (!this.state.currentTemplate)
             return UI.showToast('No template selected.', 'error');
 
@@ -3318,6 +3318,8 @@ export const AppCore = {
         // ============================
         // 4. CREATE HTML TABLE FOR PRINT
         // ============================
+        const whiteSpaceStyle = tableWrap ? 'white-space: normal;' : 'white-space: nowrap;';
+        
         const printWindow = window.open('', '_blank');
         printWindow.document.write(`
             <!DOCTYPE html>
@@ -3333,16 +3335,18 @@ export const AppCore = {
                     table {
                         width: 100%;
                         border-collapse: collapse;
-                        font-size: 12px;
+                        font-size: ${valueFontSize}px;
                     }
                     th, td {
                         border: 1px solid #000;
                         padding: 8px;
                         text-align: left;
+                        ${whiteSpaceStyle}
                     }
                     th {
                         background-color: #f0f0f0;
                         font-weight: bold;
+                        font-size: ${headerFontSize}px;
                     }
                     .compute-row {
                         background-color: #e8f4f8;
@@ -3436,13 +3440,16 @@ export const AppCore = {
         const columnCheckboxes = document.querySelectorAll('#pdfExportColumnList input[type="checkbox"]:checked');
         const selectedColumnIds = Array.from(columnCheckboxes).map(cb => cb.value);
         const exportFilteredOnly = document.getElementById('pdfExportFilteredOnly')?.checked;
+        const headerFontSize = document.getElementById('pdfHeaderFontSize')?.value || '12';
+        const valueFontSize = document.getElementById('pdfValueFontSize')?.value || '12';
+        const tableWrap = document.getElementById('pdfTableWrap')?.checked || false;
 
         if (selectedColumnIds.length === 0) {
             UI.showToast('Please select at least one column.', 'error');
             return;
         }
 
-        this.exportToPDF(selectedColumnIds, exportFilteredOnly);
+        this.exportToPDF(selectedColumnIds, exportFilteredOnly, headerFontSize, valueFontSize, tableWrap);
         this.closePDFModal();
     },
 

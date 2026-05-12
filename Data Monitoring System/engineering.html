@@ -372,11 +372,45 @@
         <div id="pdfExportColumnList" class="export-column-list"></div>
 
         <!-- Filter Options -->
-        <label class="modal-label" style="margin-top: 16px;">
-            <input type="checkbox" id="pdfExportFilteredOnly" style="width: auto; margin-right: 8px;" onchange="updatePDFExportPreview()">
-            Export only filtered data
-        </label>
-        <p class="import-hint">If checked, only currently filtered rows will be exported</p>
+        <div style="margin-top: 16px;">
+            <label class="modal-label" style="display: flex; align-items: center;">
+                <input type="checkbox" id="pdfExportFilteredOnly" style="width: auto; margin-right: 8px; margin-top: 2px;" onchange="updatePDFExportPreview()">
+                Export only filtered data
+            </label>
+            <p class="import-hint">If checked, only currently filtered rows will be exported</p>
+        </div>
+
+        <!-- Font Size Options -->
+        <label class="modal-label" style="margin-top: 16px;">Font Size</label>
+        <div style="display: flex; gap: 16px; margin-bottom: 8px;">
+            <div style="flex: 1;">
+                <label style="font-size: 12px; color: #666;">Header Font Size</label>
+                <select id="pdfHeaderFontSize" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                    <option value="10">10px</option>
+                    <option value="12" selected>12px</option>
+                    <option value="14">14px</option>
+                    <option value="16">16px</option>
+                </select>
+            </div>
+            <div style="flex: 1;">
+                <label style="font-size: 12px; color: #666;">Value Font Size</label>
+                <select id="pdfValueFontSize" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                    <option value="10">10px</option>
+                    <option value="12" selected>12px</option>
+                    <option value="14">14px</option>
+                    <option value="16">16px</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Table Wrap Option -->
+        <div style="margin-top: 16px;">
+            <label class="modal-label" style="display: flex; align-items: center;">
+                <input type="checkbox" id="pdfTableWrap" style="width: auto; margin-right: 8px; margin-top: 2px;">
+                Wrap table content (for many columns)
+            </label>
+            <p class="import-hint">If checked, table content will wrap to fit the page width</p>
+        </div>
 
         <!-- PDF Preview -->
         <div id="pdfExportPreview" class="export-preview" style="display:none;">
