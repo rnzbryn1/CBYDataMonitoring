@@ -58,6 +58,31 @@
     </div>
 </div>
 
+<!-- RESET PASSWORD MODAL -->
+<div id="resetPasswordModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <span class="close-btn" onclick="closeResetPasswordModal()">&times;</span>
+        <h3>Reset User Password</h3>
+        <p id="resetPasswordUserEmail" style="margin-bottom: 15px; color: #666;"></p>
+        <form id="resetPasswordForm" autocomplete="off">
+            <input type="text" name="username" style="display: none;" autocomplete="username">
+            <div class="form-group">
+                <label for="newPassword">New Password *</label>
+                <input type="password" id="newPassword" name="new-password" required minlength="6" autocomplete="new-password">
+            </div>
+            <div class="form-group">
+                <label for="confirmPassword">Confirm Password *</label>
+                <input type="password" id="confirmPassword" name="confirm-password" required minlength="6" autocomplete="new-password">
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">Reset Password</button>
+                <button type="button" class="btn btn-secondary" onclick="closeResetPasswordModal()">Cancel</button>
+            </div>
+        </form>
+    </div>
+</div>
+</div>
+
 <script type="module" src="accountmanager.js"></script>
 </body>
 </html>

@@ -3,18 +3,21 @@
 // =====================================================
 // Helper functions for database operations with the new schema
 
-import { SUPABASE_CONFIG } from './config.js';
+import { SUPABASE_CONFIG } from "./config.js";
 
 const { createClient } = supabase;
-const supabaseClient = createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
+const supabaseClient = createClient(
+  SUPABASE_CONFIG.url,
+  SUPABASE_CONFIG.anonKey,
+);
 const supabaseAdminClient = createClient(
   SUPABASE_CONFIG.url,
   SUPABASE_CONFIG.serviceRoleKey,
   {
     auth: {
-      storageKey: 'supabase-admin-auth-token'
-    }
-  }
+      storageKey: "supabase-admin-auth-token",
+    },
+  },
 );
 
 export { supabaseClient };
@@ -34,11 +37,11 @@ export const SupabaseService = {
    */
   async getTemplates(departmentId) {
     const { data, error } = await this.client
-      .from('encoding_templates')
-      .select('*')
-      .eq('department_id', departmentId)
-      .order('created_at', { ascending: false });
-    
+      .from("encoding_templates")
+      .select("*")
+      .eq("department_id", departmentId)
+      .order("created_at", { ascending: false });
+
     if (error) throw error;
     return data;
   },
@@ -50,17 +53,18 @@ export const SupabaseService = {
    */
   async getTemplate(templateId) {
     const { data: template, error: templateError } = await this.client
-      .from('encoding_templates')
-      .select('*')
-      .eq('id', templateId)
+      .from("encoding_templates")
+      .select("*")
+      .eq("id", templateId)
       .single();
-    
+
     if (templateError) throw templateError;
 
     // Get template columns
     const { data: columns, error: columnError } = await this.client
-      .from('encoding_template_columns')
-      .select(`
+      .from("encoding_template_columns")
+      .select(
+        `
         id,
         display_order,
         linkage_type,
@@ -72,15 +76,16 @@ export const SupabaseService = {
           display_order,
           group_name
         )
-      `)
-      .eq('template_id', templateId)
-      .order('display_order', { ascending: true });
-    
+      `,
+      )
+      .eq("template_id", templateId)
+      .order("display_order", { ascending: true });
+
     if (columnError) throw columnError;
 
     return {
       ...template,
-      columns: columns
+      columns: columns,
     };
   },
 
@@ -92,18 +97,25 @@ export const SupabaseService = {
    * @param {string} module
    * @returns {Promise<Object>} New template
    */
-  async createTemplate(departmentId, name, description = null, module = 'General') {
+  async createTemplate(
+    departmentId,
+    name,
+    description = null,
+    module = "General",
+  ) {
     const { data, error } = await this.client
-      .from('encoding_templates')
-      .insert([{
-        department_id: departmentId,
-        name,
-        description,
-        module
-      }])
+      .from("encoding_templates")
+      .insert([
+        {
+          department_id: departmentId,
+          name,
+          description,
+          module,
+        },
+      ])
       .select()
       .single();
-    
+
     if (error) throw error;
     return data;
   },
@@ -116,12 +128,12 @@ export const SupabaseService = {
    */
   async updateTemplate(templateId, updates) {
     const { data, error } = await this.client
-      .from('encoding_templates')
+      .from("encoding_templates")
       .update(updates)
-      .eq('id', templateId)
+      .eq("id", templateId)
       .select()
       .single();
-    
+
     if (error) throw error;
     return data;
   },
@@ -134,34 +146,34 @@ export const SupabaseService = {
   async deleteTemplate(templateId) {
     // Delete template formulas first (foreign key dependency)
     const { error: formulasError } = await this.client
-      .from('template_formulas')
+      .from("template_formulas")
       .delete()
-      .eq('template_id', templateId);
-    
+      .eq("template_id", templateId);
+
     if (formulasError) throw formulasError;
 
     // Delete entries first (cascade delete their values)
     const { error: entriesError } = await this.client
-      .from('encoding_entries')
+      .from("encoding_entries")
       .delete()
-      .eq('template_id', templateId);
-    
+      .eq("template_id", templateId);
+
     if (entriesError) throw entriesError;
 
     // Delete template columns
     const { error: colsError } = await this.client
-      .from('encoding_template_columns')
+      .from("encoding_template_columns")
       .delete()
-      .eq('template_id', templateId);
-    
+      .eq("template_id", templateId);
+
     if (colsError) throw colsError;
 
     // Finally delete the template itself
     const { error: templateError } = await this.client
-      .from('encoding_templates')
+      .from("encoding_templates")
       .delete()
-      .eq('id', templateId);
-    
+      .eq("id", templateId);
+
     if (templateError) throw templateError;
   },
 
@@ -176,11 +188,11 @@ export const SupabaseService = {
    */
   async getColumns(departmentId) {
     const { data, error } = await this.client
-      .from('encoding_columns')
-      .select('*')
-      .eq('department_id', departmentId)
-      .order('display_order', { ascending: true });
-    
+      .from("encoding_columns")
+      .select("*")
+      .eq("department_id", departmentId)
+      .order("display_order", { ascending: true });
+
     if (error) throw error;
     return data;
   },
@@ -195,7 +207,14 @@ export const SupabaseService = {
    * @param {string} groupName - Optional group name for visual grouping (stored in parent_column_id field)
    * @returns {Promise<Object>} New or existing column
    */
-  async createColumn(departmentId, columnName, columnType = 'text', displayOrder = null, isRequired = false, groupName = null) {
+  async createColumn(
+    departmentId,
+    columnName,
+    columnType = "text",
+    displayOrder = null,
+    isRequired = false,
+    groupName = null,
+  ) {
     // Trim column name to remove leading/trailing spaces
     columnName = columnName.trim();
     groupName = groupName ? groupName.trim() : null;
@@ -203,10 +222,10 @@ export const SupabaseService = {
     // Check if column with same name AND same group already exists for this department
     // Allow duplicate column names if they are in different groups
     let query = this.client
-      .from('encoding_columns')
-      .select('*')
-      .eq('department_id', departmentId)
-      .eq('column_name', columnName);
+      .from("encoding_columns")
+      .select("*")
+      .eq("department_id", departmentId)
+      .eq("column_name", columnName);
 
     const { data: existingColumns, error: checkError } = await query;
 
@@ -215,11 +234,11 @@ export const SupabaseService = {
     }
 
     // Filter in application logic to handle null groups correctly
-    const existingColumn = existingColumns?.find(col => {
+    const existingColumn = existingColumns?.find((col) => {
       if (groupName) {
         return col.group_name === groupName;
       } else {
-        return col.group_name === null || col.group_name === '';
+        return col.group_name === null || col.group_name === "";
       }
     });
 
@@ -230,18 +249,20 @@ export const SupabaseService = {
 
     // Otherwise create new column
     const { data, error } = await this.client
-      .from('encoding_columns')
-      .insert([{
-        department_id: departmentId,
-        column_name: columnName,
-        column_type: columnType,
-        display_order: displayOrder,
-        is_required: isRequired,
-        group_name: groupName // Store group name in group_name field
-      }])
+      .from("encoding_columns")
+      .insert([
+        {
+          department_id: departmentId,
+          column_name: columnName,
+          column_type: columnType,
+          display_order: displayOrder,
+          is_required: isRequired,
+          group_name: groupName, // Store group name in group_name field
+        },
+      ])
       .select()
       .single();
-    
+
     if (error) throw error;
     return data;
   },
@@ -253,14 +274,13 @@ export const SupabaseService = {
    */
   async deleteColumn(columnId) {
     const { error } = await this.client
-      .from('encoding_columns')
+      .from("encoding_columns")
       .delete()
-      .eq('id', columnId);
+      .eq("id", columnId);
 
     if (error) throw error;
   },
 
-  
   /**
    * Update column group_name
    * @param {string} columnId
@@ -269,9 +289,9 @@ export const SupabaseService = {
    */
   async updateColumnGroup(columnId, groupName) {
     const { error } = await this.client
-      .from('encoding_columns')
+      .from("encoding_columns")
       .update({ group_name: groupName })
-      .eq('id', columnId);
+      .eq("id", columnId);
 
     if (error) throw error;
   },
@@ -284,56 +304,58 @@ export const SupabaseService = {
   async getEncodingTemplateColumns(departmentId) {
     // First, get all encoding template IDs
     const { data: templates, error: templatesError } = await this.client
-      .from('encoding_templates')
-      .select('id, name')
-      .eq('module', 'encoding')
-      .eq('department_id', departmentId);
-    
+      .from("encoding_templates")
+      .select("id, name")
+      .eq("module", "encoding")
+      .eq("department_id", departmentId);
+
     if (templatesError) throw templatesError;
-    
+
     if (!templates || templates.length === 0) {
       return [];
     }
-    
-    const templateIds = templates.map(t => t.id);
-    
+
+    const templateIds = templates.map((t) => t.id);
+
     // Then, get all columns from those templates
     const { data, error } = await this.client
-      .from('encoding_template_columns')
-      .select(`
+      .from("encoding_template_columns")
+      .select(
+        `
         template_id,
         encoding_columns (
           id,
           column_name,
           column_type
         )
-      `)
-      .in('template_id', templateIds);
-    
+      `,
+      )
+      .in("template_id", templateIds);
+
     if (error) throw error;
-    
+
     // Create a map of template IDs to template names
     const templateMap = {};
-    templates.forEach(template => {
+    templates.forEach((template) => {
       templateMap[template.id] = template.name;
     });
-    
+
     // Extract unique columns
     const uniqueColumns = [];
     const seenIds = new Set();
-    
+
     if (Array.isArray(data)) {
-      data.forEach(item => {
+      data.forEach((item) => {
         if (item.encoding_columns && !seenIds.has(item.encoding_columns.id)) {
           seenIds.add(item.encoding_columns.id);
           uniqueColumns.push({
             ...item.encoding_columns,
-            template_name: templateMap[item.template_id] || 'Unknown Template'
+            template_name: templateMap[item.template_id] || "Unknown Template",
           });
         }
       });
     }
-    
+
     return uniqueColumns;
   },
 
@@ -346,42 +368,42 @@ export const SupabaseService = {
   async getEncodingEntriesByColumn(departmentId, columnId) {
     // Get all encoding template IDs
     const { data: templates, error: templatesError } = await this.client
-      .from('encoding_templates')
-      .select('id')
-      .eq('module', 'encoding')
-      .eq('department_id', departmentId);
-    
+      .from("encoding_templates")
+      .select("id")
+      .eq("module", "encoding")
+      .eq("department_id", departmentId);
+
     if (templatesError) throw templatesError;
-    
+
     if (!templates || templates.length === 0) {
       return [];
     }
-    
-    const templateIds = templates.map(t => t.id);
-    
+
+    const templateIds = templates.map((t) => t.id);
+
     // Get all entries from encoding templates
     const { data: entries, error: entriesError } = await this.client
-      .from('encoding_entries')
-      .select('id')
-      .in('template_id', templateIds);
-    
+      .from("encoding_entries")
+      .select("id")
+      .in("template_id", templateIds);
+
     if (entriesError) throw entriesError;
-    
+
     if (!entries || entries.length === 0) {
       return [];
     }
-    
-    const entryIds = entries.map(e => e.id);
-    
+
+    const entryIds = entries.map((e) => e.id);
+
     // Get values for the specific column
     const { data: values, error: valuesError } = await this.client
-      .from('encoding_entry_values')
-      .select('entry_id, value, value_number')
-      .eq('column_id', columnId)
-      .in('entry_id', entryIds);
-    
+      .from("encoding_entry_values")
+      .select("entry_id, value, value_number")
+      .eq("column_id", columnId)
+      .in("entry_id", entryIds);
+
     if (valuesError) throw valuesError;
-    
+
     return values || [];
   },
 
@@ -392,151 +414,168 @@ export const SupabaseService = {
    * @param {number} departmentId
    * @returns {Promise<number>} Number of entries updated
    */
-  async copyColumnDataToMonitoring(monitoringTemplateId, columnId, departmentId) {
+  async copyColumnDataToMonitoring(
+    monitoringTemplateId,
+    columnId,
+    departmentId,
+  ) {
     // Get all encoding template IDs
     const { data: encodingTemplates, error: templatesError } = await this.client
-      .from('encoding_templates')
-      .select('id')
-      .eq('module', 'encoding')
-      .eq('department_id', departmentId);
-    
+      .from("encoding_templates")
+      .select("id")
+      .eq("module", "encoding")
+      .eq("department_id", departmentId);
+
     if (templatesError) throw templatesError;
-    
+
     if (!encodingTemplates || encodingTemplates.length === 0) {
       return 0;
     }
-    
-    const encodingTemplateIds = encodingTemplates.map(t => t.id);
-    
+
+    const encodingTemplateIds = encodingTemplates.map((t) => t.id);
+
     // Find which encoding template this column belongs to
     let templateColumn, templateError;
     try {
       const result = await this.client
-        .from('encoding_template_columns')
-        .select('template_id')
-        .eq('column_id', columnId)
-        .in('template_id', encodingTemplateIds)
+        .from("encoding_template_columns")
+        .select("template_id")
+        .eq("column_id", columnId)
+        .in("template_id", encodingTemplateIds)
         .limit(1)
         .single();
-      
+
       templateColumn = result.data;
       templateError = result.error;
     } catch (err) {
-      console.warn('Error querying encoding_template_columns:', err);
+      console.warn("Error querying encoding_template_columns:", err);
       templateError = err;
       templateColumn = null;
     }
-    
+
     if (templateError || !templateColumn) {
       // If column not found in any template or query fails, return 0
-      console.log('Column not found in encoding templates or query failed:', templateError);
+      console.log(
+        "Column not found in encoding templates or query failed:",
+        templateError,
+      );
       return 0;
     }
-    
+
     const sourceTemplateId = templateColumn.template_id;
-    
+
     // Get all encoding entries from the specific template where the column exists
     // Order by created_at descending to match how encoding template displays entries
     const { data: allEncodingEntries, error: entriesError } = await this.client
-      .from('encoding_entries')
-      .select('id, created_at')
-      .eq('template_id', sourceTemplateId)
-      .order('created_at', { ascending: false });
-    
+      .from("encoding_entries")
+      .select("id, created_at")
+      .eq("template_id", sourceTemplateId)
+      .order("created_at", { ascending: false });
+
     if (entriesError) throw entriesError;
-    
+
     if (!allEncodingEntries || allEncodingEntries.length === 0) {
       return 0;
     }
-    
+
     // Get values for the specific column from the specific template
-    const encodingEntryIds = allEncodingEntries.map(e => e.id);
+    const encodingEntryIds = allEncodingEntries.map((e) => e.id);
     const { data: values, error: valuesError } = await this.client
-      .from('encoding_entry_values')
-      .select('entry_id, value, value_number')
-      .eq('column_id', columnId)
-      .in('entry_id', encodingEntryIds);
-    
+      .from("encoding_entry_values")
+      .select("entry_id, value, value_number")
+      .eq("column_id", columnId)
+      .in("entry_id", encodingEntryIds);
+
     if (valuesError) throw valuesError;
-    
+
     // Create a map of entry_id to value for easy lookup
     const valueMap = {};
-    (values || []).forEach(v => {
+    (values || []).forEach((v) => {
       valueMap[v.entry_id] = {
         value: v.value,
-        value_number: v.value_number
+        value_number: v.value_number,
       };
     });
-    
+
     // Get all monitoring entries ordered by created_at descending to match encoding order
-    const { data: monitoringEntries, error: monitoringError } = await this.client
-      .from('encoding_entries')
-      .select('id, created_at')
-      .eq('template_id', monitoringTemplateId)
-      .order('created_at', { ascending: false });
-    
+    const { data: monitoringEntries, error: monitoringError } =
+      await this.client
+        .from("encoding_entries")
+        .select("id, created_at")
+        .eq("template_id", monitoringTemplateId)
+        .order("created_at", { ascending: false });
+
     if (monitoringError) throw monitoringError;
-    
+
     // Ensure monitoring entries exist for all encoding entries
     let monitoringEntriesToUse = monitoringEntries || [];
-    
-    if (!monitoringEntriesToUse || monitoringEntriesToUse.length < allEncodingEntries.length) {
+
+    if (
+      !monitoringEntriesToUse ||
+      monitoringEntriesToUse.length < allEncodingEntries.length
+    ) {
       // Create missing monitoring entries
-      const startIndex = monitoringEntriesToUse ? monitoringEntriesToUse.length : 0;
+      const startIndex = monitoringEntriesToUse
+        ? monitoringEntriesToUse.length
+        : 0;
       const entriesToInsert = [];
-      
+
       for (let i = startIndex; i < allEncodingEntries.length; i++) {
         const encEntry = allEncodingEntries[i];
         entriesToInsert.push({
           template_id: monitoringTemplateId,
           department_id: departmentId,
-          status: 'draft',
+          status: "draft",
           created_at: encEntry.created_at,
-          reference_number: encEntry.id
+          reference_number: encEntry.id,
         });
       }
-      
+
       if (entriesToInsert.length > 0) {
         const { data: newEntries, error: createError } = await this.client
-          .from('encoding_entries')
+          .from("encoding_entries")
           .insert(entriesToInsert)
           .select();
-        
+
         if (createError) throw createError;
-        
+
         // Add new entries to the list
-        monitoringEntriesToUse = [...(monitoringEntriesToUse || []), ...newEntries];
+        monitoringEntriesToUse = [
+          ...(monitoringEntriesToUse || []),
+          ...newEntries,
+        ];
       }
     }
-    
+
     // Copy values from encoding entries to monitoring entries by position
     const valuesToInsert = [];
     for (let i = 0; i < allEncodingEntries.length; i++) {
       const monitoringEntryId = monitoringEntriesToUse[i].id;
       const encEntryId = allEncodingEntries[i].id;
       const encValue = valueMap[encEntryId];
-      
+
       if (!encValue) continue; // Skip if no value for this column
-      
+
       const valueData = {};
       if (encValue.value !== null) valueData.value = encValue.value;
-      if (encValue.value_number !== null) valueData.value_number = encValue.value_number;
-      
+      if (encValue.value_number !== null)
+        valueData.value_number = encValue.value_number;
+
       valuesToInsert.push({
         entry_id: monitoringEntryId,
         column_id: columnId,
-        ...valueData
+        ...valueData,
       });
     }
-    
+
     if (valuesToInsert.length > 0) {
       const { error: insertError } = await this.client
-        .from('encoding_entry_values')
+        .from("encoding_entry_values")
         .insert(valuesToInsert);
-      
+
       if (insertError) throw insertError;
     }
-    
+
     return valuesToInsert.length;
   },
 
@@ -551,18 +590,25 @@ export const SupabaseService = {
    * @param {number} displayOrder
    * @returns {Promise<Object>} New mapping
    */
-  async addColumnToTemplate(templateId, columnId, displayOrder = null, linkageType = 'linked') {
+  async addColumnToTemplate(
+    templateId,
+    columnId,
+    displayOrder = null,
+    linkageType = "linked",
+  ) {
     const { data, error } = await this.client
-      .from('encoding_template_columns')
-      .insert([{
-        template_id: templateId,
-        column_id: columnId,
-        display_order: displayOrder,
-        linkage_type: linkageType
-      }])
+      .from("encoding_template_columns")
+      .insert([
+        {
+          template_id: templateId,
+          column_id: columnId,
+          display_order: displayOrder,
+          linkage_type: linkageType,
+        },
+      ])
       .select()
       .single();
-    
+
     if (error) throw error;
     return data;
   },
@@ -576,34 +622,34 @@ export const SupabaseService = {
   async removeColumnFromTemplate(templateId, columnId) {
     // First, get all entry IDs for this template
     const { data: entries, error: entriesError } = await this.client
-      .from('encoding_entries')
-      .select('id')
-      .eq('template_id', templateId);
-    
+      .from("encoding_entries")
+      .select("id")
+      .eq("template_id", templateId);
+
     if (entriesError) {
-      console.warn('Failed to fetch entries:', entriesError);
+      console.warn("Failed to fetch entries:", entriesError);
     } else if (entries && entries.length > 0) {
       // Delete all values for this column in those entries
-      const entryIds = entries.map(e => e.id);
+      const entryIds = entries.map((e) => e.id);
       const { error: valuesError } = await this.client
-        .from('encoding_entry_values')
+        .from("encoding_entry_values")
         .delete()
-        .in('entry_id', entryIds)
-        .eq('column_id', columnId);
-      
+        .in("entry_id", entryIds)
+        .eq("column_id", columnId);
+
       if (valuesError) {
-        console.warn('Failed to delete column values:', valuesError);
+        console.warn("Failed to delete column values:", valuesError);
         // Continue anyway to remove the column mapping
       }
     }
-    
+
     // Then remove the column-template mapping
     const { error } = await this.client
-      .from('encoding_template_columns')
+      .from("encoding_template_columns")
       .delete()
-      .eq('template_id', templateId)
-      .eq('column_id', columnId);
-    
+      .eq("template_id", templateId)
+      .eq("column_id", columnId);
+
     if (error) throw error;
   },
 
@@ -623,28 +669,33 @@ export const SupabaseService = {
     // Get paginated entries
     const from = (page - 1) * pageSize;
     const to = from + pageSize - 1;
-    
+
     let query = this.client
-      .from('encoding_entries')
-      .select('*', { count: 'exact' })
-      .eq('template_id', templateId)
+      .from("encoding_entries")
+      .select("*", { count: "exact" })
+      .eq("template_id", templateId)
       .range(from, to);
-    
+
     if (status) {
-      query = query.eq('status', status);
+      query = query.eq("status", status);
     }
-    
-    const { data: entries, error, count } = await query.order('created_at', { ascending: false });
-    
+
+    const {
+      data: entries,
+      error,
+      count,
+    } = await query.order("created_at", { ascending: false });
+
     if (error) throw error;
-    
+
     if (entries.length === 0) return { entries: [], totalCount: 0 };
 
     // Fetch values for the current page only
-    const entryIds = entries.map(e => e.id);
+    const entryIds = entries.map((e) => e.id);
     const { data: allValues, error: valuesError } = await this.client
-      .from('encoding_entry_values')
-      .select(`
+      .from("encoding_entry_values")
+      .select(
+        `
         id,
         entry_id,
         column_id,
@@ -655,14 +706,15 @@ export const SupabaseService = {
           column_name,
           column_type
         )
-      `)
-      .in('entry_id', entryIds);
-    
+      `,
+      )
+      .in("entry_id", entryIds);
+
     if (valuesError) throw valuesError;
 
     // Group values by entry_id for fast lookup
     const valuesByEntry = {};
-    allValues.forEach(v => {
+    allValues.forEach((v) => {
       if (!valuesByEntry[v.entry_id]) {
         valuesByEntry[v.entry_id] = [];
       }
@@ -670,20 +722,20 @@ export const SupabaseService = {
     });
 
     // Enrich entries with their values
-    const enrichedEntries = entries.map(entry => {
+    const enrichedEntries = entries.map((entry) => {
       const values = valuesByEntry[entry.id] || [];
       const valueObj = {};
-      values.forEach(v => {
+      values.forEach((v) => {
         valueObj[v.encoding_columns.column_name] = v.value ?? v.value_number;
       });
-      
+
       return {
         ...entry,
         values: valueObj,
-        valueDetails: values
+        valueDetails: values,
       };
     });
-    
+
     return { entries: enrichedEntries, totalCount: count || 0 };
   },
 
@@ -696,31 +748,34 @@ export const SupabaseService = {
   async getAllEntries(templateId, status = null) {
     // Get all entries
     let query = this.client
-      .from('encoding_entries')
-      .select('*')
-      .eq('template_id', templateId);
-    
+      .from("encoding_entries")
+      .select("*")
+      .eq("template_id", templateId);
+
     if (status) {
-      query = query.eq('status', status);
+      query = query.eq("status", status);
     }
-    
-    const { data: entries, error } = await query.order('created_at', { ascending: false });
-    
+
+    const { data: entries, error } = await query.order("created_at", {
+      ascending: false,
+    });
+
     if (error) throw error;
-    
+
     if (entries.length === 0) return [];
 
     // OPTIMIZATION: Fetch values in batches to avoid URL length limits
     // Supabase has a limit on .in() query parameter size, so chunk into batches of 200
-    const entryIds = entries.map(e => e.id);
+    const entryIds = entries.map((e) => e.id);
     const batchSize = 200;
     const allValues = [];
 
     for (let i = 0; i < entryIds.length; i += batchSize) {
       const batch = entryIds.slice(i, i + batchSize);
       const { data: batchValues, error: valuesError } = await this.client
-        .from('encoding_entry_values')
-        .select(`
+        .from("encoding_entry_values")
+        .select(
+          `
           id,
           entry_id,
           column_id,
@@ -731,16 +786,17 @@ export const SupabaseService = {
             column_name,
             column_type
           )
-        `)
-        .in('entry_id', batch);
-      
+        `,
+        )
+        .in("entry_id", batch);
+
       if (valuesError) throw valuesError;
       allValues.push(...batchValues);
     }
 
     // Group values by entry_id for fast lookup
     const valuesByEntry = {};
-    allValues.forEach(v => {
+    allValues.forEach((v) => {
       if (!valuesByEntry[v.entry_id]) {
         valuesByEntry[v.entry_id] = [];
       }
@@ -748,20 +804,20 @@ export const SupabaseService = {
     });
 
     // Enrich entries with their values
-    const enrichedEntries = entries.map(entry => {
+    const enrichedEntries = entries.map((entry) => {
       const values = valuesByEntry[entry.id] || [];
       const valueObj = {};
-      values.forEach(v => {
+      values.forEach((v) => {
         valueObj[v.encoding_columns.column_name] = v.value ?? v.value_number;
       });
-      
+
       return {
         ...entry,
         values: valueObj,
-        valueDetails: values
+        valueDetails: values,
       };
     });
-    
+
     return enrichedEntries;
   },
 
@@ -773,17 +829,18 @@ export const SupabaseService = {
   async getEntry(entryId) {
     // Get entry
     const { data: entry, error: entryError } = await this.client
-      .from('encoding_entries')
-      .select('*')
-      .eq('id', entryId)
+      .from("encoding_entries")
+      .select("*")
+      .eq("id", entryId)
       .single();
-    
+
     if (entryError) throw entryError;
 
     // Get values
     const { data: values, error: valuesError } = await this.client
-      .from('encoding_entry_values')
-      .select(`
+      .from("encoding_entry_values")
+      .select(
+        `
         id,
         column_id,
         value,
@@ -793,21 +850,22 @@ export const SupabaseService = {
           column_name,
           column_type
         )
-      `)
-      .eq('entry_id', entryId);
-    
+      `,
+      )
+      .eq("entry_id", entryId);
+
     if (valuesError) throw valuesError;
 
     // Convert to object format
     const valueObj = {};
-    values.forEach(v => {
+    values.forEach((v) => {
       valueObj[v.encoding_columns.column_name] = v.value || v.value_number;
     });
 
     return {
       ...entry,
       values: valueObj,
-      valueDetails: values
+      valueDetails: values,
     };
   },
 
@@ -820,16 +878,18 @@ export const SupabaseService = {
    */
   async createEntry(templateId, departmentId, referenceNumber = null) {
     const { data, error } = await this.client
-      .from('encoding_entries')
-      .insert([{
-        template_id: templateId,
-        department_id: departmentId,
-        reference_number: referenceNumber,
-        status: 'draft'
-      }])
+      .from("encoding_entries")
+      .insert([
+        {
+          template_id: templateId,
+          department_id: departmentId,
+          reference_number: referenceNumber,
+          status: "draft",
+        },
+      ])
       .select()
       .single();
-    
+
     if (error) throw error;
     return data;
   },
@@ -841,19 +901,22 @@ export const SupabaseService = {
    * @returns {Promise<Object|null>} Entry or null
    */
   async getMonitoringEntryByReferenceNumber(templateId, referenceNumber) {
-    console.log('[DB] getMonitoringEntryByReferenceNumber:', { templateId, referenceNumber });
+    console.log("[DB] getMonitoringEntryByReferenceNumber:", {
+      templateId,
+      referenceNumber,
+    });
     const { data, error } = await this.client
-      .from('encoding_entries')
-      .select('*')
-      .eq('template_id', templateId)
-      .eq('reference_number', referenceNumber)
+      .from("encoding_entries")
+      .select("*")
+      .eq("template_id", templateId)
+      .eq("reference_number", referenceNumber)
       .maybeSingle();
 
     if (error) {
-      console.error('[DB] getMonitoringEntryByReferenceNumber error:', error);
+      console.error("[DB] getMonitoringEntryByReferenceNumber error:", error);
       throw error;
     }
-    console.log('[DB] getMonitoringEntryByReferenceNumber result:', data);
+    console.log("[DB] getMonitoringEntryByReferenceNumber result:", data);
     return data;
   },
 
@@ -868,14 +931,14 @@ export const SupabaseService = {
     const entriesToInsert = Array.from({ length: count }, () => ({
       template_id: templateId,
       department_id: departmentId,
-      status: 'draft'
+      status: "draft",
     }));
 
     const { data, error } = await this.client
-      .from('encoding_entries')
+      .from("encoding_entries")
       .insert(entriesToInsert)
       .select();
-    
+
     if (error) throw error;
     return data;
   },
@@ -892,9 +955,9 @@ export const SupabaseService = {
       const update = {
         entry_id: entryId,
         column_id: columnId,
-        value: typeof value === 'number' ? null : String(value),
-        value_number: typeof value === 'number' ? value : null,
-        updated_at: new Date().toISOString()
+        value: typeof value === "number" ? null : String(value),
+        value_number: typeof value === "number" ? value : null,
+        updated_at: new Date().toISOString(),
       };
 
       return update;
@@ -903,14 +966,13 @@ export const SupabaseService = {
     // Batch all upserts into ONE call instead of looping through each one
     if (updates.length > 0) {
       const { error } = await this.client
-        .from('encoding_entry_values')
-        .upsert(updates, { onConflict: 'entry_id,column_id' });
-      
+        .from("encoding_entry_values")
+        .upsert(updates, { onConflict: "entry_id,column_id" });
+
       if (error) throw error;
     }
   },
 
-  
   /**
    * Save column computation setting
    * @param {string} templateId
@@ -933,7 +995,15 @@ export const SupabaseService = {
    * @param {string} displayPosition - only for computation type
    * @returns {Promise<Object>}
    */
-  async saveTemplateFormula(templateId, columnId, formulaType, formula, entryId = null, functionType = null, displayPosition = 'bottom') {
+  async saveTemplateFormula(
+    templateId,
+    columnId,
+    formulaType,
+    formula,
+    entryId = null,
+    functionType = null,
+    displayPosition = "bottom",
+  ) {
     const formulaData = {
       id: crypto.randomUUID(), // Generate UUID for id column
       template_id: templateId,
@@ -941,22 +1011,22 @@ export const SupabaseService = {
       entry_id: entryId,
       formula_type: formulaType,
       formula: formula,
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
     };
 
     // Add computation-specific fields
-    if (formulaType === 'computation') {
+    if (formulaType === "computation") {
       formulaData.function_type = functionType;
       formulaData.display_position = displayPosition;
     }
 
     // Use the actual unique constraint from database: template_id, column_id, entry_id
     const { data, error } = await this.client
-      .from('template_formulas')
-      .upsert(formulaData, { onConflict: 'template_id,column_id,entry_id' })
+      .from("template_formulas")
+      .upsert(formulaData, { onConflict: "template_id,column_id,entry_id" })
       .select()
       .single();
-    
+
     if (error) throw error;
     return data;
   },
@@ -969,16 +1039,16 @@ export const SupabaseService = {
    */
   async getTemplateFormulas(templateId, formulaType = null) {
     let query = this.client
-      .from('template_formulas')
-      .select('*')
-      .eq('template_id', templateId);
-    
+      .from("template_formulas")
+      .select("*")
+      .eq("template_id", templateId);
+
     if (formulaType) {
-      query = query.eq('formula_type', formulaType);
+      query = query.eq("formula_type", formulaType);
     }
-    
+
     const { data, error } = await query;
-    
+
     if (error) throw error;
     return data || [];
   },
@@ -990,23 +1060,28 @@ export const SupabaseService = {
    * @param {string|null} entryId - null for column/computation formulas
    * @param {string|null} formulaType - optional filter by type
    */
-  async deleteTemplateFormula(templateId, columnId, entryId = null, formulaType = null) {
+  async deleteTemplateFormula(
+    templateId,
+    columnId,
+    entryId = null,
+    formulaType = null,
+  ) {
     let query = this.client
-      .from('template_formulas')
+      .from("template_formulas")
       .delete()
-      .eq('template_id', templateId)
-      .eq('column_id', columnId);
-    
+      .eq("template_id", templateId)
+      .eq("column_id", columnId);
+
     if (entryId !== null) {
-      query = query.eq('entry_id', entryId);
+      query = query.eq("entry_id", entryId);
     }
-    
+
     if (formulaType) {
-      query = query.eq('formula_type', formulaType);
+      query = query.eq("formula_type", formulaType);
     }
-    
+
     const { error } = await query;
-    
+
     if (error) throw error;
   },
 
@@ -1018,15 +1093,20 @@ export const SupabaseService = {
    * Legacy compatibility - Save column computation
    * @deprecated Use saveTemplateFormula with type 'computation'
    */
-  async saveColumnComputation(templateId, columnId, functionType, displayPosition = 'bottom') {
+  async saveColumnComputation(
+    templateId,
+    columnId,
+    functionType,
+    displayPosition = "bottom",
+  ) {
     return await this.saveTemplateFormula(
-      templateId, 
-      columnId, 
-      'computation', 
-      '', 
-      null, 
-      functionType, 
-      displayPosition
+      templateId,
+      columnId,
+      "computation",
+      "",
+      null,
+      functionType,
+      displayPosition,
     );
   },
 
@@ -1035,7 +1115,7 @@ export const SupabaseService = {
    * @deprecated Use getTemplateFormulas with type 'computation'
    */
   async getColumnComputations(templateId) {
-    return await this.getTemplateFormulas(templateId, 'computation');
+    return await this.getTemplateFormulas(templateId, "computation");
   },
 
   /**
@@ -1043,7 +1123,12 @@ export const SupabaseService = {
    * @deprecated Use deleteTemplateFormula with type 'computation'
    */
   async deleteColumnComputation(templateId, columnId) {
-    return await this.deleteTemplateFormula(templateId, columnId, null, 'computation');
+    return await this.deleteTemplateFormula(
+      templateId,
+      columnId,
+      null,
+      "computation",
+    );
   },
 
   /**
@@ -1051,7 +1136,13 @@ export const SupabaseService = {
    * @deprecated Use saveTemplateFormula with type 'cell'
    */
   async saveCellFormula(templateId, entryId, columnId, formula) {
-    return await this.saveTemplateFormula(templateId, columnId, 'cell', formula, entryId);
+    return await this.saveTemplateFormula(
+      templateId,
+      columnId,
+      "cell",
+      formula,
+      entryId,
+    );
   },
 
   /**
@@ -1059,7 +1150,12 @@ export const SupabaseService = {
    * @deprecated Use saveTemplateFormula with type 'column'
    */
   async saveColumnFormula(templateId, columnId, formula) {
-    return await this.saveTemplateFormula(templateId, columnId, 'column', formula);
+    return await this.saveTemplateFormula(
+      templateId,
+      columnId,
+      "column",
+      formula,
+    );
   },
 
   /**
@@ -1075,7 +1171,12 @@ export const SupabaseService = {
    * @deprecated Use deleteTemplateFormula with type 'cell'
    */
   async deleteCellFormula(templateId, entryId, columnId) {
-    return await this.deleteTemplateFormula(templateId, columnId, entryId, 'cell');
+    return await this.deleteTemplateFormula(
+      templateId,
+      columnId,
+      entryId,
+      "cell",
+    );
   },
 
   /**
@@ -1083,7 +1184,12 @@ export const SupabaseService = {
    * @deprecated Use deleteTemplateFormula with type 'column'
    */
   async deleteColumnFormula(templateId, columnId) {
-    return await this.deleteTemplateFormula(templateId, columnId, null, 'column');
+    return await this.deleteTemplateFormula(
+      templateId,
+      columnId,
+      null,
+      "column",
+    );
   },
 
   /**
@@ -1095,16 +1201,16 @@ export const SupabaseService = {
   async updateEntryStatus(entryId, newStatus) {
     const updates = {
       status: newStatus,
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
     };
 
     const { data, error } = await this.client
-      .from('encoding_entries')
+      .from("encoding_entries")
       .update(updates)
-      .eq('id', entryId)
+      .eq("id", entryId)
       .select()
       .single();
-    
+
     if (error) throw error;
     return data;
   },
@@ -1116,10 +1222,10 @@ export const SupabaseService = {
    */
   async deleteEntry(entryId) {
     const { error } = await this.client
-      .from('encoding_entries')
+      .from("encoding_entries")
       .delete()
-      .eq('id', entryId);
-    
+      .eq("id", entryId);
+
     if (error) throw error;
   },
 
@@ -1136,10 +1242,10 @@ export const SupabaseService = {
     for (let i = 0; i < entryIds.length; i += batchSize) {
       const batch = entryIds.slice(i, i + batchSize);
       const { error } = await this.client
-        .from('encoding_entries')
+        .from("encoding_entries")
         .delete()
-        .in('id', batch);
-      
+        .in("id", batch);
+
       if (error) throw error;
     }
   },
@@ -1155,8 +1261,9 @@ export const SupabaseService = {
    */
   async getMonitoringDefinitions(departmentId) {
     const { data, error } = await this.client
-      .from('monitoring_definitions')
-      .select(`
+      .from("monitoring_definitions")
+      .select(
+        `
         *,
         monitoring_computed_metrics (
           id,
@@ -1167,11 +1274,12 @@ export const SupabaseService = {
             column_name
           )
         )
-      `)
-      .eq('department_id', departmentId)
-      .eq('is_active', true)
-      .order('created_at', { ascending: false });
-    
+      `,
+      )
+      .eq("department_id", departmentId)
+      .eq("is_active", true)
+      .order("created_at", { ascending: false });
+
     if (error) throw error;
     return data;
   },
@@ -1184,19 +1292,26 @@ export const SupabaseService = {
    * @param {string} description
    * @returns {Promise<Object>} New monitoring definition
    */
-  async createMonitoringDefinition(departmentId, name, monitoringType = 'daily', description = null) {
+  async createMonitoringDefinition(
+    departmentId,
+    name,
+    monitoringType = "daily",
+    description = null,
+  ) {
     const { data, error } = await this.client
-      .from('monitoring_definitions')
-      .insert([{
-        department_id: departmentId,
-        name,
-        monitoring_type: monitoringType,
-        description,
-        is_active: true
-      }])
+      .from("monitoring_definitions")
+      .insert([
+        {
+          department_id: departmentId,
+          name,
+          monitoring_type: monitoringType,
+          description,
+          is_active: true,
+        },
+      ])
       .select()
       .single();
-    
+
     if (error) throw error;
     return data;
   },
@@ -1208,10 +1323,10 @@ export const SupabaseService = {
    */
   async deleteMonitoringDefinition(monitoringId) {
     const { error } = await this.client
-      .from('monitoring_definitions')
+      .from("monitoring_definitions")
       .delete()
-      .eq('id', monitoringId);
-    
+      .eq("id", monitoringId);
+
     if (error) throw error;
   },
 
@@ -1228,25 +1343,31 @@ export const SupabaseService = {
    * @param {string} sourceTemplateId - encoding template to pull data from
    * @returns {Promise<Object>} New metric
    */
-  async addMonitoringMetric(monitoringId, columnId, operationId, metricName, sourceTemplateId) {
+  async addMonitoringMetric(
+    monitoringId,
+    columnId,
+    operationId,
+    metricName,
+    sourceTemplateId,
+  ) {
     const insertData = {
       monitoring_id: monitoringId,
       column_id: columnId,
       metric_name: metricName,
-      source_template_id: sourceTemplateId
+      source_template_id: sourceTemplateId,
     };
-    
+
     // Only include operation_id if it's provided (not null)
     if (operationId !== null && operationId !== undefined) {
       insertData.operation_id = operationId;
     }
-    
+
     const { data, error } = await this.client
-      .from('monitoring_computed_metrics')
+      .from("monitoring_computed_metrics")
       .insert([insertData])
       .select()
       .single();
-    
+
     if (error) throw error;
     return data;
   },
@@ -1258,14 +1379,14 @@ export const SupabaseService = {
    */
   async getMetricResult(metricId) {
     const { data, error } = await this.client
-      .from('monitoring_aggregations')
-      .select('*')
-      .eq('metric_id', metricId)
-      .order('computed_at', { ascending: false })
+      .from("monitoring_aggregations")
+      .select("*")
+      .eq("metric_id", metricId)
+      .order("computed_at", { ascending: false })
       .limit(1)
       .single();
-    
-    if (error && error.code !== 'PGRST116') throw error; // Ignore "not found" error
+
+    if (error && error.code !== "PGRST116") throw error; // Ignore "not found" error
     return data;
   },
 
@@ -1277,19 +1398,26 @@ export const SupabaseService = {
    * @param {Date} periodEnd
    * @returns {Promise<Object>} New aggregation
    */
-  async storeAggregation(metricId, computedValue, periodStart = null, periodEnd = null) {
+  async storeAggregation(
+    metricId,
+    computedValue,
+    periodStart = null,
+    periodEnd = null,
+  ) {
     const { data, error } = await this.client
-      .from('monitoring_aggregations')
-      .insert([{
-        metric_id: metricId,
-        computed_value: computedValue,
-        period_start: periodStart,
-        period_end: periodEnd,
-        computed_at: new Date().toISOString()
-      }])
+      .from("monitoring_aggregations")
+      .insert([
+        {
+          metric_id: metricId,
+          computed_value: computedValue,
+          period_start: periodStart,
+          period_end: periodEnd,
+          computed_at: new Date().toISOString(),
+        },
+      ])
       .select()
       .single();
-    
+
     if (error) throw error;
     return data;
   },
@@ -1298,7 +1426,6 @@ export const SupabaseService = {
   // UTILITY FUNCTIONS
   // =====================================================
 
-  
   /**
    * Compute SUM for a column
    * @param {string} columnId
@@ -1307,13 +1434,13 @@ export const SupabaseService = {
    */
   async computeSum(columnId, templateId) {
     const { data, error } = await this.client
-      .from('encoding_entry_values')
-      .select('value_number, encoding_entries!inner(template_id)')
-      .eq('column_id', columnId)
-      .eq('encoding_entries.template_id', templateId);
-    
+      .from("encoding_entry_values")
+      .select("value_number, encoding_entries!inner(template_id)")
+      .eq("column_id", columnId)
+      .eq("encoding_entries.template_id", templateId);
+
     if (error) throw error;
-    
+
     return data.reduce((sum, row) => sum + (row.value_number || 0), 0);
   },
 
@@ -1325,13 +1452,13 @@ export const SupabaseService = {
    */
   async computeAverage(columnId, templateId) {
     const { data, error } = await this.client
-      .from('encoding_entry_values')
-      .select('value_number, encoding_entries!inner(template_id)')
-      .eq('column_id', columnId)
-      .eq('encoding_entries.template_id', templateId);
-    
+      .from("encoding_entry_values")
+      .select("value_number, encoding_entries!inner(template_id)")
+      .eq("column_id", columnId)
+      .eq("encoding_entries.template_id", templateId);
+
     if (error) throw error;
-    
+
     const sum = data.reduce((sum, row) => sum + (row.value_number || 0), 0);
     return sum / data.length;
   },
@@ -1344,12 +1471,15 @@ export const SupabaseService = {
    */
   async computeCount(columnId, templateId) {
     const { count, error } = await this.client
-      .from('encoding_entry_values')
-      .select('*, encoding_entries!inner(template_id)', { count: 'exact', head: true })
-      .eq('column_id', columnId)
-      .eq('encoding_entries.template_id', templateId)
-      .not('value', 'is', null);
-    
+      .from("encoding_entry_values")
+      .select("*, encoding_entries!inner(template_id)", {
+        count: "exact",
+        head: true,
+      })
+      .eq("column_id", columnId)
+      .eq("encoding_entries.template_id", templateId)
+      .not("value", "is", null);
+
     if (error) throw error;
     return count;
   },
@@ -1363,41 +1493,55 @@ export const SupabaseService = {
    * @returns {Promise<Object>} User profile with role information
    */
   async getCurrentUserProfile() {
-    const { data: { user } } = await this.client.auth.getUser();
+    const {
+      data: { user },
+    } = await this.client.auth.getUser();
 
     if (!user) return null;
 
     // First try to get profile without joins
     const { data: profile, error } = await this.client
-      .from('profiles')
-      .select('*')
-      .eq('id', user.id)
+      .from("profiles")
+      .select("*")
+      .eq("id", user.id)
       .maybeSingle();
 
     if (error) {
-      console.error('Error fetching profile:', error);
+      console.error("Error fetching profile:", error);
       throw error;
     }
 
     if (!profile) {
-      console.log('No profile found for user:', user.id);
+      console.log("No profile found for user:", user.id);
       return null;
     }
 
     // If profile exists, try to get role and department separately
     try {
       const [roleData, deptData] = await Promise.all([
-        profile.role_id ? this.client.from('roles').select('*').eq('id', profile.role_id).single() : Promise.resolve({ data: null }),
-        profile.department_id ? this.client.from('departments').select('*').eq('id', profile.department_id).single() : Promise.resolve({ data: null })
+        profile.role_id
+          ? this.client
+              .from("roles")
+              .select("*")
+              .eq("id", profile.role_id)
+              .single()
+          : Promise.resolve({ data: null }),
+        profile.department_id
+          ? this.client
+              .from("departments")
+              .select("*")
+              .eq("id", profile.department_id)
+              .single()
+          : Promise.resolve({ data: null }),
       ]);
 
       return {
         ...profile,
         roles: roleData.data,
-        departments: deptData.data
+        departments: deptData.data,
       };
     } catch (joinError) {
-      console.error('Error fetching joins:', joinError);
+      console.error("Error fetching joins:", joinError);
       // Return profile without joins if joins fail
       return profile;
     }
@@ -1409,7 +1553,7 @@ export const SupabaseService = {
    */
   async isAdmin() {
     const profile = await this.getCurrentUserProfile();
-    return profile && profile.roles && profile.roles.role_name === 'admin';
+    return profile && profile.roles && profile.roles.role_name === "admin";
   },
 
   /**
@@ -1418,10 +1562,10 @@ export const SupabaseService = {
    */
   async getRoles() {
     const { data, error } = await this.client
-      .from('roles')
-      .select('*')
-      .order('role_name', { ascending: true });
-    
+      .from("roles")
+      .select("*")
+      .order("role_name", { ascending: true });
+
     if (error) throw error;
     return data;
   },
@@ -1432,14 +1576,18 @@ export const SupabaseService = {
    */
   async getAllUsers() {
     const { data, error } = await this.client
-      .from('profiles')
-      .select(`
+      .from("profiles")
+      .select(
+        `
         *,
         roles (*),
-        departments (*)
-      `)
-      .order('created_at', { ascending: false });
-    
+        departments (*),
+        created_by_profile:profiles!profiles_created_by_fkey (username),
+        modified_by_profile:profiles!profiles_modified_by_fkey (username)
+      `,
+      )
+      .order("created_at", { ascending: false });
+
     if (error) throw error;
     return data;
   },
@@ -1457,13 +1605,15 @@ export const SupabaseService = {
     // Get user role ID if not provided
     if (!roleId) {
       const { data: roleData } = await this.client
-        .from('roles')
-        .select('id')
-        .eq('role_name', 'user')
+        .from("roles")
+        .select("id")
+        .eq("role_name", "user")
         .single();
-      
+
       if (!roleData) {
-        throw new Error('User role not found. Please run seed_roles.sql first.');
+        throw new Error(
+          "User role not found. Please run seed_roles.sql first.",
+        );
       }
       roleId = roleData.id;
     }
@@ -1471,11 +1621,18 @@ export const SupabaseService = {
     // Use email as username
     const finalUsername = email;
 
+    // Get current user for audit log
+    const {
+      data: { user: currentUser },
+    } = await this.client.auth.getUser();
+    const currentUserId = currentUser?.id;
+
     // Check if user already exists in auth by email
-    const { data: existingUsers, error: listError } = await this.adminClient.auth.admin.listUsers();
+    const { data: existingUsers, error: listError } =
+      await this.adminClient.auth.admin.listUsers();
     if (listError) throw listError;
 
-    const existingUser = existingUsers.users.find(u => u.email === email);
+    const existingUser = existingUsers.users.find((u) => u.email === email);
 
     let authData;
     let authError;
@@ -1491,8 +1648,8 @@ export const SupabaseService = {
         password,
         email_confirm: true,
         user_metadata: {
-          username: finalUsername
-        }
+          username: finalUsername,
+        },
       });
       authData = result.data;
       authError = result.error;
@@ -1502,16 +1659,16 @@ export const SupabaseService = {
 
     // Check if profile already exists by user ID
     const { data: existingProfileById } = await this.client
-      .from('profiles')
-      .select('*')
-      .eq('id', authData.user.id)
+      .from("profiles")
+      .select("*")
+      .eq("id", authData.user.id)
       .maybeSingle();
 
     // Check if profile already exists by username (email)
     const { data: existingProfileByUsername } = await this.client
-      .from('profiles')
-      .select('*')
-      .eq('username', finalUsername)
+      .from("profiles")
+      .select("*")
+      .eq("username", finalUsername)
       .maybeSingle();
 
     let profile;
@@ -1520,14 +1677,16 @@ export const SupabaseService = {
     if (existingProfileById) {
       // Update existing profile by user ID
       const result = await this.client
-        .from('profiles')
+        .from("profiles")
         .update({
           username: finalUsername,
           department_id: departmentId,
           role_id: roleId,
-          status: 'active'
+          status: "active",
+          modified_by: currentUserId,
+          updated_at: new Date().toISOString(),
         })
-        .eq('id', authData.user.id)
+        .eq("id", authData.user.id)
         .select()
         .single();
       profile = result.data;
@@ -1535,13 +1694,15 @@ export const SupabaseService = {
     } else if (existingProfileByUsername) {
       // Update existing profile by username (this is the user's profile)
       const result = await this.client
-        .from('profiles')
+        .from("profiles")
         .update({
           department_id: departmentId,
           role_id: roleId,
-          status: 'active'
+          status: "active",
+          modified_by: currentUserId,
+          updated_at: new Date().toISOString(),
         })
-        .eq('username', finalUsername)
+        .eq("username", finalUsername)
         .select()
         .single();
       profile = result.data;
@@ -1549,14 +1710,18 @@ export const SupabaseService = {
     } else {
       // Create new profile
       const result = await this.client
-        .from('profiles')
-        .insert([{
-          id: authData.user.id,
-          username: finalUsername,
-          department_id: departmentId,
-          role_id: roleId,
-          status: 'active'
-        }])
+        .from("profiles")
+        .insert([
+          {
+            id: authData.user.id,
+            username: finalUsername,
+            department_id: departmentId,
+            role_id: roleId,
+            status: "active",
+            created_by: currentUserId,
+            modified_by: currentUserId,
+          },
+        ])
         .select()
         .single();
       profile = result.data;
@@ -1567,7 +1732,7 @@ export const SupabaseService = {
 
     return {
       user: authData.user,
-      profile
+      profile,
     };
   },
 
@@ -1578,14 +1743,24 @@ export const SupabaseService = {
    * @returns {Promise<Object>} Updated profile
    */
   async updateUserProfile(userId, updates) {
+    // Get current user for audit log
+    const {
+      data: { user: currentUser },
+    } = await this.client.auth.getUser();
+    const currentUserId = currentUser?.id;
+
+    // Add audit log fields
+    updates.modified_by = currentUserId;
+    updates.updated_at = new Date().toISOString();
+
     // Use admin client to bypass RLS for admin operations
     const { data, error } = await this.adminClient
-      .from('profiles')
+      .from("profiles")
       .update(updates)
-      .eq('id', userId)
+      .eq("id", userId)
       .select()
       .single();
-    
+
     if (error) throw error;
     return data;
   },
@@ -1597,10 +1772,59 @@ export const SupabaseService = {
    */
   async deleteUserProfile(userId) {
     const { error } = await this.client
-      .from('profiles')
+      .from("profiles")
       .delete()
-      .eq('id', userId);
-    
+      .eq("id", userId);
+
+    if (error) throw error;
+  },
+
+  /**
+   * Delete user completely (from both auth and profiles)
+   * @param {string} userId - User ID
+   * @returns {Promise<void>}
+   */
+  async deleteUser(userId) {
+    // First delete from profiles
+    const { error: profileError } = await this.adminClient
+      .from("profiles")
+      .delete()
+      .eq("id", userId);
+
+    if (profileError) throw profileError;
+
+    // Then delete from auth using admin client
+    const { error: authError } =
+      await this.adminClient.auth.admin.deleteUser(userId);
+
+    if (authError) throw authError;
+  },
+
+  /**
+   * Reset user password (admin-only)
+   * @param {string} userId - User ID
+   * @param {string} newPassword - New password
+   * @returns {Promise<void>}
+   */
+  async resetUserPassword(userId, newPassword) {
+    const { error } = await this.adminClient.auth.admin.updateUserById(userId, {
+      password: newPassword,
+    });
+
+    if (error) throw error;
+  },
+
+  /**
+   * Update user's last login timestamp
+   * @param {string} userId - User ID
+   * @returns {Promise<void>}
+   */
+  async updateLastLogin(userId) {
+    const { error } = await this.client
+      .from("profiles")
+      .update({ last_login: new Date().toISOString() })
+      .eq("id", userId);
+
     if (error) throw error;
   },
 
@@ -1610,11 +1834,11 @@ export const SupabaseService = {
    */
   async getDepartments() {
     const { data, error } = await this.client
-      .from('departments')
-      .select('*')
-      .order('name', { ascending: true });
-    
+      .from("departments")
+      .select("*")
+      .order("name", { ascending: true });
+
     if (error) throw error;
     return data;
-  }
+  },
 };
