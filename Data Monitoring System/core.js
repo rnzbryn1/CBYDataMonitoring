@@ -14,6 +14,8 @@ export const AppCore = {
         allTemplates:           [],
         allColumns:             [],             // NEW - reusable encoding_columns
         localEntries:           [],
+        filteredEntries:        null,
+        activeFilters:          [],
         editingId:              null,
         editingValues:          {},             // NEW - current entry values being edited
         dateSortAsc:            true,
@@ -132,6 +134,12 @@ export const AppCore = {
         window.closeExportModal  = ()          => this.closeExportModal();
         window.confirmExport     = ()          => this.confirmExport();
         window.updateExportPreview = ()        => this.updateExportPreview();
+        window.openFilterModal   = ()          => this.openFilterModal();
+        window.closeFilterModal  = ()          => this.closeFilterModal();
+        window.addFilter         = ()          => this.addFilter();
+        window.removeFilter      = (index)     => this.removeFilter(index);
+        window.applyFilters      = ()          => this.applyFilters();
+        window.clearAllFilters   = ()          => this.clearAllFilters();
         window.AppCore = this;
 
 
@@ -3222,6 +3230,195 @@ export const AppCore = {
         window.XLSX.writeFile(wb, `${this.state.currentTemplate.name}.xlsx`);
 
         UI.showToast('Exported with colors & column totals!');
+    },
+
+    // ============================================================
+    // FILTER
+    // ============================================================
+    openFilterModal: function () {
+        if (!this.state.currentTemplate)
+            return UI.showToast('No template selected.', 'error');
+
+        const columns = this.state.currentTemplate.columns || [];
+        const columnSelect = document.getElementById('filterColumn');
+
+        if (columnSelect) {
+            columnSelect.innerHTML = '<option value="">-- Select Column --</option>' +
+                columns.map(col => `<option value="${col.encoding_columns.id}">${col.encoding_columns.column_name}</option>`).join('');
+        }
+
+        // Render existing filters
+        this.renderFilterList();
+
+        document.getElementById('filterModal').style.display = 'block';
+    },
+
+    closeFilterModal: function () {
+        document.getElementById('filterModal').style.display = 'none';
+    },
+
+    addFilter: function () {
+        const columnId = document.getElementById('filterColumn').value;
+        const operator = document.getElementById('filterOperator').value;
+        const value = document.getElementById('filterValue').value;
+        const value2 = document.getElementById('filterValue2').value;
+
+        if (!columnId || !value) {
+            UI.showToast('Please select a column and enter a value', 'error');
+            return;
+        }
+
+        const columns = this.state.currentTemplate.columns || [];
+        const column = columns.find(col => col.encoding_columns.id === columnId);
+
+        if (!column) return;
+
+        const filter = {
+            id: Date.now(),
+            columnId: columnId,
+            columnName: column.encoding_columns.column_name,
+            columnType: column.encoding_columns.column_type,
+            operator: operator,
+            value: value,
+            value2: value2
+        };
+
+        this.state.activeFilters.push(filter);
+        this.renderFilterList();
+
+        // Clear inputs
+        document.getElementById('filterValue').value = '';
+        document.getElementById('filterValue2').value = '';
+        document.getElementById('filterColumn').value = '';
+    },
+
+    removeFilter: function (index) {
+        this.state.activeFilters.splice(index, 1);
+        this.renderFilterList();
+    },
+
+    renderFilterList: function () {
+        const filterList = document.getElementById('filterList');
+        if (!filterList) return;
+
+        if (this.state.activeFilters.length === 0) {
+            filterList.innerHTML = '<p style="color: #64748b; font-size: 13px; text-align: center; padding: 20px;">No filters added</p>';
+            return;
+        }
+
+        filterList.innerHTML = this.state.activeFilters.map((filter, index) => {
+            let filterText = `${filter.columnName} ${this.getOperatorLabel(filter.operator)} ${filter.value}`;
+            if (filter.value2) {
+                filterText += ` and ${filter.value2}`;
+            }
+
+            return `
+                <div class="filter-item">
+                    <span class="filter-item-text">${filterText}</span>
+                    <button onclick="removeFilter(${index})" class="filter-item-remove">Remove</button>
+                </div>
+            `;
+        }).join('');
+    },
+
+    getOperatorLabel: function (operator) {
+        const labels = {
+            'contains': 'contains',
+            'equals': '=',
+            'starts_with': 'starts with',
+            'ends_with': 'ends with',
+            'greater_than': '>',
+            'less_than': '<',
+            'between': 'between',
+            'before': 'before',
+            'after': 'after'
+        };
+        return labels[operator] || operator;
+    },
+
+    applyFilters: function () {
+        if (this.state.activeFilters.length === 0) {
+            this.state.filteredEntries = null;
+            this.renderActiveFiltersDisplay();
+            this.renderTable(this.state.localEntries);
+            this.closeFilterModal();
+            return;
+        }
+
+        const filtered = this.state.localEntries.filter(entry => {
+            return this.state.activeFilters.every(filter => {
+                return this.applySingleFilter(entry, filter);
+            });
+        });
+
+        this.state.filteredEntries = filtered;
+        this.renderActiveFiltersDisplay();
+        this.renderTable(filtered);
+        this.closeFilterModal();
+
+        UI.showToast(`Filtered to ${filtered.length} records`);
+    },
+
+    applySingleFilter: function (entry, filter) {
+        const valObj = entry.valueDetails?.find(v => v.column_id === filter.columnId);
+        const value = valObj?.value ?? valObj?.value_number ?? '';
+
+        switch (filter.operator) {
+            case 'contains':
+                return String(value).toLowerCase().includes(filter.value.toLowerCase());
+            case 'equals':
+                return String(value).toLowerCase() === filter.value.toLowerCase();
+            case 'starts_with':
+                return String(value).toLowerCase().startsWith(filter.value.toLowerCase());
+            case 'ends_with':
+                return String(value).toLowerCase().endsWith(filter.value.toLowerCase());
+            case 'greater_than':
+                return parseFloat(value) > parseFloat(filter.value);
+            case 'less_than':
+                return parseFloat(value) < parseFloat(filter.value);
+            case 'between':
+                const num = parseFloat(value);
+                return num >= parseFloat(filter.value) && num <= parseFloat(filter.value2);
+            case 'before':
+                return new Date(value) < new Date(filter.value);
+            case 'after':
+                return new Date(value) > new Date(filter.value);
+            default:
+                return true;
+        }
+    },
+
+    clearAllFilters: function () {
+        this.state.activeFilters = [];
+        this.state.filteredEntries = null;
+        this.renderFilterList();
+        this.renderActiveFiltersDisplay();
+        this.renderTable(this.state.localEntries);
+    },
+
+    renderActiveFiltersDisplay: function () {
+        const activeFiltersDiv = document.getElementById('activeFilters');
+        if (!activeFiltersDiv) return;
+
+        if (this.state.activeFilters.length === 0) {
+            activeFiltersDiv.style.display = 'none';
+            return;
+        }
+
+        activeFiltersDiv.style.display = 'flex';
+        activeFiltersDiv.innerHTML = this.state.activeFilters.map((filter, index) => {
+            let filterText = `${filter.columnName} ${this.getOperatorLabel(filter.operator)} ${filter.value}`;
+            if (filter.value2) {
+                filterText += ` and ${filter.value2}`;
+            }
+
+            return `
+                <span class="active-filter-tag">
+                    ${filterText}
+                    <span class="remove-filter" onclick="removeFilter(${index}); applyFilters();">&times;</span>
+                </span>
+            `;
+        }).join('');
     },
 
     // ============================================================

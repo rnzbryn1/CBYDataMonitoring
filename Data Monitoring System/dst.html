@@ -44,6 +44,7 @@
         <section class="controls sticky-form">
             <div class="action-bar">
                 <input type="text" id="search" placeholder="Search records..." oninput="searchData()">
+                <button onclick="openFilterModal()">Filter</button>
                 <button onclick="deleteSelected()">Delete Selected</button>
                 <!-- <button onclick="sortByDate()">Sort by Date</button>-->
                 <button onclick="exportToExcel()">Export Excel</button>
@@ -52,6 +53,8 @@
                 <button class="add-cat-btn" onclick="openColumnModal()" data-admin-only>+ Add Column</button>
                 <button onclick="saveEmptyRow()" id="saveEmptyRowBtn" class="save-btn" style="display: none;">Add Row</button>
             </div>
+            <!-- Active Filters Display -->
+            <div id="activeFilters" class="active-filters" style="display:none;"></div>
         </section>
 
         <!-- DATA TABLE -->
@@ -352,6 +355,48 @@
         <div class="modal-actions">
             <button onclick="closeExportModal()">Cancel</button>
             <button onclick="confirmExport()">Export</button>
+        </div>
+    </div>
+</div>
+
+<!-- FILTER MODAL -->
+<div id="filterModal" class="modal">
+    <div class="modal-content filter-modal-content">
+        <span class="close-btn" onclick="closeFilterModal()">&times;</span>
+        <h3>Filter Records</h3>
+
+        <!-- Add Filter -->
+        <div class="filter-add-section">
+            <label class="modal-label">Add Filter</label>
+            <div class="filter-row">
+                <select id="filterColumn" class="filter-select">
+                    <option value="">-- Select Column --</option>
+                </select>
+                <select id="filterOperator" class="filter-select">
+                    <option value="contains">Contains</option>
+                    <option value="equals">Equals</option>
+                    <option value="starts_with">Starts With</option>
+                    <option value="ends_with">Ends With</option>
+                    <option value="greater_than">Greater Than</option>
+                    <option value="less_than">Less Than</option>
+                    <option value="between">Between</option>
+                    <option value="before">Before</option>
+                    <option value="after">After</option>
+                </select>
+                <input type="text" id="filterValue" class="filter-input" placeholder="Value">
+                <button onclick="addFilter()" class="filter-add-btn">+</button>
+            </div>
+            <div id="filterValue2Container" class="filter-row" style="display:none;">
+                <input type="text" id="filterValue2" class="filter-input" placeholder="Second Value (for between)">
+            </div>
+        </div>
+
+        <!-- Active Filters -->
+        <div id="filterList" class="filter-list"></div>
+
+        <div class="modal-actions">
+            <button onclick="clearAllFilters()">Clear All</button>
+            <button onclick="applyFilters()">Apply</button>
         </div>
     </div>
 </div>

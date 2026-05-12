@@ -771,6 +771,142 @@ tbody td[colspan] {
     background: #f8fafc;
 }
 
+/* Active Filters Display */
+.active-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 8px;
+    background: #f8fafc;
+    border-radius: 6px;
+    border: 1px solid #e2e8f0;
+}
+
+.active-filter-tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    background: #dbeafe;
+    color: #1e40af;
+    border-radius: 16px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.active-filter-tag .remove-filter {
+    margin-left: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: bold;
+    color: #1e40af;
+}
+
+.active-filter-tag .remove-filter:hover {
+    color: #1e3a8a;
+}
+
+/* Filter Modal */
+.filter-modal-content {
+    max-width: 600px;
+}
+
+.filter-add-section {
+    margin-bottom: 16px;
+}
+
+.filter-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.filter-select {
+    flex: 1;
+    height: 36px;
+    padding: 0 8px;
+    font-size: 13px;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    background: #fff;
+    color: #334155;
+}
+
+.filter-input {
+    flex: 1;
+    height: 36px;
+    padding: 0 10px;
+    font-size: 13px;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    background: #fff;
+    color: #334155;
+}
+
+.filter-add-btn {
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    border: 1px solid #2563eb;
+    background: #2563eb;
+    color: #fff;
+    border-radius: 4px;
+    font-size: 18px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.filter-add-btn:hover {
+    background: #1d4ed8;
+    border-color: #1d4ed8;
+}
+
+.filter-list {
+    max-height: 250px;
+    overflow-y: auto;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 8px;
+    background: #f8fafc;
+    margin-bottom: 16px;
+}
+
+.filter-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 4px;
+    margin-bottom: 6px;
+}
+
+.filter-item:last-child {
+    margin-bottom: 0;
+}
+
+.filter-item-text {
+    font-size: 13px;
+    color: #334155;
+}
+
+.filter-item-remove {
+    background: #ef4444;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.filter-item-remove:hover {
+    background: #dc2626;
+}
+
 .import-hint {
     font-size: 12px;
     color: #64748b;
