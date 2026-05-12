@@ -1,36 +1,37 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
+  <head>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <meta charset="UTF-8">
+    <meta charset="UTF-8" />
     <title>Data Monitoring System</title>
-    <link rel="stylesheet" href="home.css">
-    <link rel="icon" type="image/x-icon" href="images/cbylogo64x64.png">
-</head>
-<body>
+    <link rel="stylesheet" href="home.css" />
+    <link rel="icon" type="image/x-icon" href="images/cbylogo64x64.png" />
+  </head>
+  <body>
+    <!-- TOP NAVBAR -->
+    <div class="navbar">
+      <div class="logo-container">
+        <img src="images/cbylogo.png" alt="Logo" class="logo-img" />
+      </div>
 
-<!-- TOP NAVBAR -->
-<div class="navbar">
-    <div class="logo-container">
-        <img src="images/cbylogo.png" alt="Logo" class="logo-img">
-    </div>
-
-    <ul class="menu">
+      <ul class="menu">
         <li onclick="loadPage(this, 'pcd.html')">PCD</li>
         <li onclick="loadPage(this, 'dst.html')">DST</li>
-        <li class="active" onclick="loadPage(this, 'salesdesk.html')">Sales Desk</li>
+        <li class="active" onclick="loadPage(this, 'salesdesk.html')">
+          Sales Desk
+        </li>
         <li onclick="loadPage(this, 'engineering.html')">Engineering</li>
-    </ul>
+      </ul>
 
-    <button onclick="logout()" class="logout-btn">Logout</button>
-</div>
+      <button onclick="logout()" class="logout-btn">Logout</button>
+    </div>
 
-<!-- MAIN CONTENT -->
-<div class="main-content">
-    <iframe id="contentFrame" src="salesdesk.html"></iframe>
-</div>
+    <!-- MAIN CONTENT -->
+    <div class="main-content">
+      <iframe id="contentFrame" src=""></iframe>
+    </div>
 
-<script type="module" src="home.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
-</body>
+    <script type="module" src="home.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+  </body>
 </html>
