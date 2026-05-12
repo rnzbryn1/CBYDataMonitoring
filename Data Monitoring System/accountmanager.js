@@ -108,8 +108,6 @@ function renderUsersTable(users, currentUserId) {
                     <th>Status</th>
                     <th>Created</th>
                     <th>Last Login</th>
-                    <th>Created By</th>
-                    <th>Modified By</th>
                     <th>Actions</th>
                 </tr>
             </thead>
@@ -124,8 +122,6 @@ function renderUsersTable(users, currentUserId) {
     const lastLogin = user.last_login
       ? new Date(user.last_login).toLocaleDateString()
       : "Never";
-    const createdBy = user.created_by_profile?.username || "N/A";
-    const modifiedBy = user.modified_by_profile?.username || "N/A";
     const isCurrentUser = user.id === currentUserId;
 
     html += `
@@ -136,8 +132,6 @@ function renderUsersTable(users, currentUserId) {
                 <td><span class="status-badge ${status}">${status}</span></td>
                 <td>${createdAt}</td>
                 <td>${lastLogin}</td>
-                <td style="font-size: 12px; color: #666;">${createdBy}</td>
-                <td style="font-size: 12px; color: #666;">${modifiedBy}</td>
                 <td class="actions-cell">
                     ${
                       isCurrentUser

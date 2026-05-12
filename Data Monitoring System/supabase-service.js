@@ -31,11 +31,67 @@ export const SupabaseService = {
   // =====================================================
 
   /**
+   * Get current user's profile for server-side validation
+   * @returns {Promise<Object>}
+   */
+  async getCurrentUserForValidation() {
+    const {
+      data: { user },
+    } = await this.client.auth.getUser();
+    if (!user) throw new Error("User not authenticated");
+
+    const profile = await this.getCurrentUserProfile();
+    if (!profile) throw new Error("User profile not found");
+
+    return profile;
+  },
+
+  /**
+   * Validate department access for current user
+   * @param {number} departmentId - Department to check access for
+   * @throws {Error} If user doesn't have access
+   */
+  async validateDepartmentAccess(departmentId) {
+    const profile = await this.getCurrentUserForValidation();
+
+    // Admins can access all departments
+    if (profile.roles && profile.roles.role_name === "admin") {
+      return true;
+    }
+
+    // Regular users can only access their own department
+    if (profile.department_id !== departmentId) {
+      throw new Error("You do not have permission to access this department");
+    }
+
+    return true;
+  },
+
+  /**
+   * Validate admin access for current user
+   * @throws {Error} If user is not admin
+   */
+  async validateAdminAccess() {
+    const profile = await this.getCurrentUserForValidation();
+
+    if (!profile.roles || profile.roles.role_name !== "admin") {
+      throw new Error(
+        "You do not have permission to perform this action. Admin access required.",
+      );
+    }
+
+    return true;
+  },
+
+  /**
    * Get all templates for a department
    * @param {number} departmentId
    * @returns {Promise<Array>} Array of templates
    */
   async getTemplates(departmentId) {
+    // Server-side validation
+    await this.validateDepartmentAccess(departmentId);
+
     const { data, error } = await this.client
       .from("encoding_templates")
       .select("*")
@@ -103,6 +159,9 @@ export const SupabaseService = {
     description = null,
     module = "General",
   ) {
+    // Server-side validation
+    await this.validateDepartmentAccess(departmentId);
+
     const { data, error } = await this.client
       .from("encoding_templates")
       .insert([
@@ -144,6 +203,18 @@ export const SupabaseService = {
    * @returns {Promise<void>}
    */
   async deleteTemplate(templateId) {
+    // Get template to check department access
+    const { data: template } = await this.client
+      .from("encoding_templates")
+      .select("department_id")
+      .eq("id", templateId)
+      .single();
+
+    if (!template) throw new Error("Template not found");
+
+    // Server-side validation
+    await this.validateDepartmentAccess(template.department_id);
+
     // Delete template formulas first (foreign key dependency)
     const { error: formulasError } = await this.client
       .from("template_formulas")
@@ -1581,9 +1652,7 @@ export const SupabaseService = {
         `
         *,
         roles (*),
-        departments (*),
-        created_by_profile:profiles!profiles_created_by_fkey (username),
-        modified_by_profile:profiles!profiles_modified_by_fkey (username)
+        departments (*)
       `,
       )
       .order("created_at", { ascending: false });
@@ -1749,6 +1818,16 @@ export const SupabaseService = {
     } = await this.client.auth.getUser();
     const currentUserId = currentUser?.id;
 
+    // Server-side validation for role/department changes (admin only)
+    if (updates.role_id || updates.department_id) {
+      await this.validateAdminAccess();
+    }
+
+    // Users can only update their own profile unless they're admin
+    if (userId !== currentUserId) {
+      await this.validateAdminAccess();
+    }
+
     // Add audit log fields
     updates.modified_by = currentUserId;
     updates.updated_at = new Date().toISOString();
@@ -1785,6 +1864,9 @@ export const SupabaseService = {
    * @returns {Promise<void>}
    */
   async deleteUser(userId) {
+    // Server-side validation - admin only
+    await this.validateAdminAccess();
+
     // First delete from profiles
     const { error: profileError } = await this.adminClient
       .from("profiles")
@@ -1807,6 +1889,9 @@ export const SupabaseService = {
    * @returns {Promise<void>}
    */
   async resetUserPassword(userId, newPassword) {
+    // Server-side validation - admin only
+    await this.validateAdminAccess();
+
     const { error } = await this.adminClient.auth.admin.updateUserById(userId, {
       password: newPassword,
     });
