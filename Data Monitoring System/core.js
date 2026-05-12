@@ -127,7 +127,11 @@ export const AppCore = {
         window.deleteEntry       = (id)        => this.deleteEntry(id);
         window.searchData        = ()          => this.searchData();
         window.sortByDate        = ()          => this.sortByDate();
-        window.exportToExcel     = ()          => this.exportToExcel();
+        window.exportToExcel     = ()          => this.openExportModal();
+        window.openExportModal   = ()          => this.openExportModal();
+        window.closeExportModal  = ()          => this.closeExportModal();
+        window.confirmExport     = ()          => this.confirmExport();
+        window.updateExportPreview = ()        => this.updateExportPreview();
         window.AppCore = this;
 
 
@@ -156,6 +160,11 @@ export const AppCore = {
         window.previewSheet      = ()          => this.previewSheet();
         window.confirmImport     = ()          => this.confirmImport();
         window.deleteSelected    = ()          => this.deleteSelected();
+        window.autoMapAllColumns = ()          => this.autoMapAllColumns();
+        window.clearAllMappings  = ()          => this.clearAllMappings();
+        window.saveMappingTemplate = ()         => this.saveMappingTemplate();
+        window.loadMappingTemplate = ()         => this.loadMappingTemplate();
+        window.deleteMappingTemplate = ()       => this.deleteMappingTemplate();
         window.openAddToGroupModal = () => this.openAddToGroupModal();
         window.confirmAddToGroup = () => this.confirmAddToGroup();
         window.toggleEntryForm = () => this.toggleEntryForm();
@@ -2989,29 +2998,132 @@ export const AppCore = {
     // ============================================================
     // EXPORT
     // ============================================================
-    exportToExcel: function () {
-        if (!this.state.currentTemplate) 
+    openExportModal: function () {
+        if (!this.state.currentTemplate)
             return UI.showToast('No template selected.', 'error');
 
-        if (!this.state.localEntries.length) 
+        if (!this.state.localEntries.length)
             return UI.showToast('No data to export.', 'error');
 
         const columns = this.state.currentTemplate.columns || [];
 
+        if (!columns.length) {
+            return UI.showToast('No columns found in template.', 'error');
+        }
+
+        const columnList = document.getElementById('exportColumnList');
+
+        if (columnList) {
+            columnList.innerHTML = columns.map(col => `
+                <div class="export-column-item">
+                    <input type="checkbox" id="export_col_${col.encoding_columns.id}" value="${col.encoding_columns.id}" checked onchange="updateExportPreview()">
+                    <label for="export_col_${col.encoding_columns.id}">${col.encoding_columns.column_name}</label>
+                </div>
+            `).join('');
+        }
+
+        document.getElementById('exportModal').style.display = 'block';
+
+        // Show initial preview
+        this.updateExportPreview();
+    },
+
+    updateExportPreview: function () {
+        const columnCheckboxes = document.querySelectorAll('#exportColumnList input[type="checkbox"]:checked');
+        const selectedColumnIds = Array.from(columnCheckboxes).map(cb => cb.value);
+        const exportFilteredOnly = document.getElementById('exportFilteredOnly')?.checked;
+
+        const columns = this.state.currentTemplate.columns || [];
+        const entriesToExport = exportFilteredOnly ? this.state.filteredEntries || this.state.localEntries : this.state.localEntries;
+
+        // Filter columns based on selection
+        const exportColumns = selectedColumnIds.length > 0
+            ? columns.filter(col => selectedColumnIds.includes(col.encoding_columns.id))
+            : columns;
+
+        const previewDiv = document.getElementById('exportPreview');
+        const previewHeader = document.getElementById('exportPreviewHeader');
+        const previewBody = document.getElementById('exportPreviewBody');
+        const previewCount = document.getElementById('exportPreviewCount');
+
+        if (!previewDiv || !previewHeader || !previewBody) return;
+
+        if (exportColumns.length === 0 || entriesToExport.length === 0) {
+            previewDiv.style.display = 'none';
+            return;
+        }
+
+        previewDiv.style.display = 'block';
+
+        // Build header
+        previewHeader.innerHTML = `<tr>${exportColumns.map(col => `<th>${col.encoding_columns.column_name}</th>`).join('')}</tr>`;
+
+        // Build preview data (first 5 rows)
+        const previewRows = entriesToExport.slice(0, 5);
+        previewBody.innerHTML = previewRows.map(entry => {
+            const cells = exportColumns.map(col => {
+                const colDef = col.encoding_columns;
+                const valObj = entry.valueDetails?.find(v => v.column_id === colDef.id);
+                const value = valObj?.value ?? valObj?.value_number ?? '';
+                return `<td>${value}</td>`;
+            }).join('');
+            return `<tr>${cells}</tr>`;
+        }).join('');
+
+        // Update count
+        previewCount.textContent = `Showing ${previewRows.length} of ${entriesToExport.length} rows`;
+    },
+
+    closeExportModal: function () {
+        document.getElementById('exportModal').style.display = 'none';
+    },
+
+    confirmExport: function () {
+        const columnCheckboxes = document.querySelectorAll('#exportColumnList input[type="checkbox"]:checked');
+        const selectedColumnIds = Array.from(columnCheckboxes).map(cb => cb.value);
+        const exportFilteredOnly = document.getElementById('exportFilteredOnly')?.checked;
+
+        if (selectedColumnIds.length === 0) {
+            UI.showToast('Please select at least one column to export', 'error');
+            return;
+        }
+
+        this.exportToExcel(selectedColumnIds, exportFilteredOnly);
+        this.closeExportModal();
+    },
+
+    exportToExcel: function (selectedColumnIds = null, exportFilteredOnly = false) {
+        if (!this.state.currentTemplate)
+            return UI.showToast('No template selected.', 'error');
+
+        const columns = this.state.currentTemplate.columns || [];
+        const entriesToExport = exportFilteredOnly ? this.state.filteredEntries || this.state.localEntries : this.state.localEntries;
+
+        if (!entriesToExport.length)
+            return UI.showToast('No data to export.', 'error');
+
+        // Filter columns based on selection
+        const exportColumns = selectedColumnIds
+            ? columns.filter(col => selectedColumnIds.includes(col.encoding_columns.id))
+            : columns;
+
+        if (!exportColumns.length)
+            return UI.showToast('No columns selected for export.', 'error');
+
         // ============================
         // 1. HEADER
         // ============================
-        const header = columns.map(col => col.encoding_columns.column_name);
+        const header = exportColumns.map(col => col.encoding_columns.column_name);
 
         // ============================
         // 2. DATA
         // ============================
         const data = [];
 
-        this.state.localEntries.forEach(entry => {
+        entriesToExport.forEach(entry => {
             const row = [];
 
-            columns.forEach(col => {
+            exportColumns.forEach(col => {
                 const colDef = col.encoding_columns;
                 const valObj = entry.valueDetails?.find(v => v.column_id === colDef.id);
 
@@ -3070,27 +3182,29 @@ export const AppCore = {
         // ============================
         // 5. CREATE SHEET
         // ============================
-        const ws = XLSX.utils.aoa_to_sheet(finalData);
+        const ws = window.XLSX.utils.aoa_to_sheet(finalData);
 
         // ============================
-        // 6. APPLY COLORS
+        // 6. APPLY COLORS (if colorMatrix exists)
         // ============================
-        for (let r = 0; r < data.length; r++) {
-            for (let c = 0; c < columns.length; c++) {
-                const color = colorMatrix[r][c];
-                if (!color) continue;
+        if (typeof colorMatrix !== 'undefined' && colorMatrix) {
+            for (let r = 0; r < data.length; r++) {
+                for (let c = 0; c < exportColumns.length; c++) {
+                    const color = colorMatrix[r] && colorMatrix[r][c];
+                    if (!color) continue;
 
-                const excelRow = r + 2; // header + compute row
+                    const excelRow = r + 2; // header + compute row
 
-                const cellRef = XLSX.utils.encode_cell({ r: excelRow, c });
+                    const cellRef = window.XLSX.utils.encode_cell({ r: excelRow, c });
 
-                if (!ws[cellRef]) continue;
+                    if (!ws[cellRef]) continue;
 
-                ws[cellRef].s = {
-                    fill: {
-                        fgColor: { rgb: color.replace('#','').toUpperCase() }
-                    }
-                };
+                    ws[cellRef].s = {
+                        fill: {
+                            fgColor: { rgb: color.replace('#','').toUpperCase() }
+                        }
+                    };
+                }
             }
         }
 
@@ -3102,10 +3216,10 @@ export const AppCore = {
         // ============================
         // 8. EXPORT
         // ============================
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, this.state.currentTemplate.name);
+        const wb = window.XLSX.utils.book_new();
+        window.XLSX.utils.book_append_sheet(wb, ws, this.state.currentTemplate.name);
 
-        XLSX.writeFile(wb, `${this.state.currentTemplate.name}.xlsx`);
+        window.XLSX.writeFile(wb, `${this.state.currentTemplate.name}.xlsx`);
 
         UI.showToast('Exported with colors & column totals!');
     },
@@ -3211,6 +3325,50 @@ export const AppCore = {
         if (!columns.length)
             return UI.showToast('Add columns to template before importing.', 'error');
         document.getElementById('importModal').style.display = 'block';
+
+        // Initialize drag & drop zone
+        this.initDropZone();
+
+        // Load saved templates
+        this.loadTemplateList();
+    },
+
+    initDropZone: function () {
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('importFile');
+
+        if (!dropZone || !fileInput) return;
+
+        // Prevent default drag behaviors
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+            }, false);
+        });
+
+        // Highlight drop zone when dragging over
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropZone.addEventListener(eventName, () => {
+                dropZone.classList.add('dragover');
+            }, false);
+        });
+
+        // Remove highlight when dragging leaves
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, () => {
+                dropZone.classList.remove('dragover');
+            }, false);
+        });
+
+        // Handle dropped files
+        dropZone.addEventListener('drop', (e) => {
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                fileInput.files = files;
+                this.loadSheets();
+            }
+        }, false);
     },
 
     closeImportModal: function () {
@@ -3237,7 +3395,7 @@ export const AppCore = {
         const reader = new FileReader();
         reader.onload = (e) => {
             try {
-                const workbook = XLSX.read(e.target.result, { type: 'array', cellDates: true });
+                const workbook = window.XLSX.read(e.target.result, { type: 'array', cellDates: true });
                 this.state._importWorkbook = workbook;
 
                 const sheetSelect = this._el('importSheet');
@@ -3272,7 +3430,7 @@ export const AppCore = {
 
         let rows = [];
         try {
-            rows = XLSX.utils.sheet_to_json(ws, { defval: '', range: headerRow - 1, raw: false });
+            rows = window.XLSX.utils.sheet_to_json(ws, { defval: '', range: headerRow - 1, raw: false });
         } catch (err) {
             preview.innerHTML   = `<span style="color:#ef4444;">Error reading sheet: ${err.message}</span>`;
             confirmBtn.disabled = true;
@@ -3290,11 +3448,42 @@ export const AppCore = {
         const excelCols = Object.keys(rows[0]);
         this.state._importExcelCols = excelCols;
 
-        // Show detected Excel columns
+        // Detect data types for each Excel column
+        const colDataTypes = {};
+        excelCols.forEach(col => {
+            const sampleValues = rows.slice(0, 10).map(row => row[col]).filter(v => v !== '' && v !== null && v !== undefined);
+            let detectedType = 'text';
+
+            if (sampleValues.length > 0) {
+                const numericCount = sampleValues.filter(v => !isNaN(parseFloat(String(v).replace(/,/g, '')))).length;
+                const dateCount = sampleValues.filter(v => {
+                    const d = new Date(v);
+                    return !isNaN(d.getTime()) && d.getFullYear() > 1900 && d.getFullYear() < 2100;
+                }).length;
+
+                if (numericCount / sampleValues.length > 0.8) {
+                    detectedType = 'number';
+                } else if (dateCount / sampleValues.length > 0.8) {
+                    detectedType = 'date';
+                }
+            }
+
+            colDataTypes[col] = detectedType;
+        });
+
+        this.state._importColDataTypes = colDataTypes;
+
+        // Show detected Excel columns with data types
         if (excelHdrs) {
+            const colsWithTypes = excelCols.map(col => {
+                const type = colDataTypes[col];
+                const typeBadge = `<span class="col-type-badge" style="background: ${type === 'number' ? '#dbeafe' : type === 'date' ? '#fef3c7' : '#f1f5f9'}; color: ${type === 'number' ? '#1e40af' : type === 'date' ? '#92400e' : '#475569'};">${type}</span>`;
+                return `${col} ${typeBadge}`;
+            }).join(' &middot; ');
+
             excelHdrs.innerHTML = `
                 <p class="import-section-label">Detected Excel columns (row ${headerRow})</p>
-                <div class="import-excel-cols">${excelCols.join(' &middot; ')}</div>
+                <div class="import-excel-cols">${colsWithTypes}</div>
             `;
         }
 
@@ -3349,7 +3538,244 @@ export const AppCore = {
             </div>
         `;
 
+        // Populate data preview table (first 10 rows)
+        const dataTable = this._el('importDataTable');
+        const previewHeader = this._el('importPreviewHeader');
+        const previewBody = this._el('importPreviewBody');
+
+        if (dataTable && previewHeader && previewBody && rows.length > 0) {
+            dataTable.style.display = 'block';
+
+            // Build header from Excel columns
+            const headerRow = document.createElement('tr');
+            excelCols.forEach(col => {
+                const th = document.createElement('th');
+                th.textContent = col;
+                headerRow.appendChild(th);
+            });
+            previewHeader.innerHTML = '';
+            previewHeader.appendChild(headerRow);
+
+            // Build body with first 10 rows
+            const previewRows = rows.slice(0, 10);
+            previewBody.innerHTML = '';
+            previewRows.forEach(row => {
+                const tr = document.createElement('tr');
+                excelCols.forEach(col => {
+                    const td = document.createElement('td');
+                    td.textContent = row[col] || '';
+                    tr.appendChild(td);
+                });
+                previewBody.appendChild(tr);
+            });
+        }
+
         confirmBtn.disabled = false;
+    },
+
+    // Auto-map all columns based on exact or fuzzy name matching
+    autoMapAllColumns: function () {
+        const mappingSelects = document.querySelectorAll('.col-mapping-select');
+        const excelCols = this.state._importExcelCols || [];
+
+        mappingSelects.forEach(sel => {
+            const dbCol = sel.dataset.dbCol;
+            const dbColType = sel.dataset.colType;
+
+            // Try exact match first (case-insensitive)
+            const exactMatch = excelCols.find(
+                ec => ec.trim().toLowerCase() === dbCol.trim().toLowerCase()
+            );
+
+            if (exactMatch) {
+                sel.value = exactMatch;
+                return;
+            }
+
+            // Try fuzzy match (contains)
+            const fuzzyMatch = excelCols.find(
+                ec => ec.trim().toLowerCase().includes(dbCol.trim().toLowerCase()) ||
+                     dbCol.trim().toLowerCase().includes(ec.trim().toLowerCase())
+            );
+
+            if (fuzzyMatch) {
+                sel.value = fuzzyMatch;
+            }
+        });
+
+        UI.showToast('Auto-mapped columns based on name matching');
+    },
+
+    // Clear all column mappings
+    clearAllMappings: function () {
+        const mappingSelects = document.querySelectorAll('.col-mapping-select');
+        mappingSelects.forEach(sel => {
+            sel.value = '';
+        });
+        UI.showToast('All mappings cleared');
+    },
+
+    // Load list of saved templates
+    loadTemplateList: function () {
+        const templateSelect = document.getElementById('templateSelect');
+        if (!templateSelect) return;
+
+        const templates = JSON.parse(localStorage.getItem('importTemplates') || '{}');
+        const templateNames = Object.keys(templates);
+
+        templateSelect.innerHTML = '<option value="">-- Saved Templates --</option>' +
+            templateNames.map(name => `<option value="${name}">${name}</option>`).join('');
+    },
+
+    // Save current mapping as a template
+    saveMappingTemplate: function () {
+        const templateName = prompt('Enter a name for this mapping template:');
+        if (!templateName || templateName.trim() === '') return;
+
+        const mappingSelects = document.querySelectorAll('.col-mapping-select');
+        const mapping = {};
+        mappingSelects.forEach(sel => {
+            const dbCol = sel.dataset.dbCol;
+            const excelCol = sel.value;
+            if (dbCol) {
+                mapping[dbCol] = excelCol || null;
+            }
+        });
+
+        const templates = JSON.parse(localStorage.getItem('importTemplates') || '{}');
+        templates[templateName.trim()] = {
+            mapping: mapping,
+            templateId: this.state.currentTemplate?.id,
+            createdAt: new Date().toISOString()
+        };
+
+        localStorage.setItem('importTemplates', JSON.stringify(templates));
+        this.loadTemplateList();
+        UI.showToast('Template saved successfully');
+    },
+
+    // Load a saved mapping template
+    loadMappingTemplate: function () {
+        const templateSelect = document.getElementById('templateSelect');
+        const templateName = templateSelect?.value;
+
+        if (!templateName) {
+            UI.showToast('Please select a template to load', 'error');
+            return;
+        }
+
+        const templates = JSON.parse(localStorage.getItem('importTemplates') || '{}');
+        const template = templates[templateName];
+
+        if (!template) {
+            UI.showToast('Template not found', 'error');
+            return;
+        }
+
+        // Apply the mapping
+        const mappingSelects = document.querySelectorAll('.col-mapping-select');
+        mappingSelects.forEach(sel => {
+            const dbCol = sel.dataset.dbCol;
+            if (dbCol && template.mapping[dbCol]) {
+                sel.value = template.mapping[dbCol];
+            }
+        });
+
+        UI.showToast('Template loaded successfully');
+    },
+
+    // Delete a saved mapping template
+    deleteMappingTemplate: function () {
+        const templateSelect = document.getElementById('templateSelect');
+        const templateName = templateSelect?.value;
+
+        if (!templateName) {
+            UI.showToast('Please select a template to delete', 'error');
+            return;
+        }
+
+        if (!confirm(`Are you sure you want to delete the template "${templateName}"?`)) {
+            return;
+        }
+
+        const templates = JSON.parse(localStorage.getItem('importTemplates') || '{}');
+        delete templates[templateName];
+        localStorage.setItem('importTemplates', JSON.stringify(templates));
+
+        this.loadTemplateList();
+        UI.showToast('Template deleted successfully');
+    },
+
+    // Validate data before import
+    validateImportData: function (rows, mapping, columns, colNameMap) {
+        const errors = [];
+        const warnings = [];
+
+        // Check if required columns are mapped
+        const requiredColumns = columns.filter(col => col.encoding_columns.is_required);
+        const mappedColumns = Object.keys(mapping).filter(col => mapping[col] && mapping[col] !== '(skip)');
+
+        requiredColumns.forEach(col => {
+            const colName = col.encoding_columns.column_name;
+            if (!mappedColumns.includes(colName)) {
+                errors.push(`Required column "${colName}" is not mapped`);
+            }
+        });
+
+        // Validate data formats for each row
+        rows.forEach((row, idx) => {
+            columns.forEach(col => {
+                const colDef = col.encoding_columns;
+                const excelColName = mapping[colDef.column_name];
+
+                if (!excelColName || excelColName === '(skip)' || excelColName === '') return;
+
+                const rowKey = colNameMap[excelColName];
+                const rawVal = rowKey ? row[rowKey] : undefined;
+
+                // Check required fields
+                if (colDef.is_required && (!rawVal || rawVal === '')) {
+                    errors.push(`Row ${idx + 1}: Required field "${colDef.column_name}" is empty`);
+                }
+
+                // Validate data types
+                if (rawVal && rawVal !== '') {
+                    const strVal = String(rawVal).trim();
+
+                    if (colDef.column_type === 'number') {
+                        const numVal = parseFloat(strVal.replace(/,/g, ''));
+                        if (isNaN(numVal)) {
+                            warnings.push(`Row ${idx + 1}: "${colDef.column_name}" should be a number but is "${strVal}"`);
+                        }
+                    }
+
+                    if (colDef.column_type === 'date') {
+                        const dateVal = new Date(strVal);
+                        if (isNaN(dateVal.getTime())) {
+                            warnings.push(`Row ${idx + 1}: "${colDef.column_name}" should be a valid date but is "${strVal}"`);
+                        }
+                    }
+
+                    // Email validation
+                    if (colDef.column_name.toLowerCase().includes('email')) {
+                        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                        if (!emailRegex.test(strVal)) {
+                            warnings.push(`Row ${idx + 1}: "${colDef.column_name}" should be a valid email but is "${strVal}"`);
+                        }
+                    }
+
+                    // Phone validation (basic)
+                    if (colDef.column_name.toLowerCase().includes('phone')) {
+                        const phoneRegex = /^[\d\s\-\+\(\)]+$/;
+                        if (!phoneRegex.test(strVal)) {
+                            warnings.push(`Row ${idx + 1}: "${colDef.column_name}" may not be a valid phone number: "${strVal}"`);
+                        }
+                    }
+                }
+            });
+        });
+
+        return { errors, warnings };
     },
 
     // FIX #1: Convert a value based on the column type
@@ -3386,7 +3812,7 @@ export const AppCore = {
         const sheetName = this._el('importSheet')?.value;
         const headerRow = Math.max(1, parseInt(this._el('importHeaderRow')?.value || '1') || 1);
         const ws        = this.state._importWorkbook.Sheets[sheetName];
-        let rows        = XLSX.utils.sheet_to_json(ws, { defval: '', range: headerRow - 1, raw: false });
+        let rows        = window.XLSX.utils.sheet_to_json(ws, { defval: '', range: headerRow - 1, raw: false });
 
         if (!rows.length) return UI.showToast('No data rows to import.', 'error');
 
@@ -3462,7 +3888,53 @@ export const AppCore = {
 
         console.log(`✓ Rows to import: ${rowsWithData.length}`);
         console.log(`✗ Completely empty rows (skipped): ${rows.length - rowsWithData.length}`);
-        
+
+        // Skip duplicate rows if option is checked
+        const skipDuplicates = this._el('skipDuplicates')?.checked;
+        if (skipDuplicates) {
+            const seenRows = new Set();
+            const uniqueRows = [];
+
+            rowsWithData.forEach(row => {
+                // Create a signature from all mapped column values
+                const signature = mappedExcelCols.map(colName => {
+                    const rowKey = colNameMap[colName];
+                    const val = rowKey ? row[rowKey] : '';
+                    return String(val ?? '').trim();
+                }).join('|||');
+
+                if (!seenRows.has(signature)) {
+                    seenRows.add(signature);
+                    uniqueRows.push(row);
+                }
+            });
+
+            const duplicateCount = rowsWithData.length - uniqueRows.length;
+            if (duplicateCount > 0) {
+                console.log(`Skipped ${duplicateCount} duplicate rows`);
+                UI.showToast(`Skipped ${duplicateCount} duplicate rows`);
+            }
+
+            rowsWithData.length = 0;
+            rowsWithData.push(...uniqueRows);
+        }
+
+        // Validate data before import
+        const validation = this.validateImportData(rowsWithData, mapping, columns, colNameMap);
+
+        if (validation.errors.length > 0) {
+            const errorMsg = `Validation failed:\n${validation.errors.slice(0, 5).join('\n')}${validation.errors.length > 5 ? `\n... and ${validation.errors.length - 5} more errors` : ''}`;
+            alert(errorMsg);
+            return;
+        }
+
+        if (validation.warnings.length > 0) {
+            const warningMsg = `Data quality warnings:\n${validation.warnings.slice(0, 5).join('\n')}${validation.warnings.length > 5 ? `\n... and ${validation.warnings.length - 5} more warnings` : ''}\n\nContinue with import?`;
+            if (!confirm(warningMsg)) {
+                return;
+            }
+        }
+
         if (rowsWithData.length === 0) {
             return UI.showToast('No rows with data found in mapped columns.', 'error');
         }
@@ -3471,7 +3943,14 @@ export const AppCore = {
         console.log('First row sample:', JSON.stringify(rowsWithData[0]));
 
         const confirmBtn = this._el('importConfirmBtn');
+        const progressDiv = this._el('importProgress');
+        const progressBar = this._el('progressBar');
+        const progressText = this._el('progressText');
+
         if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.innerText = 'Importing...'; }
+        if (progressDiv) progressDiv.style.display = 'block';
+        if (progressBar) progressBar.style.width = '0%';
+        if (progressText) progressText.textContent = 'Starting import...';
 
         try {
             // Check if there are existing entries to determine if this is a re-import
@@ -3486,11 +3965,13 @@ export const AppCore = {
                 // This allows importing columns separately without losing data
                 console.log(`Re-import mode: Updating ${existingEntries.length} existing entries...`);
                 console.log(`Spreadsheet has ${rowsWithData.length} rows`);
-                
+                if (progressText) progressText.textContent = 'Checking existing entries...';
+
                 // If spreadsheet has more rows than existing entries, create additional entries
                 if (rowsWithData.length > existingEntries.length) {
                     const additionalCount = rowsWithData.length - existingEntries.length;
                     console.log(`Creating ${additionalCount} additional entries...`);
+                    if (progressText) progressText.textContent = `Creating ${additionalCount} additional entries...`;
                     const newEntries = await SupabaseService.createEntries(
                         this.state.currentTemplate.id,
                         this.state.departmentId,
@@ -3507,6 +3988,7 @@ export const AppCore = {
             } else {
                 // NEW IMPORT: Create new entries
                 console.log(`Creating ${rowsWithData.length} new entries...`);
+                if (progressText) progressText.textContent = `Creating ${rowsWithData.length} new entries...`;
                 entries = await SupabaseService.createEntries(
                     this.state.currentTemplate.id,
                     this.state.departmentId,
@@ -3515,24 +3997,26 @@ export const AppCore = {
             }
 
             console.log(`Total entries: ${entries.length}`);
+            if (progressBar) progressBar.style.width = '30%';
+            if (progressText) progressText.textContent = 'Preparing data...';
 
             // Build ALL values for ALL entries in memory first
             console.log(`Preparing values for all rows...`);
-            
+
             rowsWithData.forEach((row, idx) => {
                 const entry = entries[idx];
                 const values = {};
-                
+
                 columns.forEach(col => {
                     const colDef = col.encoding_columns;
                     const excelColName = mapping[colDef.column_name];
-                    
+
                     if (!excelColName || excelColName === '(skip)' || excelColName === '') return;
-                    
+
                     // Use normalized column mapping to get the correct row key
                     const rowKey = colNameMap[excelColName];
                     const rawVal = rowKey ? row[rowKey] : undefined;
-                    
+
                     if (rawVal !== undefined && rawVal !== null && rawVal !== '') {
                         const convertedVal = this.convertValue(String(rawVal).trim(), colDef.column_type);
                         values[colDef.id] = convertedVal;
@@ -3548,12 +4032,15 @@ export const AppCore = {
                         value_number: typeof value === 'number' ? value : null
                     });
                 });
-                
+
                 // Log first few rows for debugging
                 if (idx < 3) {
                     console.log(`Row ${idx} values:`, JSON.stringify(values));
                 }
             });
+
+            if (progressBar) progressBar.style.width = '60%';
+            if (progressText) progressText.textContent = 'Saving to database...';
 
             // STEP 3: Insert/Update ALL values in one batch call
             console.log(`Upserting ${allValues.length} column values in batch...`);
@@ -3561,9 +4048,12 @@ export const AppCore = {
                 const { error: valuesError } = await SupabaseService.client
                     .from('encoding_entry_values')
                     .upsert(allValues, { onConflict: 'entry_id,column_id' });
-                
+
                 if (valuesError) throw valuesError;
             }
+
+            if (progressBar) progressBar.style.width = '90%';
+            if (progressText) progressText.textContent = 'Refreshing table...';
 
             console.log(`All values inserted. Reloading entries...`);
 
@@ -3576,6 +4066,8 @@ export const AppCore = {
             UI.showToast('Import failed: ' + err.message, 'error');
         } finally {
             if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.innerText = 'Import'; }
+            if (progressDiv) progressDiv.style.display = 'none';
+            if (progressBar) progressBar.style.width = '0%';
         }
 
         // Auto cleanup after import

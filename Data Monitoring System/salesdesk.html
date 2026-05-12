@@ -220,7 +220,10 @@
 
         <!-- Step 1 -->
         <label class="modal-label">1. Choose File</label>
-        <input type="file" id="importFile" accept=".xlsx,.xls" onchange="loadSheets()">
+        <div id="dropZone" class="drop-zone">
+            <input type="file" id="importFile" accept=".xlsx,.xls" onchange="loadSheets()">
+            <p class="drop-zone-text">Drag & drop Excel file here or click to browse</p>
+        </div>
 
         <!-- Step 2 -->
         <label class="modal-label">2. Select Sheet</label>
@@ -236,18 +239,100 @@
             Use row 4 for files with title/summary rows on top.
         </p>
 
+        <!-- Duplicate Detection -->
+        <label class="modal-label" style="margin-top: 12px;">
+            <input type="checkbox" id="skipDuplicates" style="width: auto; margin-right: 8px;">
+            Skip duplicate rows
+        </label>
+        <p class="import-hint">Skip rows with identical values in all mapped columns</p>
+
         <!-- Detected Excel columns -->
         <div id="importExcelHeaders"></div>
 
         <!-- FIX #4: Manual column mapping UI -->
         <div id="importColMapping"></div>
 
+        <!-- Smart Mapping Buttons -->
+        <div class="mapping-actions">
+            <button onclick="autoMapAllColumns()" class="mapping-btn">Auto-map All</button>
+            <button onclick="clearAllMappings()" class="mapping-btn secondary">Clear All</button>
+        </div>
+
+        <!-- Import Templates -->
+        <div class="template-section">
+            <p class="import-section-label">Mapping Templates</p>
+            <div class="template-actions">
+                <select id="templateSelect" class="template-select">
+                    <option value="">-- Saved Templates --</option>
+                </select>
+                <button onclick="saveMappingTemplate()" class="template-btn">Save</button>
+                <button onclick="loadMappingTemplate()" class="template-btn secondary">Load</button>
+                <button onclick="deleteMappingTemplate()" class="template-btn secondary">Delete</button>
+            </div>
+        </div>
+
         <!-- Preview / match status -->
         <div id="importPreview"></div>
+
+        <!-- Data Preview Table -->
+        <div id="importDataTable" class="import-data-table" style="display:none;">
+            <p class="import-section-label">Data Preview (first 10 rows)</p>
+            <div class="import-table-container">
+                <table id="importPreviewTable" class="import-preview-table">
+                    <thead id="importPreviewHeader"></thead>
+                    <tbody id="importPreviewBody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Import Progress Indicator -->
+        <div id="importProgress" class="import-progress" style="display:none;">
+            <p class="import-section-label">Import Progress</p>
+            <div class="progress-bar-container">
+                <div id="progressBar" class="progress-bar"></div>
+            </div>
+            <p id="progressText" class="progress-text">Processing...</p>
+        </div>
 
         <div class="modal-actions">
             <button onclick="closeImportModal()">Cancel</button>
             <button id="importConfirmBtn" onclick="confirmImport()" disabled>Import</button>
+        </div>
+    </div>
+</div>
+
+<!-- EXPORT MODAL -->
+<div id="exportModal" class="modal">
+    <div class="modal-content export-modal-content">
+        <span class="close-btn" onclick="closeExportModal()">&times;</span>
+        <h3>Export to Excel</h3>
+
+        <!-- Column Selection -->
+        <label class="modal-label">Select Columns to Export</label>
+        <div id="exportColumnList" class="export-column-list"></div>
+
+        <!-- Filter Options -->
+        <label class="modal-label" style="margin-top: 16px;">
+            <input type="checkbox" id="exportFilteredOnly" style="width: auto; margin-right: 8px;" onchange="updateExportPreview()">
+            Export only filtered data
+        </label>
+        <p class="import-hint">If checked, only currently filtered rows will be exported</p>
+
+        <!-- Export Preview -->
+        <div id="exportPreview" class="export-preview" style="display:none;">
+            <p class="import-section-label">Export Preview (first 5 rows)</p>
+            <div class="export-preview-container">
+                <table id="exportPreviewTable" class="export-preview-table">
+                    <thead id="exportPreviewHeader"></thead>
+                    <tbody id="exportPreviewBody"></tbody>
+                </table>
+            </div>
+            <p id="exportPreviewCount" class="import-hint"></p>
+        </div>
+
+        <div class="modal-actions">
+            <button onclick="closeExportModal()">Cancel</button>
+            <button onclick="confirmExport()">Export</button>
         </div>
     </div>
 </div>
