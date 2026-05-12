@@ -9,6 +9,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script type="module" src="auth-utils.js"></script>
 </head>
 
@@ -49,6 +50,7 @@
                 <button onclick="deleteSelected()">Delete Selected</button>
                 <!-- <button onclick="sortByDate()">Sort by Date</button>-->
                 <button onclick="exportToExcel()">Export Excel</button>
+                <button onclick="exportToPDF()">Export PDF</button>
                 <button onclick="openImportModal()">Import Excel</button>
                 <button class="add-cat-btn" onclick="toggleColumnSelector()" title="Show/Hide Columns">Columns</button>
                 <button class="add-cat-btn" onclick="openColumnModal()" data-admin-only>+ Add Column</button>
@@ -360,6 +362,42 @@
     </div>
 </div>
 
+<!-- PDF EXPORT MODAL -->
+<div id="pdfExportModal" class="modal">
+    <div class="modal-content export-modal-content">
+        <span class="close-btn" onclick="closePDFModal()">&times;</span>
+        <h3>Export to PDF</h3>
+
+        <!-- Column Selection -->
+        <label class="modal-label">Select Columns to Export</label>
+        <div id="pdfExportColumnList" class="export-column-list"></div>
+
+        <!-- Filter Options -->
+        <label class="modal-label" style="margin-top: 16px;">
+            <input type="checkbox" id="pdfExportFilteredOnly" style="width: auto; margin-right: 8px;" onchange="updatePDFExportPreview()">
+            Export only filtered data
+        </label>
+        <p class="import-hint">If checked, only currently filtered rows will be exported</p>
+
+        <!-- PDF Preview -->
+        <div id="pdfExportPreview" class="export-preview" style="display:none;">
+            <p class="import-section-label">Export Preview (first 5 rows)</p>
+            <div class="export-preview-container">
+                <table id="pdfExportPreviewTable" class="export-preview-table">
+                    <thead id="pdfExportPreviewHeader"></thead>
+                    <tbody id="pdfExportPreviewBody"></tbody>
+                </table>
+            </div>
+            <p id="pdfExportPreviewCount" class="import-hint"></p>
+        </div>
+
+        <div class="modal-actions">
+            <button onclick="closePDFModal()">Cancel</button>
+            <button onclick="confirmPDFExport()">Export PDF</button>
+        </div>
+    </div>
+</div>
+
 <!-- FILTER MODAL -->
 <div id="filterModal" class="modal">
     <div class="modal-content filter-modal-content">
@@ -528,6 +566,38 @@ window.toggleEntryForm = function() {
 window.saveEmptyRow = function() {
     if (typeof AppCore !== 'undefined' && AppCore.saveEmptyRow) {
         AppCore.saveEmptyRow();
+    }
+};
+
+// Export PDF function
+window.exportToPDF = function() {
+    if (typeof AppCore !== 'undefined' && AppCore.openPDFModal) {
+        AppCore.openPDFModal();
+    }
+};
+
+// PDF Modal functions
+window.openPDFModal = function() {
+    if (typeof AppCore !== 'undefined' && AppCore.openPDFModal) {
+        AppCore.openPDFModal();
+    }
+};
+
+window.closePDFModal = function() {
+    if (typeof AppCore !== 'undefined' && AppCore.closePDFModal) {
+        AppCore.closePDFModal();
+    }
+};
+
+window.confirmPDFExport = function() {
+    if (typeof AppCore !== 'undefined' && AppCore.confirmPDFExport) {
+        AppCore.confirmPDFExport();
+    }
+};
+
+window.updatePDFExportPreview = function() {
+    if (typeof AppCore !== 'undefined' && AppCore.updatePDFExportPreview) {
+        AppCore.updatePDFExportPreview();
     }
 };
 </script>

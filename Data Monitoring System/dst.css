@@ -719,8 +719,9 @@ tbody td[colspan] {
 }
 
 .export-column-item input[type="checkbox"] {
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
+    margin-right: 8px;
     margin-right: 12px;
     cursor: pointer;
     display: block;

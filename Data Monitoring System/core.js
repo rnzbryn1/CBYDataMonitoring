@@ -130,10 +130,15 @@ export const AppCore = {
         window.searchData        = ()          => this.searchData();
         window.sortByDate        = ()          => this.sortByDate();
         window.exportToExcel     = ()          => this.openExportModal();
+        window.exportToPDF       = ()          => this.openPDFModal();
         window.openExportModal   = ()          => this.openExportModal();
         window.closeExportModal  = ()          => this.closeExportModal();
         window.confirmExport     = ()          => this.confirmExport();
         window.updateExportPreview = ()        => this.updateExportPreview();
+        window.openPDFModal      = ()          => this.openPDFModal();
+        window.closePDFModal     = ()          => this.closePDFModal();
+        window.confirmPDFExport  = ()          => this.confirmPDFExport();
+        window.updatePDFExportPreview = ()      => this.updatePDFExportPreview();
         window.openFilterModal   = ()          => this.openFilterModal();
         window.closeFilterModal  = ()          => this.closeFilterModal();
         window.addFilter         = ()          => this.addFilter();
@@ -3230,6 +3235,263 @@ export const AppCore = {
         window.XLSX.writeFile(wb, `${this.state.currentTemplate.name}.xlsx`);
 
         UI.showToast('Exported with colors & column totals!');
+    },
+
+    exportToPDF: function (selectedColumnIds = null, exportFilteredOnly = false) {
+        if (!this.state.currentTemplate)
+            return UI.showToast('No template selected.', 'error');
+
+        const columns = this.state.currentTemplate.columns || [];
+        const entriesToExport = exportFilteredOnly ? this.state.filteredEntries || this.state.localEntries : this.state.localEntries;
+
+        if (!entriesToExport.length)
+            return UI.showToast('No data to export.', 'error');
+
+        // Filter columns based on selection
+        const exportColumns = selectedColumnIds
+            ? columns.filter(col => selectedColumnIds.includes(col.encoding_columns.id))
+            : columns;
+
+        if (!exportColumns.length)
+            return UI.showToast('No columns selected for export.', 'error');
+
+        // ============================
+        // 1. HEADER
+        // ============================
+        const header = exportColumns.map(col => col.encoding_columns.column_name);
+
+        // ============================
+        // 2. DATA
+        // ============================
+        const data = [];
+
+        entriesToExport.forEach(entry => {
+            const row = [];
+
+            exportColumns.forEach(col => {
+                const colDef = col.encoding_columns;
+                const valObj = entry.valueDetails?.find(v => v.column_id === colDef.id);
+
+                const value = valObj?.value ?? valObj?.value_number ?? '';
+
+                row.push(value);
+            });
+
+            data.push(row);
+        });
+
+        // ============================
+        // 3. COMPUTE ROW (UNDER HEADER)
+        // ============================
+        const computeRow = new Array(header.length).fill('');
+
+        // Process ALL active column computations
+        Object.entries(this.state.activeColumnComputes || {}).forEach(([columnName, config]) => {
+            const colIndex = header.indexOf(columnName);
+
+            if (colIndex !== -1) {
+                const values = data.map(r => parseFloat(r[colIndex]) || 0);
+
+                let result = 0;
+                switch (config.func) {
+                    case 'sum':
+                        result = values.reduce((a,b)=>a+b,0);
+                        break;
+                    case 'average':
+                        result = values.length ? values.reduce((a,b)=>a+b,0)/values.length : 0;
+                        break;
+                    case 'max':
+                        result = values.length ? Math.max(...values) : 0;
+                        break;
+                    case 'min':
+                        result = values.length ? Math.min(...values) : 0;
+                        break;
+                    case 'count':
+                        result = values.length;
+                        break;
+                }
+
+                computeRow[colIndex] = `${config.func.toUpperCase()}: ${result}`;
+            }
+        });
+
+        // ============================
+        // 4. CREATE HTML TABLE FOR PRINT
+        // ============================
+        const printWindow = window.open('', '_blank');
+        printWindow.document.write(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>${this.state.currentTemplate.name}</title>
+                <style>
+                    body {
+                        font-family: Arial, sans-serif;
+                        padding: 20px;
+                        margin: 0;
+                    }
+                    table {
+                        width: 100%;
+                        border-collapse: collapse;
+                        font-size: 12px;
+                    }
+                    th, td {
+                        border: 1px solid #000;
+                        padding: 8px;
+                        text-align: left;
+                    }
+                    th {
+                        background-color: #f0f0f0;
+                        font-weight: bold;
+                    }
+                    .compute-row {
+                        background-color: #e8f4f8;
+                        font-weight: bold;
+                    }
+                    h2 {
+                        color: #333;
+                        margin-bottom: 20px;
+                    }
+                    @media print {
+                        body {
+                            padding: 0;
+                        }
+                    }
+                </style>
+            </head>
+            <body>
+                <h2>${this.state.currentTemplate.name}</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            ${header.map(h => `<th>${h}</th>`).join('')}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr class="compute-row">
+                            ${computeRow.map(c => `<td>${c}</td>`).join('')}
+                        </tr>
+                        ${data.map(row => `
+                            <tr>
+                                ${row.map(cell => `<td>${cell || ''}</td>`).join('')}
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+                <script>
+                    window.onload = function() {
+                        window.print();
+                        window.onafterprint = function() {
+                            window.close();
+                        };
+                    };
+                </script>
+            </body>
+            </html>
+        `);
+        printWindow.document.close();
+    },
+
+    openPDFModal: function () {
+        if (!this.state.currentTemplate)
+            return UI.showToast('No template selected.', 'error');
+
+        if (!this.state.localEntries.length)
+            return UI.showToast('No data to export.', 'error');
+
+        const columns = this.state.currentTemplate.columns || [];
+
+        if (!columns.length) {
+            return UI.showToast('No columns found in template.', 'error');
+        }
+
+        const columnList = document.getElementById('pdfExportColumnList');
+
+        if (columnList) {
+            columnList.innerHTML = columns.map(col => `
+                <div class="export-column-item">
+                    <input type="checkbox" id="pdf_export_col_${col.encoding_columns.id}" value="${col.encoding_columns.id}" checked onchange="updatePDFExportPreview()">
+                    <label for="pdf_export_col_${col.encoding_columns.id}">${col.encoding_columns.column_name}</label>
+                </div>
+            `).join('');
+        }
+
+        // Reset checkbox
+        const filteredOnlyCheckbox = document.getElementById('pdfExportFilteredOnly');
+        if (filteredOnlyCheckbox) {
+            filteredOnlyCheckbox.checked = false;
+        }
+
+        document.getElementById('pdfExportModal').style.display = 'block';
+
+        // Show initial preview
+        this.updatePDFExportPreview();
+    },
+
+    closePDFModal: function () {
+        document.getElementById('pdfExportModal').style.display = 'none';
+    },
+
+    confirmPDFExport: function () {
+        const columnCheckboxes = document.querySelectorAll('#pdfExportColumnList input[type="checkbox"]:checked');
+        const selectedColumnIds = Array.from(columnCheckboxes).map(cb => cb.value);
+        const exportFilteredOnly = document.getElementById('pdfExportFilteredOnly')?.checked;
+
+        if (selectedColumnIds.length === 0) {
+            UI.showToast('Please select at least one column.', 'error');
+            return;
+        }
+
+        this.exportToPDF(selectedColumnIds, exportFilteredOnly);
+        this.closePDFModal();
+    },
+
+    updatePDFExportPreview: function () {
+        const columnCheckboxes = document.querySelectorAll('#pdfExportColumnList input[type="checkbox"]:checked');
+        const selectedColumnIds = Array.from(columnCheckboxes).map(cb => cb.value);
+        const exportFilteredOnly = document.getElementById('pdfExportFilteredOnly')?.checked;
+
+        const columns = this.state.currentTemplate.columns || [];
+        const entriesToExport = exportFilteredOnly ? this.state.filteredEntries || this.state.localEntries : this.state.localEntries;
+
+        // Filter columns based on selection
+        const exportColumns = selectedColumnIds.length > 0
+            ? columns.filter(col => selectedColumnIds.includes(col.encoding_columns.id))
+            : columns;
+
+        const previewDiv = document.getElementById('pdfExportPreview');
+        const previewHeader = document.getElementById('pdfExportPreviewHeader');
+        const previewBody = document.getElementById('pdfExportPreviewBody');
+        const previewCount = document.getElementById('pdfExportPreviewCount');
+
+        if (!previewDiv || !previewHeader || !previewBody) return;
+
+        if (exportColumns.length === 0 || entriesToExport.length === 0) {
+            previewDiv.style.display = 'none';
+            return;
+        }
+
+        previewDiv.style.display = 'block';
+
+        // Build header with styling
+        const headerHTML = exportColumns.map(col => `<th style="border: 1px solid #ddd; padding: 8px; background: #f5f5f5; text-align: left;">${col.encoding_columns.column_name}</th>`).join('');
+        previewHeader.innerHTML = `<tr>${headerHTML}</tr>`;
+
+        // Build preview data (first 5 rows) with styling
+        const previewRows = entriesToExport.slice(0, 5);
+        const bodyHTML = previewRows.map(entry => {
+            const cells = exportColumns.map(col => {
+                const colDef = col.encoding_columns;
+                const valObj = entry.valueDetails?.find(v => v.column_id === colDef.id);
+                const value = valObj?.value ?? valObj?.value_number ?? '';
+                return `<td style="border: 1px solid #ddd; padding: 6px 8px;">${value || '-'}</td>`;
+            }).join('');
+            return `<tr>${cells}</tr>`;
+        }).join('');
+        previewBody.innerHTML = bodyHTML;
+
+        // Update count
+        previewCount.textContent = `Showing ${previewRows.length} of ${entriesToExport.length} rows`;
     },
 
     // ============================================================
