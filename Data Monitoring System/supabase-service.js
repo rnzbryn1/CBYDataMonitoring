@@ -22,9 +22,86 @@ const supabaseAdminClient = createClient(
 
 export { supabaseClient };
 
+// =====================================================
+// CLIENT-SIDE CACHE
+// =====================================================
+const cache = {
+  templates: new Map(),
+  columns: new Map(),
+  userValidation: new Map(),
+  CACHE_TTL: 5 * 60 * 1000, // 5 minutes in milliseconds
+};
+
+const getCacheKey = (type, departmentId, minimal) => `${type}_${departmentId}_${minimal}`;
+
+const getFromCache = (type, departmentId, minimal) => {
+  const key = getCacheKey(type, departmentId, minimal);
+  const cached = cache[type].get(key);
+  if (!cached) return null;
+
+  const now = Date.now();
+  if (now - cached.timestamp > cache.CACHE_TTL) {
+    cache[type].delete(key);
+    return null;
+  }
+
+  return cached.data;
+};
+
+const setCache = (type, departmentId, minimal, data) => {
+  const key = getCacheKey(type, departmentId, minimal);
+  cache[type].set(key, {
+    data,
+    timestamp: Date.now(),
+  });
+};
+
+const invalidateCache = (type, departmentId = null) => {
+  if (departmentId === null) {
+    cache[type].clear();
+  } else {
+    const keysToDelete = [];
+    cache[type].forEach((_, key) => {
+      if (key.startsWith(`${type}_${departmentId}_`)) {
+        keysToDelete.push(key);
+      }
+    });
+    keysToDelete.forEach(key => cache[type].delete(key));
+  }
+};
+
 export const SupabaseService = {
   client: supabaseClient,
   adminClient: supabaseAdminClient,
+
+  // =====================================================
+  // CACHE MANAGEMENT
+  // =====================================================
+
+  /**
+   * Invalidate cache for templates
+   * @param {number|null} departmentId - If null, clears all template cache
+   */
+  invalidateTemplateCache(departmentId = null) {
+    invalidateCache("templates", departmentId);
+  },
+
+  /**
+   * Invalidate cache for columns
+   * @param {number|null} departmentId - If null, clears all column cache
+   */
+  invalidateColumnCache(departmentId = null) {
+    invalidateCache("columns", departmentId);
+  },
+
+  /**
+   * Clear all cache
+   */
+  clearAllCache() {
+    cache.templates.clear();
+    cache.columns.clear();
+    cache.userValidation.clear();
+  },
 
   // =====================================================
   // ENCODING TEMPLATES
@@ -35,6 +112,13 @@ export const SupabaseService = {
    * @returns {Promise<Object>}
    */
   async getCurrentUserForValidation() {
+    // Check cache first
+    const profileCacheKey = "current_user_profile";
+    const cachedProfile = cache.userValidation.get(profileCacheKey);
+    if (cachedProfile && Date.now() - cachedProfile.timestamp < cache.CACHE_TTL) {
+      return cachedProfile.data;
+    }
+
     const {
       data: { user },
     } = await this.client.auth.getUser();
@@ -42,6 +126,12 @@ export const SupabaseService = {
 
     const profile = await this.getCurrentUserProfile();
     if (!profile) throw new Error("User profile not found");
+
+    // Cache the profile
+    cache.userValidation.set(profileCacheKey, {
+      data: profile,
+      timestamp: Date.now(),
+    });
 
     return profile;
   },
@@ -52,15 +142,29 @@ export const SupabaseService = {
    * @throws {Error} If user doesn't have access
    */
   async validateDepartmentAccess(departmentId) {
-    const profile = await this.getCurrentUserForValidation();
-
-    // Admins can access all departments
-    if (profile.roles && profile.roles.role_name === "admin") {
+    // Check cache first
+    const validationKey = `${departmentId}_dept_access`;
+    const cachedValidation = cache.userValidation.get(validationKey);
+    if (cachedValidation && Date.now() - cachedValidation.timestamp < cache.CACHE_TTL) {
+      if (!cachedValidation.hasAccess) {
+        throw new Error("You do not have permission to access this department");
+      }
       return true;
     }
 
-    // Regular users can only access their own department
-    if (profile.department_id !== departmentId) {
+    const profile = await this.getCurrentUserForValidation();
+
+    // Admins can access all departments
+    const isAdmin = profile.roles && profile.roles.role_name === "admin";
+    const hasAccess = isAdmin || profile.department_id === departmentId;
+
+    // Cache the result
+    cache.userValidation.set(validationKey, {
+      hasAccess,
+      timestamp: Date.now(),
+    });
+
+    if (!hasAccess) {
       throw new Error("You do not have permission to access this department");
     }
 
@@ -86,19 +190,41 @@ export const SupabaseService = {
   /**
    * Get all templates for a department
    * @param {number} departmentId
+   * @param {boolean} minimal - If true, only fetch minimal fields for list view
+   * @param {boolean} forceRefresh - If true, bypass cache and fetch fresh data
+   * @param {boolean} skipValidation - If true, skip department access validation
    * @returns {Promise<Array>} Array of templates
    */
-  async getTemplates(departmentId) {
-    // Server-side validation
-    await this.validateDepartmentAccess(departmentId);
+  async getTemplates(departmentId, minimal = false, forceRefresh = false, skipValidation = false) {
+    // Check cache first
+    if (!forceRefresh) {
+      const cached = getFromCache("templates", departmentId, minimal);
+      if (cached) {
+        return cached;
+      }
+    }
+
+    // Server-side validation (skip for read operations when user is already authenticated)
+    if (!skipValidation) {
+      await this.validateDepartmentAccess(departmentId);
+    }
+
+    // Only select fields needed for rendering if minimal is true
+    const selectFields = minimal
+      ? "id, name, module, created_at, description"
+      : "*";
 
     const { data, error } = await this.client
       .from("encoding_templates")
-      .select("*")
+      .select(selectFields)
       .eq("department_id", departmentId)
       .order("created_at", { ascending: false });
 
     if (error) throw error;
+
+    // Cache the result
+    setCache("templates", departmentId, minimal, data);
+
     return data;
   },
 
@@ -176,6 +302,10 @@ export const SupabaseService = {
       .single();
 
     if (error) throw error;
+
+    // Invalidate cache for this department
+    this.invalidateTemplateCache(departmentId);
+
     return data;
   },
 
@@ -186,6 +316,18 @@ export const SupabaseService = {
    * @returns {Promise<Object>} Updated template
    */
   async updateTemplate(templateId, updates) {
+    // Get template to check department access
+    const { data: template } = await this.client
+      .from("encoding_templates")
+      .select("department_id")
+      .eq("id", templateId)
+      .single();
+
+    if (!template) throw new Error("Template not found");
+
+    // Server-side validation
+    await this.validateDepartmentAccess(template.department_id);
+
     const { data, error } = await this.client
       .from("encoding_templates")
       .update(updates)
@@ -194,6 +336,10 @@ export const SupabaseService = {
       .single();
 
     if (error) throw error;
+
+    // Invalidate cache for this department
+    this.invalidateTemplateCache(template.department_id);
+
     return data;
   },
 
@@ -246,6 +392,9 @@ export const SupabaseService = {
       .eq("id", templateId);
 
     if (templateError) throw templateError;
+
+    // Invalidate cache for this department
+    this.invalidateTemplateCache(template.department_id);
   },
 
   // =====================================================
@@ -255,16 +404,41 @@ export const SupabaseService = {
   /**
    * Get all columns for a department
    * @param {number} departmentId
+   * @param {boolean} minimal - If true, only fetch minimal fields for list view
+   * @param {boolean} forceRefresh - If true, bypass cache and fetch fresh data
+   * @param {boolean} skipValidation - If true, skip department access validation
    * @returns {Promise<Array>} Array of columns
    */
-  async getColumns(departmentId) {
+  async getColumns(departmentId, minimal = false, forceRefresh = false, skipValidation = false) {
+    // Check cache first
+    if (!forceRefresh) {
+      const cached = getFromCache("columns", departmentId, minimal);
+      if (cached) {
+        return cached;
+      }
+    }
+
+    // Server-side validation (skip for read operations when user is already authenticated)
+    if (!skipValidation) {
+      await this.validateDepartmentAccess(departmentId);
+    }
+
+    // Only select fields needed for rendering if minimal is true
+    const selectFields = minimal
+      ? "id, column_name, column_type, display_order, is_required, group_name"
+      : "*";
+
     const { data, error } = await this.client
       .from("encoding_columns")
-      .select("*")
+      .select(selectFields)
       .eq("department_id", departmentId)
       .order("display_order", { ascending: true });
 
     if (error) throw error;
+
+    // Cache the result
+    setCache("columns", departmentId, minimal, data);
+
     return data;
   },
 
@@ -335,6 +509,10 @@ export const SupabaseService = {
       .single();
 
     if (error) throw error;
+
+    // Invalidate cache for this department
+    this.invalidateColumnCache(departmentId);
+
     return data;
   },
 
@@ -344,12 +522,24 @@ export const SupabaseService = {
    * @returns {Promise<void>}
    */
   async deleteColumn(columnId) {
+    // Get column to check department access
+    const { data: column } = await this.client
+      .from("encoding_columns")
+      .select("department_id")
+      .eq("id", columnId)
+      .single();
+
+    if (!column) throw new Error("Column not found");
+
     const { error } = await this.client
       .from("encoding_columns")
       .delete()
       .eq("id", columnId);
 
     if (error) throw error;
+
+    // Invalidate cache for this department
+    this.invalidateColumnCache(column.department_id);
   },
 
   /**
@@ -359,12 +549,24 @@ export const SupabaseService = {
    * @returns {Promise<void>}
    */
   async updateColumnGroup(columnId, groupName) {
+    // Get column to check department access
+    const { data: column } = await this.client
+      .from("encoding_columns")
+      .select("department_id")
+      .eq("id", columnId)
+      .single();
+
+    if (!column) throw new Error("Column not found");
+
     const { error } = await this.client
       .from("encoding_columns")
       .update({ group_name: groupName })
       .eq("id", columnId);
 
     if (error) throw error;
+
+    // Invalidate cache for this department
+    this.invalidateColumnCache(column.department_id);
   },
 
   /**

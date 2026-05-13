@@ -81,41 +81,29 @@ export const AppCore = {
         this.state.moduleName = moduleName;
         this.state.departmentId = departmentId;
         this.syncWithWindow();
-        
+
+        // Show loading indicator immediately
+        const categoryCards = document.getElementById('categoryCards');
+        if (categoryCards) {
+            categoryCards.innerHTML = '<div style="text-align: center; padding: 40px; color: #666;">Loading...</div>';
+        }
+
         try {
-            // Verify department exists and use it; if not, find the first available
-            try {
-                const departments = await SupabaseService.client
-                    .from('departments')
-                    .select('id, name')
-                    .eq('id', departmentId)
-                    .single();
-                
-                if (departments.error) {
-                    // Department not found, fetch the first available
-                    const { data: allDepts, error: deptError } = await SupabaseService.client
-                        .from('departments')
-                        .select('id, name')
-                        .limit(1);
-                    
-                    if (deptError || !allDepts || !allDepts.length) {
-                        UI.showToast('No departments found. Please create a department first.', 'error');
-                        return;
-                    }
-                    
-                    this.state.departmentId = allDepts[0].id;
-                    console.log(`Using department: ${allDepts[0].name} (ID: ${allDepts[0].id})`);
-                }
-            } catch (deptCheckError) {
-                console.warn('Could not verify department:', deptCheckError.message);
-            }
-            
-            // Load both templates and columns from new schema
-            this.state.allTemplates = await SupabaseService.getTemplates(this.state.departmentId);
-            this.state.allColumns = await SupabaseService.getColumns(this.state.departmentId);
+            // Load both templates and columns from new schema in parallel
+            // Skip validation for read operations since user is already authenticated
+            const [templates, columns] = await Promise.all([
+                SupabaseService.getTemplates(this.state.departmentId, true, false, true),
+                SupabaseService.getColumns(this.state.departmentId, true, false, true)
+            ]);
+            this.state.allTemplates = templates;
+            this.state.allColumns = columns;
             this.renderCategoryCards();
         } catch (error) {
             UI.showToast('Failed to load templates: ' + error.message, 'error');
+            const categoryCards = document.getElementById('categoryCards');
+            if (categoryCards) {
+                categoryCards.innerHTML = '<p class="error-message">Failed to load templates. Please try again.</p>';
+            }
         }
     },    
 
@@ -2197,12 +2185,24 @@ export const AppCore = {
     // TEMPLATES
     // ============================================================
     refreshTemplates: async function () {
+        const categoryCards = document.getElementById('categoryCards');
+        if (categoryCards) {
+            categoryCards.innerHTML = '<div style="text-align: center; padding: 40px; color: #666;">Loading...</div>';
+        }
+
         try {
-            this.state.allTemplates = await SupabaseService.getTemplates(this.state.departmentId);
-            this.state.allColumns = await SupabaseService.getColumns(this.state.departmentId);
+            const [templates, columns] = await Promise.all([
+                SupabaseService.getTemplates(this.state.departmentId, true, true, true), // forceRefresh = true, skipValidation = true
+                SupabaseService.getColumns(this.state.departmentId, true, true, true) // forceRefresh = true, skipValidation = true
+            ]);
+            this.state.allTemplates = templates;
+            this.state.allColumns = columns;
             this.renderCategoryCards();
         } catch (error) {
             UI.showToast('Failed to load templates: ' + error.message, 'error');
+            if (categoryCards) {
+                categoryCards.innerHTML = '<p class="error-message">Failed to refresh templates. Please try again.</p>';
+            }
         }
     },
 

@@ -186,19 +186,39 @@ cancelCreateBtn.addEventListener("click", () => {
   form.reset();
 });
 
+// Handle role selection change - hide department for admin
+roleSelect.addEventListener("change", () => {
+  const selectedRoleText = roleSelect.options[roleSelect.selectedIndex].text.toLowerCase();
+  const isAdminRole = selectedRoleText.includes("admin");
+  const departmentGroup = document.getElementById("departmentGroup");
+  const departmentSelect = document.getElementById("department");
+
+  if (isAdminRole) {
+    departmentGroup.style.display = "none";
+    departmentSelect.removeAttribute("required");
+    departmentSelect.value = "";
+  } else {
+    departmentGroup.style.display = "block";
+    departmentSelect.setAttribute("required", "required");
+  }
+});
+
 // Handle form submission
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
 
   const email = document.getElementById("email").value;
   const password = document.getElementById("password").value;
-  const departmentId = parseInt(document.getElementById("department").value);
+  const departmentValue = document.getElementById("department").value;
   const roleId = parseInt(document.getElementById("role").value);
 
   // Check if creating admin account
   const selectedRoleText =
     roleSelect.options[roleSelect.selectedIndex].text.toLowerCase();
   const isAdminRole = selectedRoleText.includes("admin");
+
+  // Only parse departmentId if it's not empty (admin users don't need department)
+  const departmentId = departmentValue ? parseInt(departmentValue) : null;
 
   if (isAdminRole) {
     const confirmed = confirm(

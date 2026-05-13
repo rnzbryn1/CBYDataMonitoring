@@ -21,7 +21,7 @@ export async function isAuthenticated() {
 }
 
 /**
- * Redirect to login if not authenticated
+ * Redirect to login if not authenticated or account is inactive
  * Call this on page load for protected pages
  */
 export async function requireAuth() {
@@ -30,6 +30,22 @@ export async function requireAuth() {
     window.location.href = "login.html";
     return false;
   }
+
+  // Check if account is active
+  try {
+    const profile = await getCurrentUserProfile();
+    if (!profile || profile.status !== "active") {
+      await supabaseClient.auth.signOut();
+      window.location.href = "login.html";
+      return false;
+    }
+  } catch (error) {
+    console.error("Error checking account status:", error);
+    await supabaseClient.auth.signOut();
+    window.location.href = "login.html";
+    return false;
+  }
+
   return true;
 }
 
