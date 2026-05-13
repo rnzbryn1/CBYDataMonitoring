@@ -276,24 +276,35 @@ resetPasswordForm.addEventListener("submit", async (e) => {
 
   const newPassword = document.getElementById("newPassword").value;
   const confirmPassword = document.getElementById("confirmPassword").value;
+  const messageDiv = document.getElementById("resetPasswordMessage");
+
+  // Clear previous messages
+  messageDiv.className = "";
+  messageDiv.textContent = "";
 
   if (newPassword !== confirmPassword) {
-    showError("Passwords do not match");
+    messageDiv.className = "error-message";
+    messageDiv.textContent = "Passwords do not match";
     return;
   }
 
   if (newPassword.length < 6) {
-    showError("Password must be at least 6 characters");
+    messageDiv.className = "error-message";
+    messageDiv.textContent = "Password must be at least 6 characters";
     return;
   }
 
   try {
     await SupabaseService.resetUserPassword(currentResetUserId, newPassword);
-    showSuccess("Password reset successfully!");
-    closeResetPasswordModal();
+    messageDiv.className = "success-message";
+    messageDiv.textContent = "Password reset successfully!";
+    setTimeout(() => {
+      closeResetPasswordModal();
+    }, 1500);
   } catch (error) {
     console.error("Error resetting password:", error);
-    showError(error.message || "Failed to reset password. Please try again.");
+    messageDiv.className = "error-message";
+    messageDiv.textContent = error.message || "Failed to reset password. Please try again.";
   }
 });
 
