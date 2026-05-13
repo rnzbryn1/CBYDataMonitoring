@@ -1655,6 +1655,7 @@ export const SupabaseService = {
         departments (*)
       `,
       )
+      .eq("is_hidden", false)
       .order("created_at", { ascending: false });
 
     if (error) throw error;
