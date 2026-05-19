@@ -22,7 +22,7 @@ async function checkAdminAccess() {
                     <div class="card">
                         <h2>Access Denied</h2>
                         <p>You do not have permission to access this page. Only administrators can manage user accounts.</p>
-                        <button onclick="window.location.href='home.html'" class="btn btn-primary" style="margin-top: 20px;">Return to Home</button>
+                        <button onclick="window.location.href='index.html'" class="btn btn-primary" style="margin-top: 20px;">Return to Home</button>
                     </div>
                 </div>
             `;

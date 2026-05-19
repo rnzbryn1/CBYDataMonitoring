@@ -140,7 +140,7 @@ export async function requireDepartmentAccess(departmentId) {
   const hasAccess = await hasDepartmentAccess(departmentId);
   if (!hasAccess) {
     alert("You do not have permission to access this department");
-    window.location.href = "home.html";
+    window.location.href = "index.html";
     return false;
   }
   return true;
